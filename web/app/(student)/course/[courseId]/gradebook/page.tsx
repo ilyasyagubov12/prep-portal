@@ -99,7 +99,7 @@ export default function GradebookPage() {
       }
       setAccessToken(session.session?.access_token ?? null);
 
-      const { data: prof, error: pErr } = await supabase
+      const { data: prof, error: pErr } = await (supabase as any)
         .from("profiles")
         .select("user_id, role, is_admin")
         .eq("user_id", user.id)
