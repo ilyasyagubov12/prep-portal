@@ -1,0 +1,38 @@
+from django.urls import path
+from .views import (
+    AssignmentCreateView,
+    AssignmentUpdateView,
+    AssignmentDeleteView,
+    AssignmentDetailView,
+    AssignmentSubmissionsListView,
+    AssignmentAttachmentListView,
+    AssignmentAttachmentUploadView,
+    AssignmentAttachmentDeleteView,
+    SubmissionCreateView,
+    GradeUpsertView,
+    OfflineUnitCreateView,
+    OfflineUnitUpdateView,
+    OfflineUnitDeleteView,
+    OfflineUnitsListView,
+    OfflineGradeUpsertView,
+    OfflineGradesListView,
+)
+
+urlpatterns = [
+    path("assignments/detail/", AssignmentDetailView.as_view(), name="assignments_detail"),
+    path("assignments/create/", AssignmentCreateView.as_view(), name="assignments_create"),
+    path("assignments/update/", AssignmentUpdateView.as_view(), name="assignments_update"),
+    path("assignments/delete/", AssignmentDeleteView.as_view(), name="assignments_delete"),
+    path("assignments/submissions/list/", AssignmentSubmissionsListView.as_view(), name="assignments_submissions_list"),
+    path("assignments/attachments/list/", AssignmentAttachmentListView.as_view(), name="assignments_attachments_list"),
+    path("assignments/attachments/upload/", AssignmentAttachmentUploadView.as_view(), name="assignments_attachments_upload"),
+    path("assignments/attachments/delete/", AssignmentAttachmentDeleteView.as_view(), name="assignments_attachments_delete"),
+    path("assignments/submissions/create/", SubmissionCreateView.as_view(), name="assignments_submissions_create"),
+    path("assignments/grade/", GradeUpsertView.as_view(), name="assignments_grade"),
+    path("offline/units/create/", OfflineUnitCreateView.as_view(), name="offline_units_create"),
+    path("offline/units/update/", OfflineUnitUpdateView.as_view(), name="offline_units_update"),
+    path("offline/units/delete/", OfflineUnitDeleteView.as_view(), name="offline_units_delete"),
+    path("offline/units/list/", OfflineUnitsListView.as_view(), name="offline_units_list"),
+    path("offline/grades/upsert/", OfflineGradeUpsertView.as_view(), name="offline_grades_upsert"),
+    path("offline/grades/list/", OfflineGradesListView.as_view(), name="offline_grades_list"),
+]

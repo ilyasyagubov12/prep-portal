@@ -1,0 +1,38 @@
+from django.urls import path
+from .views import (
+    AdminCoursesListView,
+    AdminCoursesCreateView,
+    AdminCoursesUpdateView,
+    AdminCoursesDeleteView,
+    AdminMembershipsListView,
+    AdminMembershipsSetView,
+    CoursesListView,
+    CoursePeopleView,
+    CourseCoverUploadView,
+    CourseNodesListView,
+    CourseNodesCreateView,
+    CourseNodeUploadView,
+    CourseNodeSetPublishedView,
+    CourseNodeSetScheduleView,
+    CourseNodeUpdateView,
+    CourseNodeDeleteView,
+)
+
+urlpatterns = [
+    path("courses/", CoursesListView.as_view(), name="courses_list"),
+    path("courses/people/", CoursePeopleView.as_view(), name="courses_people"),
+    path("courses/cover-upload/", CourseCoverUploadView.as_view(), name="courses_cover_upload"),
+    path("course-nodes/list/", CourseNodesListView.as_view(), name="course_nodes_list"),
+    path("course-nodes/create/", CourseNodesCreateView.as_view(), name="course_nodes_create"),
+    path("course-nodes/upload/", CourseNodeUploadView.as_view(), name="course_nodes_upload"),
+    path("course-nodes/set-published/", CourseNodeSetPublishedView.as_view(), name="course_nodes_set_published"),
+    path("course-nodes/set-schedule/", CourseNodeSetScheduleView.as_view(), name="course_nodes_set_schedule"),
+    path("course-nodes/update/", CourseNodeUpdateView.as_view(), name="course_nodes_update"),
+    path("course-nodes/delete/", CourseNodeDeleteView.as_view(), name="course_nodes_delete"),
+    path("admin/courses/list/", AdminCoursesListView.as_view(), name="admin_courses_list"),
+    path("admin/courses/create/", AdminCoursesCreateView.as_view(), name="admin_courses_create"),
+    path("admin/courses/update/", AdminCoursesUpdateView.as_view(), name="admin_courses_update"),
+    path("admin/courses/delete/", AdminCoursesDeleteView.as_view(), name="admin_courses_delete"),
+    path("admin/memberships/list/", AdminMembershipsListView.as_view(), name="admin_memberships_list"),
+    path("admin/memberships/set/", AdminMembershipsSetView.as_view(), name="admin_memberships_set"),
+]

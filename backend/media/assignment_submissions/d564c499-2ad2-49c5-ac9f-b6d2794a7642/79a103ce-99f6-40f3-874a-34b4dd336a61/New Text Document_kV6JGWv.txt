@@ -1,0 +1,195 @@
+Absolutely — here’s a clean “PROJECT CONTEXT” script you can paste into a **new chat** so we continue from the exact state you’re in.
+
+---
+
+## PROJECT CONTEXT (PASTE THIS IN NEW CHAT)
+
+I am building a student prep platform using **Next.js App Router (TypeScript)** + **Supabase (local via Docker)** on Windows.
+
+### Tech stack
+
+* Next.js (App Router, TS)
+* Supabase local (`supabase start`)
+* Supabase Auth (working)
+* Supabase Storage: bucket `avatars` (public)
+* RLS enabled and used properly (admin routes use service role server-side)
+
+---
+
+## Current routing structure
+
+```
+app/
+├─ login/page.tsx                      (username-only login UI, internally maps to username@prep.local)
+├─ dashboard/page.tsx
+└─ (student)/
+   ├─ layout.tsx                       (auth-protected layout + sidebar)
+   ├─ sidebar.tsx                      (shows nickname + avatar)
+   ├─ home/page.tsx
+   ├─ courses/page.tsx                 (student sees ONLY enrolled courses)
+   ├─ practice/questions/page.tsx
+   ├─ practice/modules/page.tsx
+   ├─ vocab/page.tsx
+   ├─ score-calculator/page.tsx
+   └─ settings/
+      ├─ page.tsx                      (user settings: nickname + avatar upload; shows admin links if is_admin)
+      └─ admin/
+         ├─ courses/page.tsx           (admin CRUD: create/edit/delete courses)
+         ├─ users/page.tsx             (admin can create users)
+         └─ assignments/page.tsx       (admin assign student→course + remove enrollment + list enrollments)
+```
+
+---
+
+## Database schema (public)
+
+### `profiles`
+
+Stores app profile info for each auth user.
+
+Columns used:
+
+* `user_id` (UUID) **unique**
+* `username` (text) (internal login name, used for username-only login)
+* `nickname` (text, optional)
+* `avatar_url` (text, public url)
+* `role` (text: `student | teacher | admin`)
+* `is_admin` (boolean)
+
+✅ Users can read/update their own profile via RLS.
+
+---
+
+### `courses`
+
+Course catalog.
+
+Columns used:
+
+* `id` (uuid)
+* `slug` (unique text)
+* `title` (text)
+* `description` (text, nullable)
+* `created_at`
+
+✅ Admin can create/edit/delete courses via protected API routes.
+
+---
+
+### `enrollments`
+
+Joins students to courses.
+
+Columns used:
+
+* `id` (uuid) (may exist)
+* `user_id` (uuid) (student)
+* `course_id` (uuid) (course)
+* `created_at`
+
+✅ Students can select only their own enrollments (RLS).
+✅ Admin can insert/delete enrollments via protected API routes.
+
+Note: We attempted using Supabase join select syntax in enrollments listing, but got:
+
+> “Could not find a relationship between enrollments and user_id in schema cache”
+> So we planned to list enrollments via a **no-join** approach (fetch enrollments, then fetch profiles + courses separately) to avoid schema-cache FK problems.
+
+---
+
+## Auth flow (important)
+
+We want **username-only login** (no email input shown).
+
+Internally:
+
+* When admin creates a user with username `ali`, we store auth email as:
+
+  * `ali@prep.local`
+* Login page takes `username` + password, then logs in using:
+
+  * `email = username + "@prep.local"`
+
+---
+
+## Storage setup (avatars)
+
+Bucket: `avatars`
+
+✅ Public read policy exists.
+
+Upload behavior:
+
+* We do NOT overwrite same filename anymore (cache issues).
+* New uploads go to:
+
+  * `${user.id}/${Date.now()}.ext`
+* We then save the new `publicUrl` to `profiles.avatar_url`
+
+Policies:
+
+* Public read for bucket `avatars`
+* Auth users can insert/update objects where:
+
+  * `name like auth.uid() || '/%'`
+
+---
+
+## Admin-only API routes (service role)
+
+These routes verify Bearer token (from client session) → confirm admin via `profiles.is_admin` → then perform action using `supabaseAdmin` (service role).
+
+Existing routes:
+
+### Courses
+
+* `POST /api/admin/courses/create`
+* `POST /api/admin/courses/list`
+* `POST /api/admin/courses/update`
+* `POST /api/admin/courses/delete`
+
+### Users
+
+* `POST /api/admin/users/create`
+* `POST /api/admin/users/list-students` (returns only role=student)
+
+### Enrollments
+
+* `POST /api/admin/enrollments/add`
+* `POST /api/admin/enrollments/remove`
+* `POST /api/admin/enrollments/list` (currently erroring due to join relationship; should be replaced with no-join version)
+
+---
+
+## Current status
+
+✅ Settings nickname works
+✅ Avatar upload works + updates instantly
+✅ Admin course CRUD works (create/edit/delete)
+✅ Admin can create users
+✅ Admin can assign students to courses
+✅ Students only see assigned courses
+
+⚠️ Remaining issue
+
+* `/api/admin/enrollments/list` and assignments page still show relationship error (schema cache join problem). We want to make enrollments listing work by avoiding joins.
+
+---
+
+## Next goals (what we want to build next)
+
+1. Fix enrollments listing (no-join list route + UI list shows current enrollments)
+2. Add **admin user editing** (list users + edit role/nickname + reset password)
+3. Improve “reassign” UX (remove + assign in one flow)
+
+Important rules:
+
+* Do not change frameworks
+* Do not rush
+* Keep steps incremental
+* Keep route group `(student)` (do not reintroduce `(app)`)
+
+---
+
+If you want, I can also include a “copy/paste SQL schema dump” version for all tables + policies, but this is enough to continue cleanly in a new chat.
+  
