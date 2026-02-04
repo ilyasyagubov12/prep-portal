@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase/client";
 
 type Profile = { user_id: string; role: string | null; is_admin: boolean | null };
+
 type AssignmentRow = {
   id: string;
   title: string;
@@ -28,6 +28,13 @@ function isTeacherOrAdmin(p: Profile | null) {
   return role === "teacher" || role === "admin" || !!p.is_admin;
 }
 
+function toNullableNumber(raw: string | null | undefined) {
+  const v = (raw ?? "").trim();
+  if (v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
 export default function GradebookPage() {
   const params = useParams<{ courseId: string }>();
   const router = useRouter();
@@ -35,22 +42,30 @@ export default function GradebookPage() {
 
   const [profile, setProfile] = useState<Profile | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
+
   const [assignments, setAssignments] = useState<Array<AssignmentRow & { submission?: SubmissionRow }>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [offlineStudents, setOfflineStudents] = useState<Array<{ user_id: string; username: string | null; nickname: string | null }>>([]);
+
+  const [offlineStudents, setOfflineStudents] = useState<
+    Array<{ user_id: string; username: string | null; nickname: string | null }>
+  >([]);
   const [offlineGrades, setOfflineGrades] = useState<
     Array<{ id: string; student_id: string; title: string; max_score: number | null; score: number | null; feedback: string | null }>
   >([]);
   const [savingOffline, setSavingOffline] = useState<Record<string, boolean>>({});
+
   const [showPaste, setShowPaste] = useState(false);
   const [pasteText, setPasteText] = useState("");
   const [pasteMaxScore, setPasteMaxScore] = useState<string>("");
+
+  const staff = useMemo(() => isTeacherOrAdmin(profile), [profile]);
 
   function gradeBadge(score: number | null, max: number | null) {
     if (score === null || typeof score === "undefined") return null;
     const nScore = typeof score === "string" ? Number(score) : score;
     const nMax = typeof max === "string" ? Number(max) : max;
+
     const pct = nMax ? (nScore / nMax) * 100 : nScore;
     let bg = "#ef4444"; // red
     let fg = "#ffffff";
@@ -67,6 +82,7 @@ export default function GradebookPage() {
       bg = "#f97316"; // orange
       fg = "#0f172a";
     }
+
     return (
       <span
         style={{
@@ -90,71 +106,89 @@ export default function GradebookPage() {
 
   useEffect(() => {
     let cancelled = false;
+
     (async () => {
-      const { data: session } = await supabase.auth.getSession();
-      const user = session.session?.user;
-      if (!user) {
-        router.replace("/login");
-        return;
-      }
-      setAccessToken(session.session?.access_token ?? null);
+      setLoading(true);
+      setError(null);
 
-      const { data: prof, error: pErr } = await (supabase as any)
-        .from("profiles")
-        .select("user_id, role, is_admin")
-        .eq("user_id", user.id)
-        .single();
+      try {
+        /**
+         * ✅ Django-backed auth:
+         * Expecting /api/auth/me to return something like:
+         * {
+         *   "token": "...." | null,
+         *   "profile": { "user_id": "...", "role": "...", "is_admin": false } | null
+         * }
+         *
+         * If your shape differs, adjust below.
+         */
+        const meRes = await fetch("/api/auth/me", { cache: "no-store" });
 
-      if (pErr || !prof) {
-        setError(pErr?.message ?? "Unable to load profile");
+        if (meRes.status === 401) {
+          router.replace("/login");
+          return;
+        }
+
+        const meJson = await meRes.json().catch(() => ({}));
+        if (!meRes.ok) throw new Error(meJson?.error || "Unable to load session");
+
+        const token: string | null = meJson?.token ?? null;
+        const prof: Profile | null = meJson?.profile ?? null;
+
+        if (!token) throw new Error("Missing access token");
+        if (!prof) throw new Error("Missing profile");
+
+        if (cancelled) return;
+        setAccessToken(token);
+        setProfile(prof);
+
+        await loadGradebook(courseId, token);
+
+        if (isTeacherOrAdmin(prof)) {
+          await loadOffline(courseId, token);
+        }
+
+        if (cancelled) return;
         setLoading(false);
-        return;
+      } catch (e: any) {
+        if (cancelled) return;
+        setError(e?.message ?? "Failed to load");
+        setAssignments([]);
+        setLoading(false);
       }
-      if (cancelled) return;
-      setProfile(prof as Profile);
-
-      await loadGradebook(courseId, session.session?.access_token ?? null);
-      if (isTeacherOrAdmin(prof as Profile) && session.session?.access_token) {
-        await loadOffline(courseId, session.session?.access_token);
-      }
-      setLoading(false);
     })();
+
     return () => {
       cancelled = true;
     };
   }, [courseId, router]);
 
-  const staff = isTeacherOrAdmin(profile);
-
-  async function loadGradebook(courseId: string, token: string | null) {
-    setLoading(true);
+  async function loadGradebook(courseId: string, token: string) {
     setError(null);
     try {
-      if (!token) throw new Error("Missing access token");
-
-      const res = await fetch(`/api/grades/me?course_id=${courseId}`, {
+      const res = await fetch(`/api/grades/me?course_id=${encodeURIComponent(courseId)}`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
+        cache: "no-store",
       });
 
-      const json = await res.json();
+      const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.error || "Failed to load gradebook");
       setAssignments(json.assignments ?? []);
     } catch (e: any) {
       setError(e?.message ?? "Failed to load gradebook");
       setAssignments([]);
-    } finally {
-      setLoading(false);
     }
   }
 
   async function loadOffline(courseId: string, token: string) {
     try {
-      const res = await fetch(`/api/grades/offline?course_id=${courseId}`, {
+      const res = await fetch(`/api/grades/offline?course_id=${encodeURIComponent(courseId)}`, {
         headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
       });
-      const json = await res.json();
+      const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.error || "Failed to load offline grades");
       setOfflineStudents(json.students ?? []);
       setOfflineGrades(json.grades ?? []);
@@ -168,6 +202,7 @@ export default function GradebookPage() {
     payload: { title: string; score: number | null; max_score: number | null; feedback: string | null }
   ) {
     if (!accessToken) return;
+
     setSavingOffline((prev) => ({ ...prev, [student_id]: true }));
     try {
       const res = await fetch("/api/grades/offline", {
@@ -178,8 +213,9 @@ export default function GradebookPage() {
         },
         body: JSON.stringify({ course_id: courseId, student_id, ...payload }),
       });
-      const json = await res.json();
+      const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.error || "Save failed");
+
       await loadOffline(courseId, accessToken);
     } catch (e: any) {
       alert(e?.message ?? "Save failed");
@@ -190,15 +226,19 @@ export default function GradebookPage() {
 
   async function handlePasteUpload() {
     if (!staff) return;
-    const maxScoreVal = pasteMaxScore.trim() === "" ? null : Number(pasteMaxScore);
+
+    const maxScoreVal = toNullableNumber(pasteMaxScore);
+
     const lines = pasteText
       .split("\n")
       .map((l) => l.trim())
       .filter(Boolean);
+
     for (const line of lines) {
       // expected: username_or_nickname,score,feedback
       const [nameRaw, scoreRaw, feedbackRaw] = line.split(",").map((x) => (x ?? "").trim());
       if (!nameRaw) continue;
+
       const student =
         offlineStudents.find(
           (s) =>
@@ -206,15 +246,19 @@ export default function GradebookPage() {
             s.nickname?.toLowerCase() === nameRaw.toLowerCase() ||
             s.user_id === nameRaw
         ) ?? null;
+
       if (!student) continue;
-      const scoreVal = scoreRaw === "" || scoreRaw === undefined ? null : Number(scoreRaw);
+
+      const scoreVal = toNullableNumber(scoreRaw);
+
       await saveOfflineGrade(student.user_id, {
         title: "Offline grade",
-        score: Number.isFinite(scoreVal) ? scoreVal : null,
-        max_score: Number.isFinite(maxScoreVal) ? maxScoreVal : null,
+        score: scoreVal,
+        max_score: maxScoreVal,
         feedback: feedbackRaw || null,
       });
     }
+
     setShowPaste(false);
     setPasteText("");
   }
@@ -245,10 +289,12 @@ export default function GradebookPage() {
             <div>Due</div>
             <div className="text-right">Grade</div>
           </div>
+
           <div className="divide-y">
             {assignments.map((a) => {
               const submission = a.submission;
               const grade = submission?.grade ?? null;
+
               return (
                 <div key={a.id} className="grid grid-cols-4 gap-3 px-4 py-3 text-sm items-center">
                   <div className="space-y-1">
@@ -257,10 +303,11 @@ export default function GradebookPage() {
                       Open
                     </Link>
                   </div>
+
                   <div className="text-neutral-600 capitalize">{a.status}</div>
-                  <div className="text-neutral-600">
-                    {a.due_at ? new Date(a.due_at).toLocaleString() : "—"}
-                  </div>
+
+                  <div className="text-neutral-600">{a.due_at ? new Date(a.due_at).toLocaleString() : "—"}</div>
+
                   <div className="text-right">
                     {grade ? (
                       <div className="inline-flex justify-end w-full">{gradeBadge(grade.score, a.max_score)}</div>
@@ -269,15 +316,15 @@ export default function GradebookPage() {
                     ) : (
                       "No submission"
                     )}
+
                     {submission ? (
                       <div className="text-xs text-neutral-500 mt-1 text-right">
                         {submission.file_name ? submission.file_name : "Unnamed file"}
                         {submission.created_at ? ` • ${new Date(submission.created_at).toLocaleString()}` : ""}
                       </div>
                     ) : null}
-                    {grade?.feedback ? (
-                      <div className="text-xs text-neutral-500 mt-1">{grade.feedback}</div>
-                    ) : null}
+
+                    {grade?.feedback ? <div className="text-xs text-neutral-500 mt-1">{grade.feedback}</div> : null}
                   </div>
                 </div>
               );
@@ -290,11 +337,7 @@ export default function GradebookPage() {
         <div className="space-y-3">
           <div className="flex items-center gap-2">
             <div className="text-sm font-semibold">Offline grades (manual exams)</div>
-            <button
-              type="button"
-              className="border rounded px-2 py-1 text-xs"
-              onClick={() => setShowPaste((v) => !v)}
-            >
+            <button type="button" className="border rounded px-2 py-1 text-xs" onClick={() => setShowPaste((v) => !v)}>
               {showPaste ? "Close paste" : "Paste offline scores"}
             </button>
           </div>
@@ -304,6 +347,7 @@ export default function GradebookPage() {
               <div className="text-xs text-neutral-600">
                 Paste one per line: <code>username, score, feedback</code>. Max score applies to all rows (optional).
               </div>
+
               <div className="flex gap-2 items-center">
                 <input
                   type="number"
@@ -312,14 +356,11 @@ export default function GradebookPage() {
                   onChange={(e) => setPasteMaxScore(e.target.value)}
                   className="border rounded px-2 py-1 text-sm w-40"
                 />
-                <button
-                  type="button"
-                  className="border rounded px-3 py-1 text-sm"
-                  onClick={handlePasteUpload}
-                >
+                <button type="button" className="border rounded px-3 py-1 text-sm" onClick={handlePasteUpload}>
                   Save pasted grades
                 </button>
               </div>
+
               <textarea
                 value={pasteText}
                 onChange={(e) => setPasteText(e.target.value)}
@@ -331,17 +372,20 @@ export default function GradebookPage() {
           ) : null}
 
           <div className="text-sm font-semibold">Offline grades (manual exams)</div>
+
           {offlineStudents.length === 0 ? (
             <div className="text-sm text-neutral-500">No students enrolled yet.</div>
           ) : (
             <div className="border rounded-lg divide-y">
               {offlineStudents.map((s) => {
                 const latest = offlineGrades.find((g) => g.student_id === s.user_id);
+
                 return (
                   <div key={s.user_id} className="p-3 grid md:grid-cols-5 gap-3 items-center">
                     <div className="md:col-span-2">
                       <div className="font-medium">{s.username || s.nickname || s.user_id}</div>
                       <div className="text-xs text-neutral-500">{s.user_id}</div>
+
                       {latest ? (
                         <div className="text-xs text-neutral-500 mt-1">
                           Last: {latest.title} {latest.score ?? "—"}
@@ -349,6 +393,7 @@ export default function GradebookPage() {
                         </div>
                       ) : null}
                     </div>
+
                     <input
                       type="text"
                       placeholder="Title"
@@ -356,6 +401,7 @@ export default function GradebookPage() {
                       className="border rounded px-2 py-2 text-sm"
                       id={`title-${s.user_id}`}
                     />
+
                     <div className="flex gap-2">
                       <input
                         type="number"
@@ -372,6 +418,7 @@ export default function GradebookPage() {
                         id={`max-${s.user_id}`}
                       />
                     </div>
+
                     <div className="flex gap-2 md:col-span-1">
                       <input
                         type="text"
@@ -380,25 +427,26 @@ export default function GradebookPage() {
                         className="border rounded px-2 py-2 text-sm w-full"
                         id={`fb-${s.user_id}`}
                       />
+
                       <button
                         type="button"
                         className="border rounded px-3 py-2 text-sm whitespace-nowrap"
                         disabled={savingOffline[s.user_id]}
-                        onClick={() =>
+                        onClick={() => {
+                          const title =
+                            (document.getElementById(`title-${s.user_id}`) as HTMLInputElement)?.value || "Offline grade";
+                          const scoreRaw = (document.getElementById(`score-${s.user_id}`) as HTMLInputElement)?.value;
+                          const maxRaw = (document.getElementById(`max-${s.user_id}`) as HTMLInputElement)?.value;
+                          const feedback =
+                            (document.getElementById(`fb-${s.user_id}`) as HTMLInputElement)?.value?.trim() || null;
+
                           saveOfflineGrade(s.user_id, {
-                            title:
-                              (document.getElementById(`title-${s.user_id}`) as HTMLInputElement)?.value ||
-                              "Offline grade",
-                            score:
-                              Number((document.getElementById(`score-${s.user_id}`) as HTMLInputElement)?.value) ||
-                              null,
-                            max_score:
-                              Number((document.getElementById(`max-${s.user_id}`) as HTMLInputElement)?.value) ||
-                              null,
-                            feedback:
-                              (document.getElementById(`fb-${s.user_id}`) as HTMLInputElement)?.value?.trim() || null,
-                          })
-                        }
+                            title,
+                            score: toNullableNumber(scoreRaw),
+                            max_score: toNullableNumber(maxRaw),
+                            feedback,
+                          });
+                        }}
                       >
                         {savingOffline[s.user_id] ? "Saving…" : "Save"}
                       </button>
