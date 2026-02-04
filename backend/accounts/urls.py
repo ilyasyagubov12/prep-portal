@@ -1,6 +1,13 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
-from .views import MeView, ProfileUpdateView, AvatarUploadView, AdminCreateUserView, AdminSearchUsersView
+from .views import (
+    MeView,
+    ProfileUpdateView,
+    AvatarUploadView,
+    AdminCreateUserView,
+    AdminSearchUsersView,
+    BootstrapAdminView,
+)
 
 urlpatterns = [
     path("token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
@@ -10,4 +17,5 @@ urlpatterns = [
     path("avatar/", AvatarUploadView.as_view(), name="avatar_upload"),
     path("admin/users/create/", AdminCreateUserView.as_view(), name="admin_users_create"),
     path("admin/users/search/", AdminSearchUsersView.as_view(), name="admin_users_search"),
+    path("bootstrap/", BootstrapAdminView.as_view(), name="bootstrap_admin"),
 ]

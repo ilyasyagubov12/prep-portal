@@ -135,3 +135,58 @@ class AdminSearchUsersView(APIView):
                 }
             )
         return Response({"ok": True, "users": data})
+
+
+class BootstrapAdminView(APIView):
+    """
+    One-time bootstrap endpoint to create the first admin user in production
+    without shell access. Requires BOOTSTRAP_ADMIN_TOKEN env var and refuses
+    if an admin already exists.
+    """
+
+    permission_classes = [permissions.AllowAny]
+
+    @transaction.atomic
+    def post(self, request):
+        bootstrap_token = os.getenv("BOOTSTRAP_ADMIN_TOKEN") or ""
+        if not bootstrap_token:
+            return Response({"error": "Bootstrap disabled"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        token = (request.data.get("token") or "").strip()
+        if token != bootstrap_token:
+            return Response({"error": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+
+        # Refuse if any admin/superuser already exists
+        if User.objects.filter(is_superuser=True).exists() or Profile.objects.filter(is_admin=True).exists():
+            return Response({"error": "Admin already exists"}, status=status.HTTP_409_CONFLICT)
+
+        username = (request.data.get("username") or "").strip().lower()
+        password = request.data.get("password") or ""
+        email = (request.data.get("email") or "").strip().lower()
+
+        if not username or not password:
+            return Response({"error": "username and password required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not email:
+            email = f"{username}@prep.local"
+
+        if User.objects.filter(username=username).exists() or User.objects.filter(email=email).exists():
+            return Response({"error": "user already exists"}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = User.objects.create_user(username=username, email=email, password=password)
+        user.is_superuser = True
+        user.is_staff = True
+        user.save(update_fields=["is_superuser", "is_staff"])
+
+        profile = user.profile
+        profile.role = "admin"
+        profile.is_admin = True
+        profile.save(update_fields=["role", "is_admin"])
+
+        return Response(
+            {
+                "ok": True,
+                "user": UserSerializer(user).data,
+                "profile": ProfileSerializer(profile, context={"request": request}).data,
+            }
+        )
