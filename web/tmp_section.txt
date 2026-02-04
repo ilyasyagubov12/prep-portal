@@ -1,0 +1,46 @@
+async function loadNodes(courseId: string, folderId: string | null) {
+    setContentLoading(true);
+    setContentError(null);
+
+    const q = supabase
+      .from("course_nodes")
+      .select(
+        "id, course_id, parent_id, kind, name, description, storage_path, mime_type, size_bytes, published, publish_at, created_by, created_at, assignment_id, assignment:assignments(id, status, title)"
+      )
+      .eq("course_id", courseId);
+
+    const { data, error } =
+      folderId === null ? await q.is("parent_id", null) : await q.eq("parent_id", folderId);
+
+    if (error) {
+      setContentError(error.message);
+      setNodes([]);
+      setContentLoading(false);
+      return;
+    }
+
+    const list = (data ?? []).map((n: any) => ({
+      ...n,
+      assignment: n.assignment ?? null,
+    })) as CourseNode[];
+    setNodes(list);
+
+    setScheduleDraft((prev) => {
+      const next = { ...prev };
+      for (const n of list) {
+        next[n.id] = { publish_at: toDatetimeLocal(n.publish_at) };
+      }
+      return next;
+    });
+
+    setContentLoading(false);
+  }
+
+  useEffect(() => {
+    if (tab === "content" && course?.id) {
+      loadNodes(course.id, currentFolderId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, course?.id, currentFolderId]);
+
+  
