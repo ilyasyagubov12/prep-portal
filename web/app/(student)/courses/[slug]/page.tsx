@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase/client"; // stubbed; replace with Django APIs over time
 
 type Course = {
   id: string;
@@ -56,9 +55,6 @@ type CourseNode = {
 };
 
 type Tab = "overview" | "content" | "calendar" | "gradebook";
-
-const COVER_BUCKET = "course-covers";
-const FILES_BUCKET = "course-files";
 
 function isTeacherOrAdmin(p: Profile | null) {
   if (!p) return false;
@@ -1128,12 +1124,17 @@ async function getSignedUrl(storage_path: string) {
     setSavingOverview(true);
     setError(null);
 
-    try {
-      const updated = await apiPOST<{ ok: boolean; course: Course }>("/api/courses/update", accessToken, {
-        course_id: course.id,
-        title: editTitle,
-        description: editDesc,
-      });
+      try {
+        const base = (process.env.NEXT_PUBLIC_API_BASE || "").replace(/\/$/, "");
+        const updated = await apiPOST<{ ok: boolean; course: Course }>(
+          `${base}/api/courses/update/`,
+          accessToken,
+          {
+          course_id: course.id,
+          title: editTitle,
+          description: editDesc,
+          }
+        );
 
       setCourse((prev) => (prev ? { ...prev, ...updated.course } : prev));
     } catch (e: any) {

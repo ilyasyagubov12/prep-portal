@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase/client";
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE;
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -10,21 +10,33 @@ export default function DashboardPage() {
 
   useEffect(() => {
     async function load() {
-      const { data } = await supabase.auth.getUser();
-
-      if (!data.user) {
+      const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
+      if (!token) {
         router.replace("/login");
         return;
       }
 
-      setEmail(data.user.email ?? "");
+      const res = await fetch(`${API_BASE}/api/auth/me/`, {
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => null);
+
+      if (!res || !res.ok) {
+        router.replace("/login");
+        return;
+      }
+
+      const me = await res.json().catch(() => null);
+      setEmail(me?.user?.email ?? "");
     }
 
     load();
   }, [router]);
 
   async function logout() {
-    await supabase.auth.signOut();
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("access_token");
+      localStorage.removeItem("refresh_token");
+    }
     router.replace("/login");
   }
 

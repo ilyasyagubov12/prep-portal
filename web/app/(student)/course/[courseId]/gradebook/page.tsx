@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE;
+
 type Profile = { user_id: string; role: string | null; is_admin: boolean | null };
 
 type AssignmentRow = {
@@ -113,18 +115,22 @@ export default function GradebookPage() {
 
       try {
         /**
-         * ✅ Django-backed auth:
-         * Expecting /api/auth/me to return something like:
-         * {
-         *   "token": "...." | null,
-         *   "profile": { "user_id": "...", "role": "...", "is_admin": false } | null
-         * }
-         *
-         * If your shape differs, adjust below.
+         * Django-backed auth:
+         * Expecting GET /api/auth/me/ with Bearer token to return:
+         * { "user": { "id": "...", "email": "..." }, "role": "...", "is_admin": false }
          */
-        const meRes = await fetch("/api/auth/me", { cache: "no-store" });
+        const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
+        if (!token) {
+          router.replace("/login");
+          return;
+        }
 
-        if (meRes.status === 401) {
+        const meRes = await fetch(`${API_BASE}/api/auth/me/`, {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+        }).catch(() => null);
+
+        if (!meRes || meRes.status === 401) {
           router.replace("/login");
           return;
         }
@@ -132,10 +138,10 @@ export default function GradebookPage() {
         const meJson = await meRes.json().catch(() => ({}));
         if (!meRes.ok) throw new Error(meJson?.error || "Unable to load session");
 
-        const token: string | null = meJson?.token ?? null;
-        const prof: Profile | null = meJson?.profile ?? null;
+        const prof: Profile | null = meJson?.user?.id
+          ? { user_id: meJson.user.id, role: meJson?.role ?? null, is_admin: meJson?.is_admin ?? false }
+          : null;
 
-        if (!token) throw new Error("Missing access token");
         if (!prof) throw new Error("Missing profile");
 
         if (cancelled) return;
@@ -166,7 +172,7 @@ export default function GradebookPage() {
   async function loadGradebook(courseId: string, token: string) {
     setError(null);
     try {
-      const res = await fetch(`/api/grades/me?course_id=${encodeURIComponent(courseId)}`, {
+      const res = await fetch(`${API_BASE}/api/grades/me/?course_id=${encodeURIComponent(courseId)}`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -184,7 +190,7 @@ export default function GradebookPage() {
 
   async function loadOffline(courseId: string, token: string) {
     try {
-      const res = await fetch(`/api/grades/offline?course_id=${encodeURIComponent(courseId)}`, {
+      const res = await fetch(`${API_BASE}/api/grades/offline/?course_id=${encodeURIComponent(courseId)}`, {
         headers: { Authorization: `Bearer ${token}` },
         cache: "no-store",
       });
@@ -205,7 +211,7 @@ export default function GradebookPage() {
 
     setSavingOffline((prev) => ({ ...prev, [student_id]: true }));
     try {
-      const res = await fetch("/api/grades/offline", {
+      const res = await fetch(`${API_BASE}/api/grades/offline/`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${accessToken}`,
