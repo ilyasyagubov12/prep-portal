@@ -30,7 +30,14 @@ SECRET_KEY = os.getenv("SECRET_KEY")
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv("DEBUG", "True") == "True"
 
-ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+ALLOWED_HOSTS = [
+    h.strip()
+    for h in os.getenv(
+        "ALLOWED_HOSTS",
+        "localhost,127.0.0.1,prep-portal.onrender.com,prepto.vercel.app",
+    ).split(",")
+    if h.strip()
+]
 
 
 # Application definition
@@ -161,4 +168,11 @@ SIMPLE_JWT = {
 AUTH_USER_MODEL = "accounts.User"
 
 # CORS
-CORS_ALLOWED_ORIGINS = os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+CORS_ALLOWED_ORIGINS = [
+    o.strip()
+    for o in os.getenv(
+        "CORS_ALLOWED_ORIGINS",
+        "http://localhost:3000,https://prepto.vercel.app,https://prep-portal.onrender.com",
+    ).split(",")
+    if o.strip()
+]
