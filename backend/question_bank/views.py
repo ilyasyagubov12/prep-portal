@@ -44,7 +44,15 @@ class QuestionsListCreateView(APIView):
         if not is_staff(request.user):
             qs = qs.filter(published=True)
 
-        qs = qs.order_by("-created_at")[:200]  # simple limit
+        limit_raw = request.query_params.get("limit")
+        qs = qs.order_by("-created_at")
+        if limit_raw:
+            try:
+                limit = int(limit_raw)
+                if limit > 0:
+                    qs = qs[:limit]
+            except ValueError:
+                pass
         data = QuestionSerializer(qs, many=True).data
         return Response({"ok": True, "questions": data})
 

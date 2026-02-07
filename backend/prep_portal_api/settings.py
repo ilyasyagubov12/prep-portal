@@ -56,6 +56,7 @@ INSTALLED_APPS = [
     "courses",
     "assignments",
     "question_bank",
+    "vocab",
     "events",
     "offline_grades",
     "mediafiles",
