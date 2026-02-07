@@ -28,6 +28,16 @@ class Profile(models.Model):
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default="student")
     is_admin = models.BooleanField(default=False)
     avatar = models.URLField(blank=True, null=True)
+    university_icon = models.URLField(blank=True, null=True)
+    goal_math = models.IntegerField(default=600)
+    goal_verbal = models.IntegerField(default=600)
+    selected_exam_date = models.ForeignKey(
+        "exam_dates.ExamDate",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="selected_by",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self) -> str:  # pragma: no cover

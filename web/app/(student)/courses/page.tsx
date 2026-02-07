@@ -108,8 +108,8 @@ export default function CoursesPage() {
     );
 
   return (
-    <div className="p-4 space-y-5">
-      <div className="rounded-3xl border bg-white shadow-lg p-6 flex items-center justify-between gap-4 flex-wrap relative overflow-hidden">
+    <div className="p-4 sm:p-6 space-y-5">
+      <div className="rounded-3xl border bg-white shadow-lg p-5 sm:p-6 flex items-center justify-between gap-4 flex-wrap relative overflow-hidden">
         <div className="absolute -left-10 -top-10 h-40 w-40 bg-gradient-to-br from-sky-500 to-indigo-500 blur-3xl opacity-40" />
         <div className="absolute right-0 top-1/2 h-32 w-32 bg-gradient-to-br from-emerald-400 to-cyan-500 blur-3xl opacity-40" />
         <div className="relative">
@@ -124,7 +124,7 @@ export default function CoursesPage() {
           No courses found.
         </div>
       ) : (
-        <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
           {sorted.map((c) => {
             const img = c.cover_url || c.cover_path || null;
 

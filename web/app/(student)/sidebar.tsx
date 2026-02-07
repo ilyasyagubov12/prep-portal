@@ -40,7 +40,13 @@ function roleLabel(role: string | null | undefined) {
   return "Student";
 }
 
-export default function Sidebar() {
+export default function Sidebar({
+  mobileOpen = false,
+  onClose,
+}: {
+  mobileOpen?: boolean;
+  onClose?: () => void;
+}) {
   const pathname = usePathname();
   const router = useRouter();
 
@@ -97,18 +103,20 @@ export default function Sidebar() {
 
   return (
     <aside
-      style={{
-        width: 270,
-        background: "linear-gradient(180deg, #0b2f6b 0%, #0d47a1 50%, #2f78ff 100%)",
-        color: "#eaf2ff",
-        borderRight: "1px solid rgba(255,255,255,0.1)",
-        padding: 16,
-        position: "sticky",
-        top: 0,
-        height: "100vh",
-        boxShadow: "2px 0 16px rgba(0,0,0,0.18)",
-      }}
+      className={`z-50 w-[270px] shrink-0 border-r border-white/10 bg-gradient-to-b from-[#0b2f6b] via-[#0d47a1] to-[#2f78ff] text-[#eaf2ff] p-4 shadow-[2px_0_16px_rgba(0,0,0,0.18)] transition-transform duration-200
+        fixed inset-y-0 left-0 ${mobileOpen ? "translate-x-0" : "-translate-x-full"}
+        md:sticky md:top-0 md:h-screen md:translate-x-0`}
     >
+      <div className="mb-3 flex items-center justify-between md:hidden">
+        <div className="text-sm font-semibold">Menu</div>
+        <button
+          className="h-8 w-8 rounded-full border border-white/20 text-white"
+          onClick={onClose}
+          aria-label="Close menu"
+        >
+          ×
+        </button>
+      </div>
 {/* Logo */}
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <Image

@@ -248,13 +248,13 @@ export default function TopicQuestionsPage() {
   return (
     <div className={`${uiFont.className} min-h-screen bg-[#f5f3ef] text-slate-900`}>
       <div className="mx-auto max-w-none px-0 pb-[96px] pt-0 space-y-3">
-        <div className="flex items-center justify-between text-sm px-6 pt-5">
+        <div className="flex flex-col gap-3 text-sm px-4 pt-4 sm:px-6 sm:pt-5 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-4">
             <button className="text-slate-700 hover:text-slate-900" onClick={() => router.back()}>
               ← Go back
             </button>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2">
             <div className="rounded-full border border-slate-200 bg-white px-3 py-1.5 font-semibold tracking-[0.08em]">
               {timerHidden ? "--:--" : formatTime(timeElapsed)}
             </div>
@@ -271,7 +271,7 @@ export default function TopicQuestionsPage() {
               {timerHidden ? "Show" : "Hide"}
             </button>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               className="rounded-full border border-slate-200 bg-white px-3 py-1.5"
               onClick={handleHighlight}
@@ -296,7 +296,7 @@ export default function TopicQuestionsPage() {
 
         {currentQ ? (
           <div className="rounded-none border border-slate-200 bg-white shadow-sm min-h-[calc(100vh-92px)]">
-            <div className="border-b border-slate-200 px-6 py-3 flex items-center justify-between text-xs uppercase tracking-[0.18em] text-slate-500">
+            <div className="border-b border-slate-200 px-4 sm:px-6 py-3 flex items-center justify-between text-xs uppercase tracking-[0.18em] text-slate-500">
               <div>
                 {decodeURIComponent(topic)}
                 {subtopic ? ` · ${decodeURIComponent(subtopic)}` : ""}
@@ -313,7 +313,7 @@ export default function TopicQuestionsPage() {
             </div>
 
             {isMath ? (
-              <div className="px-6 py-8 min-h-0">
+              <div className="px-4 sm:px-6 py-6 sm:py-8 min-h-0">
                 <div className="mx-auto max-w-3xl space-y-6 min-h-0">
                   {currentQ.image_url ? (
                     <div className="rounded-xl border border-slate-200 bg-slate-50 overflow-hidden">
@@ -418,8 +418,8 @@ export default function TopicQuestionsPage() {
                 </div>
               </div>
             ) : (
-              <div className="grid grid-cols-2 min-h-0">
-                <div className="border-r border-slate-200 bg-[#fbfaf7] px-6 py-6 min-h-0">
+              <div className="grid grid-cols-1 md:grid-cols-2 min-h-0">
+                <div className="md:border-r border-slate-200 bg-[#fbfaf7] px-4 sm:px-6 py-6 min-h-0">
                   <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Reading passages</div>
                   <div
                     ref={passageRef}
@@ -438,7 +438,7 @@ export default function TopicQuestionsPage() {
                   </div>
                 </div>
 
-                <div className="px-6 py-6 min-h-0">
+                <div className="px-4 sm:px-6 py-6 min-h-0">
                   <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Question</div>
                   <div
                     ref={stemRef}
@@ -450,7 +450,7 @@ export default function TopicQuestionsPage() {
                     }}
                   />
 
-                  <div className="mt-5 space-y-3 overflow-y-auto min-h-0 max-h-[calc(100vh-320px)] pr-1">
+                  <div className="mt-5 space-y-3 overflow-y-auto min-h-0 max-h-[calc(100vh-340px)] pr-1">
                     {currentQ.choices && currentQ.choices.length > 0 ? (
                       currentQ.choices.map((c) => {
                         const picked = selected[currentQ.id] === c.label;
@@ -536,7 +536,7 @@ export default function TopicQuestionsPage() {
           </div>
         ) : null}
 
-        <div className="text-xs text-slate-400 px-6 pb-6">
+        <div className="text-xs text-slate-400 px-4 sm:px-6 pb-6">
           SAT is a registered trademark of the College Board. This product is not endorsed or sponsored by the College
           Board.
         </div>
@@ -544,17 +544,16 @@ export default function TopicQuestionsPage() {
 
       {currentQ ? (
         <div
-          className="fixed bottom-0 border-t border-slate-200 bg-white/95 backdrop-blur"
-          style={{ left: 270, right: 0, width: "calc(100% - 270px)" }}
+          className="fixed bottom-0 left-0 right-0 border-t border-slate-200 bg-white/95 backdrop-blur md:left-[270px] md:w-[calc(100%-270px)]"
         >
-          <div className="px-6 py-4 flex items-center justify-between text-sm">
+          <div className="px-4 sm:px-6 py-3 sm:py-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between text-sm">
             <button
               className="text-slate-700 hover:text-slate-900 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-semibold"
               onClick={() => setShowNavigator(true)}
             >
               {current + 1} of {total} <span className="ml-1 text-xs">▾</span>
             </button>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold"
                 onClick={handleExplanationClick}
@@ -591,8 +590,7 @@ export default function TopicQuestionsPage() {
 
       {showNavigator ? (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center"
-          style={{ left: 270, width: "calc(100% - 270px)" }}
+          className="fixed inset-0 z-50 flex items-center justify-center md:left-[270px] md:w-[calc(100%-270px)]"
         >
           <div
             className="absolute inset-0 bg-black/20"
@@ -623,7 +621,7 @@ export default function TopicQuestionsPage() {
               </div>
             </div>
             <div className="px-5 pb-5">
-              <div className="grid grid-cols-6 gap-2 max-h-[320px] overflow-y-auto pr-1">
+              <div className="grid grid-cols-4 sm:grid-cols-6 gap-2 max-h-[320px] overflow-y-auto pr-1">
                 {questions.map((q, idx) => (
                   <button
                     key={q.id}

@@ -2,6 +2,8 @@ from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.contrib.auth import get_user_model
+import csv
+import io
 from .models import VocabPack, VocabWord
 from .serializers import VocabPackSerializer, VocabWordSerializer
 
@@ -74,5 +76,77 @@ class VocabWordDetailView(APIView):
             return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
         word.delete()
         return Response({"ok": True})
+
+
+class VocabWordImportView(APIView):
+    """
+    CSV import endpoint for admin/teacher.
+    Columns expected:
+    pack_id or pack_title, term, definition, difficulty
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        if not is_staff(request.user):
+            return Response({"error": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+
+        file = request.FILES.get("file")
+        if not file:
+            return Response({"error": "No file provided"}, status=400)
+
+        raw = file.read()
+        decoded = None
+        for enc in ("utf-8-sig", "utf-8", "iso-8859-1"):
+            try:
+                decoded = raw.decode(enc)
+                break
+            except UnicodeDecodeError:
+                continue
+        if decoded is None:
+            return Response({"error": "Could not decode file. Please upload UTF-8 CSV."}, status=400)
+
+        reader = csv.DictReader(io.StringIO(decoded))
+        created = 0
+        errors = []
+
+        for idx, row in enumerate(reader, start=1):
+            try:
+                pack_id_raw = (row.get("pack_id") or "").strip()
+                pack_title = (row.get("pack_title") or "").strip()
+                term = (row.get("term") or "").strip()
+                definition = (row.get("definition") or "").strip()
+                difficulty = (row.get("difficulty") or "easy").strip().lower()
+
+                if difficulty not in ("easy", "medium", "hard"):
+                    difficulty = "easy"
+
+                if not term or not definition:
+                    raise ValueError("Missing term/definition")
+
+                if pack_id_raw:
+                    try:
+                        pack = VocabPack.objects.get(id=int(pack_id_raw))
+                    except Exception:
+                        raise ValueError("Invalid pack_id")
+                else:
+                    if not pack_title:
+                        raise ValueError("Missing pack_title")
+                    pack, _ = VocabPack.objects.get_or_create(
+                        title=pack_title, defaults={"created_by": request.user}
+                    )
+
+                VocabWord.objects.create(
+                    pack=pack,
+                    term=term,
+                    definition=definition,
+                    difficulty=difficulty,
+                    created_by=request.user,
+                )
+                created += 1
+            except Exception as e:
+                errors.append(f"Row {idx}: {e}")
+
+        return Response({"ok": True, "created": created, "errors": errors})
 
 # Create your views here.

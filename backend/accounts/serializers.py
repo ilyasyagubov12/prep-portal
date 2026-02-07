@@ -11,10 +11,22 @@ class UserSerializer(serializers.ModelSerializer):
 class ProfileSerializer(serializers.ModelSerializer):
     user = UserSerializer()
     avatar = serializers.SerializerMethodField()
+    university_icon = serializers.SerializerMethodField()
+    selected_exam_date = serializers.SerializerMethodField()
 
     class Meta:
         model = Profile
-        fields = ["user", "nickname", "role", "is_admin", "avatar"]
+        fields = [
+            "user",
+            "nickname",
+            "role",
+            "is_admin",
+            "avatar",
+            "university_icon",
+            "selected_exam_date",
+            "goal_math",
+            "goal_verbal",
+        ]
 
     def get_avatar(self, obj):
         url = obj.avatar
@@ -27,3 +39,20 @@ class ProfileSerializer(serializers.ModelSerializer):
         if request:
             return request.build_absolute_uri(url)
         return url
+
+    def get_university_icon(self, obj):
+        url = obj.university_icon
+        if not url:
+            return None
+        if isinstance(url, str) and url.startswith("http"):
+            return url
+        request = self.context.get("request")
+        if request:
+            return request.build_absolute_uri(url)
+        return url
+
+    def get_selected_exam_date(self, obj):
+        d = getattr(obj, "selected_exam_date", None)
+        if not d:
+            return None
+        return {"id": d.id, "date": d.date.isoformat()}

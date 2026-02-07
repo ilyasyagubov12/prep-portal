@@ -1765,13 +1765,13 @@ async function getSignedUrl(storage_path: string) {
 
     {/* Calendar grid */}
     <div className="rounded-2xl border border-neutral-200 bg-white shadow-sm overflow-hidden">
-<div className="grid grid-cols-7 bg-gradient-to-r from-indigo-500 via-blue-500 to-cyan-500 border-b border-blue-600">
+      <div className="hidden sm:grid grid-cols-7 bg-gradient-to-r from-indigo-500 via-blue-500 to-cyan-500 border-b border-blue-600">
         {Array.from({ length: 7 }).map((_, i) => {
           const d = addDays(calendarWeekStart, i);
           return (
             <div
               key={i}
-className="px-3 py-3 text-xs sm:text-sm font-semibold text-white border-r border-white/20 last:border-r-0"
+              className="px-3 py-3 text-xs sm:text-sm font-semibold text-white border-r border-white/20 last:border-r-0"
             >
               {fmtDay(d)}
             </div>
@@ -1779,7 +1779,7 @@ className="px-3 py-3 text-xs sm:text-sm font-semibold text-white border-r border
         })}
       </div>
 
-      <div className="grid grid-cols-7">
+      <div className="grid grid-cols-1 sm:grid-cols-7">
         {Array.from({ length: 7 }).map((_, i) => {
           const day = addDays(calendarWeekStart, i);
           const dayStart = new Date(day);
@@ -1796,8 +1796,11 @@ className="px-3 py-3 text-xs sm:text-sm font-semibold text-white border-r border
           return (
             <div
               key={i}
-              className="min-h-[160px] p-3 border-r last:border-r-0 border-b border-neutral-200 bg-white hover:bg-neutral-50/40 transition"
+              className="min-h-[120px] sm:min-h-[160px] p-3 border-b border-neutral-200 bg-white hover:bg-neutral-50/40 transition sm:border-r sm:last:border-r-0"
             >
+              <div className="mb-2 text-xs font-semibold text-neutral-600 sm:hidden">
+                {fmtDay(day)}
+              </div>
               {calendarBusy ? (
                 <div className="text-xs text-neutral-500">Loading...</div>
               ) : items.length === 0 ? (

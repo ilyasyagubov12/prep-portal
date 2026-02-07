@@ -8,6 +8,7 @@ import Sidebar from "./sidebar";
 export default function StudentLayout({ children }: { children: ReactNode }) {
   const router = useRouter();
   const [checking, setChecking] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -50,9 +51,25 @@ export default function StudentLayout({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh" }}>
-      <Sidebar />
-      <main style={{ flex: 1, padding: 24 }}>{children}</main>
+    <div className="min-h-screen md:flex">
+      <Sidebar mobileOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      {sidebarOpen ? (
+        <div
+          className="fixed inset-0 bg-black/30 z-40 md:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      ) : null}
+      <main className="flex-1 p-4 sm:p-6">
+        <div className="md:hidden mb-4">
+          <button
+            className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold"
+            onClick={() => setSidebarOpen(true)}
+          >
+            ☰ Menu
+          </button>
+        </div>
+        {children}
+      </main>
     </div>
   );
 }

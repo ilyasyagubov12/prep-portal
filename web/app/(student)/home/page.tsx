@@ -1,3 +1,517 @@
+﻿"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import Image from "next/image";
+import { Manrope } from "next/font/google";
+import mascot from "@/sss/mascot(ilyas).png";
+import happy from "@/sss/happy(ilyas).png";
+import vic from "@/sss/vic(ilyas).png";
+
+const uiFont = Manrope({ subsets: ["latin"], weight: ["400", "500", "600", "700", "800"] });
+
+type ExamDate = {
+  id: number;
+  date: string; // YYYY-MM-DD
+};
+
 export default function HomePage() {
-  return <h1 style={{ fontSize: 28, fontWeight: 800 }}>Home</h1>;
+  const [examDates, setExamDates] = useState<ExamDate[]>([]);
+  const [selectedExam, setSelectedExam] = useState<ExamDate | null>(null);
+  const [showExamPicker, setShowExamPicker] = useState(false);
+  const [newExamDate, setNewExamDate] = useState("");
+  const [isStaff, setIsStaff] = useState(false);
+  const [loadingDates, setLoadingDates] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [now, setNow] = useState(new Date());
+  const [mathGoal, setMathGoal] = useState(600);
+  const [verbalGoal, setVerbalGoal] = useState(600);
+  const [showGoalPicker, setShowGoalPicker] = useState(false);
+  const [draftMath, setDraftMath] = useState(600);
+  const [draftVerbal, setDraftVerbal] = useState(600);
+  const [showUniPicker, setShowUniPicker] = useState(false);
+  const [uniPreview, setUniPreview] = useState<string | null>(null);
+  const [uniFile, setUniFile] = useState<File | null>(null);
+  const [uniUploading, setUniUploading] = useState(false);
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(new Date()), 60_000);
+    return () => window.clearInterval(id);
+  }, []);
+
+
+  useEffect(() => {
+    (async () => {
+      try {
+        setLoadingDates(true);
+        const access = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
+
+        if (access) {
+          const me = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/auth/me/`, {
+            headers: { Authorization: `Bearer ${access}` },
+          }).catch(() => null);
+          if (me && me.ok) {
+            const prof = await me.json().catch(() => null);
+            const role = (prof?.role ?? "").toLowerCase();
+            setIsStaff(!!prof?.is_admin || role === "admin" || role === "teacher");
+            const sel = prof?.selected_exam_date;
+            if (sel?.id && sel?.date) {
+              setSelectedExam({ id: Number(sel.id), date: sel.date });
+            }
+            if (typeof prof?.goal_math === "number") setMathGoal(prof.goal_math);
+            if (typeof prof?.goal_verbal === "number") setVerbalGoal(prof.goal_verbal);
+            if (prof?.university_icon) setUniPreview(prof.university_icon);
+          }
+        }
+
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/exam-dates/`, {
+          headers: {
+            ...(access ? { Authorization: `Bearer ${access}` } : {}),
+          },
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json?.error || "Failed to load dates");
+        const upcoming = (json.dates ?? []).map((d: any) => ({ id: Number(d.id), date: d.date }));
+        setExamDates(upcoming);
+        if (selectedExam && !upcoming.find((d: ExamDate) => d.id === selectedExam.id)) {
+          setSelectedExam(null);
+        }
+        setError(null);
+      } catch (e: any) {
+        setError(e?.message ?? "Failed to load dates");
+      } finally {
+        setLoadingDates(false);
+      }
+    })();
+  }, []);
+
+  const formattedDates = useMemo(() => {
+    const fmt = new Intl.DateTimeFormat("en-US", { month: "long", day: "numeric", year: "numeric" });
+    return examDates.map((d) => ({ ...d, label: fmt.format(new Date(d.date + "T00:00:00")) }));
+  }, [examDates]);
+
+  const countdownText = useMemo(() => {
+    if (!selectedExam) return null;
+    const target = new Date(selectedExam.date + "T00:00:00");
+    const diffMs = target.getTime() - now.getTime();
+    const days = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+    if (days < 0) return "Date passed";
+    if (days === 0) return "Today";
+    return `${days} days left`;
+  }, [selectedExam, now]);
+
+  async function selectExamDate(dateId: number) {
+    const access = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/exam-dates/select/`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(access ? { Authorization: `Bearer ${access}` } : {}),
+        },
+        body: JSON.stringify({ date_id: dateId }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Failed to select date");
+      setSelectedExam({ id: Number(json.selected.id), date: json.selected.date });
+      setShowExamPicker(false);
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to select date");
+    }
+  }
+
+  async function addExamDate() {
+    if (!newExamDate) return;
+    const access = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/exam-dates/`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(access ? { Authorization: `Bearer ${access}` } : {}),
+        },
+        body: JSON.stringify({ date: newExamDate }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Failed to add date");
+      const added = { id: Number(json.date.id), date: json.date.date };
+      setExamDates((prev) => [...prev, added].sort((a, b) => a.date.localeCompare(b.date)));
+      setNewExamDate("");
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to add date");
+    }
+  }
+
+  async function uploadUniversityIcon(file: File) {
+    const access = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
+    try {
+      setUniUploading(true);
+      const form = new FormData();
+      form.append("icon", file);
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/auth/university-icon/`, {
+        method: "POST",
+        headers: {
+          ...(access ? { Authorization: `Bearer ${access}` } : {}),
+        },
+        body: form,
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Failed to upload icon");
+      setUniPreview(json.icon ?? null);
+      setUniFile(null);
+      setShowUniPicker(false);
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to upload icon");
+    } finally {
+      setUniUploading(false);
+    }
+  }
+  async function saveGoalScores() {
+    const access = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/auth/goal-score/`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          ...(access ? { Authorization: `Bearer ${access}` } : {}),
+        },
+        body: JSON.stringify({ goal_math: draftMath, goal_verbal: draftVerbal }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Failed to save goal score");
+      setMathGoal(json.goal_math ?? draftMath);
+      setVerbalGoal(json.goal_verbal ?? draftVerbal);
+      setShowGoalPicker(false);
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to save goal score");
+    }
+  }
+
+  return (
+    <div className={`${uiFont.className} min-h-screen bg-[#f6f7fb] text-slate-900`}>
+      <div className="mx-auto max-w-none px-4 py-6 sm:px-6 sm:py-8">
+        {/* Greeting */}
+        <div className="mt-2 flex items-center gap-2 text-lg font-semibold">
+          <span>👋</span>
+          <span>Hi Suleyman Karimov</span>
+        </div>
+
+        {error ? <div className="mt-3 text-sm text-red-600">{error}</div> : null}
+
+        {/* Main grid */}
+        <div className="mt-4 grid gap-4 lg:grid-cols-[2fr_1fr]">
+          {/* Left column */}
+          <div className="grid gap-4">
+            <div className="relative rounded-3xl border border-slate-200 bg-white p-5 sm:p-6 shadow-sm">
+              <div className="text-sm text-slate-600">Last Test</div>
+              <div className="text-sm text-slate-600">Result</div>
+              <div className="mt-6 text-4xl font-semibold text-rose-600 pr-40 sm:pr-56 lg:pr-72">0</div>
+              <div className="text-sm text-slate-500 pr-40 sm:pr-56 lg:pr-72">0/0</div>
+              <div className="pointer-events-none absolute right-0 bottom-0 top-0 w-32 sm:w-48 lg:w-80">
+                <div className="absolute inset-0 rounded-2xl bg-slate-200/40 blur-2xl" />
+                <Image src={mascot} alt="Mascot" fill className="object-contain object-bottom drop-shadow-lg" />
+              </div>
+            </div>
+
+            <div className="relative rounded-3xl border border-slate-200 bg-white p-5 sm:p-6 shadow-sm">
+              <div className="text-sm text-slate-600">Roadmap</div>
+              <div className="mt-8 text-center text-lg font-semibold">Soon... 🙂</div>
+              <div className="pointer-events-none absolute right-6 bottom-6 h-16 w-24 rounded-2xl bg-slate-100" />
+              <div className="pointer-events-none absolute right-12 bottom-12 h-4 w-4 rounded-full bg-rose-500" />
+              <div className="pointer-events-none absolute right-20 bottom-8 h-4 w-4 rounded-full bg-slate-400" />
+            </div>
+          </div>
+
+          {/* Right column */}
+          <div className="grid gap-4">
+            <div className="relative rounded-3xl border border-blue-700 bg-gradient-to-br from-blue-700 to-blue-600 p-5 sm:p-6 text-white shadow-sm">
+              <div className="text-4xl sm:text-5xl font-bold text-white">
+                {selectedExam ? countdownText ?? "" : "Set your exam"}
+              </div>
+              <div className="mt-6">
+                {selectedExam ? (
+                  <>
+                    <div className="text-sm font-semibold">{formattedDates.find((d) => d.id === selectedExam.id)?.label}</div>
+                    <button
+                      className="mt-3 text-sm font-semibold underline underline-offset-2"
+                      onClick={() => setShowExamPicker((v) => !v)}
+                    >
+                      Change date
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    className="text-sm font-semibold"
+                    onClick={() => setShowExamPicker((v) => !v)}
+                  >
+                    Set your exam date →
+                  </button>
+                )}
+              </div>
+              <button
+                className="absolute right-4 bottom-4 h-10 w-10 rounded-full bg-white/15 text-white"
+                onClick={() => setShowExamPicker((v) => !v)}
+              >
+                ✎
+              </button>
+              <div className="pointer-events-none absolute right-0 top-0 h-16 w-16 rounded-bl-full bg-white/20" />
+
+              {showExamPicker ? (
+                <div className="mt-4 rounded-2xl border border-white/20 bg-white/10 p-4">
+                  {loadingDates ? (
+                    <div className="text-sm text-white/80">Loading dates...</div>
+                  ) : formattedDates.length === 0 ? (
+                    <div className="text-sm text-white/80">No upcoming dates.</div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+                      {formattedDates.map((d) => (
+                        <div key={d.id} className="flex items-center justify-between gap-2">
+                          <button
+                            className="flex items-center gap-2 text-left text-white/90 hover:text-white"
+                            onClick={() => selectExamDate(d.id)}
+                          >
+                            <span className="w-4">{selectedExam?.id === d.id ? "✓" : ""}</span>
+                            <span>{d.label}</span>
+                          </button>
+                          {isStaff ? (
+                            <button
+                              className="h-6 w-6 rounded-full border border-white/30 text-white/80 hover:text-white"
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                if (!confirm("Delete this exam date?")) return;
+                                const access =
+                                  typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
+                                try {
+                                  const res = await fetch(
+                                    `${process.env.NEXT_PUBLIC_API_BASE}/api/exam-dates/${d.id}/`,
+                                    {
+                                      method: "DELETE",
+                                      headers: {
+                                        ...(access ? { Authorization: `Bearer ${access}` } : {}),
+                                      },
+                                    }
+                                  );
+                                  if (!res.ok) {
+                                    const json = await res.json().catch(() => ({}));
+                                    throw new Error(json?.error || "Failed to delete date");
+                                  }
+                                  setExamDates((prev) => prev.filter((x) => x.id !== d.id));
+                                  if (selectedExam?.id === d.id) setSelectedExam(null);
+                                } catch (err: any) {
+                                  setError(err?.message ?? "Failed to delete date");
+                                }
+                              }}
+                              aria-label="Delete exam date"
+                            >
+                              ×
+                            </button>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {isStaff ? (
+                    <div className="mt-3 flex items-center gap-2">
+                      <input
+                        type="date"
+                        className="h-9 rounded-lg border border-white/30 bg-white/10 px-3 text-sm text-white outline-none"
+                        value={newExamDate}
+                        onChange={(e) => setNewExamDate(e.target.value)}
+                      />
+                      <button
+                        className="h-9 rounded-lg bg-white/20 px-3 text-sm font-semibold"
+                        onClick={addExamDate}
+                      >
+                        Add
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
+              <div className="relative rounded-3xl border border-slate-200 bg-white p-5 sm:p-6 shadow-sm overflow-hidden">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-sm text-slate-600">My Goal</div>
+                    <div className="text-base font-semibold">Score</div>
+                  </div>
+                  <button
+                    className="h-9 w-9 rounded-full bg-slate-100 text-slate-600"
+                    onClick={() => {
+                      setDraftMath(mathGoal);
+                      setDraftVerbal(verbalGoal);
+                      setShowGoalPicker(true);
+                    }}
+                    aria-label="Set goal score"
+                  >
+                    ✎
+                  </button>
+                </div>
+                <div className="mt-6 text-3xl font-semibold text-slate-900">
+                  {mathGoal + verbalGoal}
+                </div>
+                <div className="mt-1 text-xs text-slate-500">Math {mathGoal} + Verbal {verbalGoal}</div>
+                <div className="pointer-events-none absolute right-0 bottom-0 h-20 w-20 sm:h-24 sm:w-24 lg:h-28 lg:w-28">
+                  <Image src={vic} alt="Victory mascot" fill className="object-contain" />
+                </div>
+              </div>
+
+              <div className="relative rounded-3xl border border-slate-200 bg-white p-5 sm:p-6 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-sm text-slate-600">My Goal</div>
+                    <div className="text-base font-semibold">University</div>
+                  </div>
+                  <div />
+                </div>
+                {uniPreview ? (
+                  <button
+                    className="mt-5 flex w-full items-center justify-center"
+                    onClick={() => setShowUniPicker(true)}
+                    aria-label="Change university icon"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={uniPreview}
+                      alt="University"
+                      className="h-24 w-24 sm:h-36 sm:w-36 lg:h-44 lg:w-44 object-contain"
+                    />
+                  </button>
+                ) : (
+                  <button
+                    className="mt-6 rounded-full bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white"
+                    onClick={() => setShowUniPicker(true)}
+                  >
+                    + Choose University →
+                  </button>
+                )}
+                <div className="pointer-events-none absolute right-0 top-0 h-24 w-24 sm:h-32 sm:w-32 lg:h-36 lg:w-36">
+                  <Image src={happy} alt="Happy mascot" fill className="object-contain" />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      {showGoalPicker ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white shadow-xl border border-slate-200">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
+              <div className="text-sm font-semibold text-slate-900">Set dream score</div>
+              <button
+                className="h-8 w-8 rounded-full border border-slate-200 text-slate-600"
+                onClick={() => setShowGoalPicker(false)}
+              >
+                ×
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div>
+                <div className="flex items-center justify-between text-xs text-slate-600">
+                  <span>Math</span>
+                  <span className="font-semibold text-slate-900">{draftMath}</span>
+                </div>
+                <input
+                  type="range"
+                  min={200}
+                  max={800}
+                  step={10}
+                  value={draftMath}
+                  onChange={(e) => setDraftMath(Number(e.target.value))}
+                  className="mt-2 w-full"
+                />
+              </div>
+              <div>
+                <div className="flex items-center justify-between text-xs text-slate-600">
+                  <span>Verbal</span>
+                  <span className="font-semibold text-slate-900">{draftVerbal}</span>
+                </div>
+                <input
+                  type="range"
+                  min={200}
+                  max={800}
+                  step={10}
+                  value={draftVerbal}
+                  onChange={(e) => setDraftVerbal(Number(e.target.value))}
+                  className="mt-2 w-full"
+                />
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700">
+                Total: {draftMath + draftVerbal}
+              </div>
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold"
+                  onClick={() => setShowGoalPicker(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
+                  onClick={saveGoalScores}
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showUniPicker ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white shadow-xl border border-slate-200">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
+              <div className="text-sm font-semibold text-slate-900">Choose University</div>
+              <button
+                className="h-8 w-8 rounded-full border border-slate-200 text-slate-600"
+                onClick={() => setShowUniPicker(false)}
+              >
+                ×
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div className="text-sm text-slate-600">Upload your university icon.</div>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => {
+                  const file = e.target.files?.[0] || null;
+                  setUniFile(file);
+                  if (file) {
+                    const url = URL.createObjectURL(file);
+                    setUniPreview(url);
+                  }
+                }}
+              />
+              {uniPreview ? (
+                <div className="rounded-xl border border-slate-200 p-3 inline-flex items-center gap-3">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={uniPreview} alt="Preview" className="h-16 w-16 rounded-lg object-cover" />
+                  <div className="text-sm text-slate-600">Preview</div>
+                </div>
+              ) : null}
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold"
+                  onClick={() => setShowUniPicker(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="rounded-full bg-blue-600 px-4 py-2 text-sm font-semibold text-white"
+                  onClick={() => (uniFile ? uploadUniversityIcon(uniFile) : setShowUniPicker(false))}
+                  disabled={!uniFile || uniUploading}
+                >
+                  {uniUploading ? "Saving..." : "Save"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
 }

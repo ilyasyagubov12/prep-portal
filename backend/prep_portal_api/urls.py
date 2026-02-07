@@ -29,6 +29,7 @@ urlpatterns = [
     path("api/", include("assignments.urls")),
     path("api/", include("question_bank.urls")),
     path("api/", include("vocab.urls")),
+    path("api/", include("exam_dates.urls")),
     # Temporary gradebook stubs
     path("api/grades/me/", grades_me, name="grades_me"),
     path("api/grades/offline/", grades_offline, name="grades_offline"),

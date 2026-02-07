@@ -41,6 +41,8 @@ export default function Page() {
   const [newWordDifficulty, setNewWordDifficulty] = useState<Word["difficulty"]>("easy");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [uploadMessage, setUploadMessage] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
   const [isStaff, setIsStaff] = useState(false);
 
   const activePack = packList.find((p) => p.id === activePackId) ?? packList[0];
@@ -171,6 +173,7 @@ export default function Page() {
 
   async function deleteWord(wordId: string) {
     if (!activePack) return;
+    if (!confirm("Are you sure you want to delete this word?")) return;
     const access = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
     try {
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/vocab/words/${wordId}/`, {
@@ -199,6 +202,7 @@ export default function Page() {
   }
 
   async function deletePack(packId: string) {
+    if (!confirm("Are you sure you want to delete this pack?")) return;
     const access = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
     try {
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/vocab/packs/${packId}/`, {
@@ -226,10 +230,58 @@ export default function Page() {
     }
   }
 
+  async function importCsv(file: File) {
+    const access = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
+    try {
+      setUploading(true);
+      setUploadMessage(null);
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/vocab/words/import/`, {
+        method: "POST",
+        headers: {
+          ...(access ? { Authorization: `Bearer ${access}` } : {}),
+        },
+        body: form,
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Failed to import");
+      const created = json?.created ?? 0;
+      const errs = json?.errors ?? [];
+      setUploadMessage(`Imported ${created} words${errs.length ? ` (${errs.length} errors)` : ""}.`);
+      // refresh packs
+      const refresh = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/vocab/packs/`, {
+        headers: {
+          ...(access ? { Authorization: `Bearer ${access}` } : {}),
+        },
+      });
+      const rjson = await refresh.json();
+      if (refresh.ok) {
+        const packs = (rjson.packs ?? []).map((p: any) => ({
+          id: String(p.id),
+          title: p.title,
+          createdBy: "Admin",
+          words: (p.words ?? []).map((w: any) => ({
+            id: String(w.id),
+            term: w.term,
+            definition: w.definition,
+            difficulty: w.difficulty,
+          })),
+        }));
+        setPackList(packs);
+        if (!activePackId && packs[0]) setActivePackId(packs[0].id);
+      }
+    } catch (e: any) {
+      setUploadMessage(e?.message ?? "Failed to import");
+    } finally {
+      setUploading(false);
+    }
+  }
+
   return (
     <div className={`${uiFont.className} min-h-screen bg-[#f7f7fb] text-slate-900`}>
-      <div className="mx-auto max-w-6xl px-6 py-8">
-        <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
+      <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600">
               Vocabulary Practice
@@ -239,14 +291,12 @@ export default function Page() {
               Choose a pack made by your admin and practice with flashcards.
             </p>
           </div>
-          <button className="rounded-full bg-slate-900 px-5 py-2 text-sm font-semibold text-white shadow-sm">
-            Start Practice
-          </button>
+          <div />
         </div>
 
         {error ? <div className="mt-4 text-sm text-red-600">{error}</div> : null}
 
-        <div className="mt-8 grid gap-6 lg:grid-cols-[280px_1fr]">
+        <div className="mt-6 grid gap-5 lg:grid-cols-[280px_1fr]">
           <div className="rounded-2xl border border-slate-200 bg-white p-4">
             <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Packs</div>
             {isStaff ? (
@@ -308,9 +358,9 @@ export default function Page() {
             {!selectedWord ? (
               <>
                 <div className="flex flex-wrap items-center gap-3">
-                  <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm">
+                  <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm w-full sm:w-auto">
                     <input
-                      className="w-48 bg-transparent text-sm outline-none"
+                      className="w-full sm:w-48 bg-transparent text-sm outline-none"
                       placeholder="Search words..."
                       value={search}
                       onChange={(e) => setSearch(e.target.value)}
@@ -329,9 +379,9 @@ export default function Page() {
                 </div>
 
                 {isStaff ? (
-                  <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
-                    <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Add a word</div>
-                    <div className="mt-3 grid gap-3 md:grid-cols-3">
+                <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
+                  <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Add a word</div>
+                  <div className="mt-3 grid gap-3 md:grid-cols-3">
                       <input
                         className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
                         placeholder="Word"
@@ -366,19 +416,54 @@ export default function Page() {
                         Save word
                       </button>
                     </div>
+                    <div className="mt-4 border-t border-slate-200 pt-4">
+                      <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Import CSV</div>
+                      <p className="mt-2 text-xs text-slate-600">
+                        Columns: <span className="font-semibold">pack_title</span> or{" "}
+                        <span className="font-semibold">pack_id</span>, term, definition, difficulty.
+                      </p>
+                      <div className="mt-3 flex items-center gap-3">
+                        <input
+                          type="file"
+                          accept=".csv"
+                          className="text-sm"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) importCsv(file);
+                            e.currentTarget.value = "";
+                          }}
+                        />
+                        {uploading ? (
+                          <span className="text-xs text-slate-500">Uploading...</span>
+                        ) : null}
+                        {uploadMessage ? (
+                          <span className="text-xs text-slate-600">{uploadMessage}</span>
+                        ) : null}
+                      </div>
+                    </div>
                   </div>
                 ) : null}
 
                 <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
                   {filteredWords.map((word) => (
-                    <button
+                    <div
                       key={word.id}
+                      role="button"
+                      tabIndex={0}
                       onClick={() => {
                         setSelectedWordId(word.id);
                         setDetailRevealed(false);
                         setSentence("");
                       }}
-                      className={`relative h-24 rounded-xl border px-3 py-3 text-left text-sm transition ${
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          setSelectedWordId(word.id);
+                          setDetailRevealed(false);
+                          setSentence("");
+                        }
+                      }}
+                      className={`relative h-24 rounded-xl border px-3 py-3 text-left text-sm transition cursor-pointer ${
                         difficultyTone[word.difficulty]
                       }`}
                     >
@@ -396,7 +481,7 @@ export default function Page() {
                       ) : null}
                       <div className="font-semibold">{word.term}</div>
                       <div className="mt-2 text-[11px] opacity-70">Tap to open</div>
-                    </button>
+                    </div>
                   ))}
                 </div>
               </>
@@ -437,18 +522,6 @@ export default function Page() {
                     </div>
                   </div>
                 </button>
-
-                <div className="flex items-center gap-3">
-                  <input
-                    className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm"
-                    placeholder="Use this word in a sentence..."
-                    value={sentence}
-                    onChange={(e) => setSentence(e.target.value)}
-                  />
-                  <button className="rounded-2xl bg-slate-800 px-4 py-3 text-sm font-semibold text-white">
-                    Check ● 2
-                  </button>
-                </div>
 
                 <div className="flex items-center justify-between">
                   <button

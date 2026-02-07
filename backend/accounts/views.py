@@ -38,6 +38,35 @@ class ProfileUpdateView(APIView):
         return Response(ProfileSerializer(prof, context={"request": request}).data)
 
 
+class GoalScoreUpdateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def patch(self, request):
+        prof = request.user.profile
+        math = request.data.get("goal_math")
+        verbal = request.data.get("goal_verbal")
+
+        def _parse(val, default):
+            try:
+                return int(val)
+            except Exception:
+                return default
+
+        if math is not None:
+            m = _parse(math, prof.goal_math)
+            if m < 200 or m > 800:
+                return Response({"error": "goal_math must be between 200 and 800"}, status=400)
+            prof.goal_math = m
+        if verbal is not None:
+            v = _parse(verbal, prof.goal_verbal)
+            if v < 200 or v > 800:
+                return Response({"error": "goal_verbal must be between 200 and 800"}, status=400)
+            prof.goal_verbal = v
+
+        prof.save(update_fields=["goal_math", "goal_verbal"])
+        return Response({"ok": True, "goal_math": prof.goal_math, "goal_verbal": prof.goal_verbal})
+
+
 class AvatarUploadView(APIView):
     """
     Handle avatar image upload and attach to the current profile.
@@ -63,6 +92,32 @@ class AvatarUploadView(APIView):
 
         absolute_url = request.build_absolute_uri(rel_url)
         return Response({"avatar": absolute_url})
+
+
+class UniversityIconUploadView(APIView):
+    """
+    Handle university icon upload and attach to the current profile.
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        file = request.FILES.get("icon")
+        if not file:
+            return Response({"error": "No file provided"}, status=status.HTTP_400_BAD_REQUEST)
+
+        user_id = request.user.id
+        ext = os.path.splitext(file.name)[1] or ".png"
+        fname = f"university_icons/{user_id}/{timezone.now().strftime('%Y%m%d%H%M%S')}{ext}"
+
+        saved_path = default_storage.save(fname, ContentFile(file.read()))
+        prof = request.user.profile
+        rel_url = default_storage.url(saved_path) if hasattr(default_storage, "url") else saved_path
+        prof.university_icon = rel_url
+        prof.save(update_fields=["university_icon"])
+
+        absolute_url = request.build_absolute_uri(rel_url)
+        return Response({"icon": absolute_url})
 
 
 def _require_admin(user: User):
