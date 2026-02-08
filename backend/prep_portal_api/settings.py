@@ -34,7 +34,7 @@ ALLOWED_HOSTS = [
     h.strip()
     for h in os.getenv(
         "ALLOWED_HOSTS",
-        "localhost,127.0.0.1,prep-portal.onrender.com,prepto.vercel.app,prep-portal-nine.vercel.app",
+        "localhost,127.0.0.1,prep-portal.onrender.com,prepto.vercel.app,prep-portal-nine.vercel.app,prep-portal-henna.vercel.app",
     ).split(",")
     if h.strip()
 ]
@@ -184,7 +184,7 @@ CORS_ALLOWED_ORIGINS = [
     o.strip()
     for o in os.getenv(
         "CORS_ALLOWED_ORIGINS",
-        "http://localhost:3000,https://prepto.vercel.app,https://prep-portal.onrender.com,https://prep-portal-nine.vercel.app,https://prep-portal-git-main-ilyas-projects-1a041d8f.vercel.app,https://prep-portal-1mphmxheg-ilyas-projects-1a041d8f.vercel.app",
+        "http://localhost:3000,https://prepto.vercel.app,https://prep-portal.onrender.com,https://prep-portal-nine.vercel.app,https://prep-portal-git-main-ilyas-projects-1a041d8f.vercel.app,https://prep-portal-1mphmxheg-ilyas-projects-1a041d8f.vercel.app,https://prep-portal-henna.vercel.app",
     ).split(",")
     if o.strip()
 ]
@@ -193,7 +193,7 @@ CSRF_TRUSTED_ORIGINS = [
     o.strip()
     for o in os.getenv(
         "CSRF_TRUSTED_ORIGINS",
-        "http://localhost:3000,https://prepto.vercel.app,https://prep-portal.onrender.com,https://prep-portal-nine.vercel.app,https://prep-portal-git-main-ilyas-projects-1a041d8f.vercel.app,https://prep-portal-1mphmxheg-ilyas-projects-1a041d8f.vercel.app",
+        "http://localhost:3000,https://prepto.vercel.app,https://prep-portal.onrender.com,https://prep-portal-nine.vercel.app,https://prep-portal-git-main-ilyas-projects-1a041d8f.vercel.app,https://prep-portal-1mphmxheg-ilyas-projects-1a041d8f.vercel.app,https://prep-portal-henna.vercel.app",
     ).split(",")
     if o.strip()
 ]
