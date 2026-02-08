@@ -34,7 +34,7 @@ ALLOWED_HOSTS = [
     h.strip()
     for h in os.getenv(
         "ALLOWED_HOSTS",
-        "localhost,127.0.0.1,prep-portal.onrender.com,prepto.vercel.app",
+        "localhost,127.0.0.1,prep-portal.onrender.com,prepto.vercel.app,prep-portal-nine.vercel.app",
     ).split(",")
     if h.strip()
 ]
@@ -52,6 +52,8 @@ INSTALLED_APPS = [
     "corsheaders",
     "rest_framework",
     "rest_framework_simplejwt",
+    "cloudinary_storage",
+    "cloudinary",
     "accounts",
     "courses",
     "assignments",
@@ -146,6 +148,13 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
+# Cloudinary storage (for production uploads)
+if os.getenv("CLOUDINARY_URL"):
+    STORAGES = {
+        "default": {"BACKEND": "cloudinary_storage.storage.MediaCloudinaryStorage"},
+        "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+    }
+
 # Default primary key type
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
@@ -175,7 +184,16 @@ CORS_ALLOWED_ORIGINS = [
     o.strip()
     for o in os.getenv(
         "CORS_ALLOWED_ORIGINS",
-        "http://localhost:3000,https://prepto.vercel.app,https://prep-portal.onrender.com",
+        "http://localhost:3000,https://prepto.vercel.app,https://prep-portal.onrender.com,https://prep-portal-nine.vercel.app,https://prep-portal-git-main-ilyas-projects-1a041d8f.vercel.app,https://prep-portal-1mphmxheg-ilyas-projects-1a041d8f.vercel.app",
+    ).split(",")
+    if o.strip()
+]
+
+CSRF_TRUSTED_ORIGINS = [
+    o.strip()
+    for o in os.getenv(
+        "CSRF_TRUSTED_ORIGINS",
+        "http://localhost:3000,https://prepto.vercel.app,https://prep-portal.onrender.com,https://prep-portal-nine.vercel.app,https://prep-portal-git-main-ilyas-projects-1a041d8f.vercel.app,https://prep-portal-1mphmxheg-ilyas-projects-1a041d8f.vercel.app",
     ).split(",")
     if o.strip()
 ]

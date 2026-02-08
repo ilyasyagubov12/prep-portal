@@ -215,6 +215,7 @@ class AssignmentSubmissionsListView(APIView):
             row = SubmissionSerializer(s).data
             g = grades.get(s.id)
             row["grade"] = GradeSerializer(g).data if g else None
+            row["file_url"] = default_storage.url(s.file_path) if s.file_path else None
             row["student_obj"] = {
                 "user_id": str(s.student.id),
                 "username": getattr(s.student, "username", None),
@@ -244,7 +245,12 @@ class AssignmentAttachmentListView(APIView):
             return Response({"error": "Forbidden"}, status=403)
 
         files = AssignmentFile.objects.filter(assignment=assignment).order_by("-created_at")
-        return Response({"ok": True, "files": AssignmentFileSerializer(files, many=True).data})
+        rows = []
+        for f in files:
+            row = AssignmentFileSerializer(f).data
+            row["url"] = default_storage.url(f.storage_path) if f.storage_path else None
+            rows.append(row)
+        return Response({"ok": True, "files": rows})
 
 
 class AssignmentAttachmentUploadView(APIView):
@@ -275,7 +281,7 @@ class AssignmentAttachmentUploadView(APIView):
             size_bytes=getattr(file_obj, "size", None),
             created_by=request.user,
         )
-        file_url = request.build_absolute_uri(settings.MEDIA_URL + saved)
+        file_url = default_storage.url(saved)
         data = AssignmentFileSerializer(af).data
         data["url"] = file_url
         return Response({"ok": True, "file": data})
@@ -348,7 +354,7 @@ class SubmissionCreateView(APIView):
             file_size=getattr(file_obj, "size", None),
             mime_type=getattr(file_obj, "content_type", None),
         )
-        file_url = request.build_absolute_uri(settings.MEDIA_URL + saved)
+        file_url = default_storage.url(saved)
         data = SubmissionSerializer(sub).data
         data["file_url"] = file_url
         return Response({"ok": True, "submission": data}, status=201)

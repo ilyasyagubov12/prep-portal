@@ -75,7 +75,11 @@ export default function AssignmentPage() {
   const [deleteBusy, setDeleteBusy] = useState(false);
 
   const canManage = isTeacherOrAdmin(profile);
-  const mediaUrl = (path: string) => `${API_BASE}/media/${path}`;
+  const mediaUrl = (path: string | null | undefined) => {
+    if (!path) return "";
+    if (path.startsWith("http://") || path.startsWith("https://")) return path;
+    return `${API_BASE}/media/${path}`;
+  };
 
   // auth + profile
   useEffect(() => {
@@ -154,6 +158,7 @@ export default function AssignmentPage() {
       (json?.files ?? []).map((f: any) => ({
         ...f,
         assignment_id: f.assignment ?? f.assignment_id ?? aid,
+        url: f.url ?? null,
       }))
     );
   }
@@ -174,6 +179,7 @@ export default function AssignmentPage() {
       student_id: s.student ?? s.student_id ?? "",
       grade: (s as any).grade ?? null,
       student: (s as any).student_obj ?? undefined,
+      file_url: (s as any).file_url ?? null,
     }));
     if (!canManage && profile) subs = subs.filter((s) => s.student_id === profile.user_id);
     setSubmissions(subs);
@@ -485,7 +491,11 @@ export default function AssignmentPage() {
                   </div>
                 </div>
                 <div className="flex gap-2">
-                  <button className="underline text-sm" type="button" onClick={() => window.open(mediaUrl(f.storage_path), "_blank")}>
+                  <button
+                    className="underline text-sm"
+                    type="button"
+                    onClick={() => window.open(mediaUrl((f as any).url || f.storage_path), "_blank")}
+                  >
                     Open
                   </button>
                   {canManage ? (
@@ -543,7 +553,11 @@ export default function AssignmentPage() {
                             </div>
                             <div className="text-xs text-neutral-500">Size: {s.file_size ?? 0} bytes</div>
                           </div>
-                          <button className="underline text-sm" type="button" onClick={() => window.open(mediaUrl(s.file_path), "_blank")}>
+                          <button
+                            className="underline text-sm"
+                            type="button"
+                            onClick={() => window.open(mediaUrl((s as any).file_url || s.file_path), "_blank")}
+                          >
                             Open
                           </button>
                         </div>
@@ -571,7 +585,11 @@ export default function AssignmentPage() {
                         Size: {s.file_size ?? 0} bytes · {s.grade ? `Score: ${s.grade.score ?? "N/A"}` : "Pending review"}
                       </div>
                     </div>
-                    <button className="underline text-sm" type="button" onClick={() => window.open(mediaUrl(s.file_path), "_blank")}>
+                    <button
+                      className="underline text-sm"
+                      type="button"
+                      onClick={() => window.open(mediaUrl((s as any).file_url || s.file_path), "_blank")}
+                    >
                       Open
                     </button>
                   </div>

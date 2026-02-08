@@ -15,6 +15,7 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.conf import settings
+import os
 from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import path, include
@@ -41,5 +42,5 @@ urlpatterns = [
     path("api/admin/users/<uuid:user_id>/delete/", AdminDeleteUserView.as_view(), name="alias_admin_users_delete"),
 ]
 
-if settings.DEBUG:
+if settings.DEBUG or os.getenv("SERVE_MEDIA", "True") == "True":
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

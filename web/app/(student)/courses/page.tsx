@@ -56,7 +56,11 @@ export default function CoursesPage() {
         ...c,
         cover_url:
           c.cover_url ||
-          (c.cover_path ? `${base}/media/${c.cover_path}` : null),
+          (c.cover_path
+            ? c.cover_path.startsWith("http://") || c.cover_path.startsWith("https://")
+              ? c.cover_path
+              : `${base}/media/${c.cover_path}`
+            : null),
       }));
       setCourses(mapped);
       setLoading(false);

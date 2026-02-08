@@ -9,6 +9,7 @@ type Course = {
   title: string;
   description: string | null;
   cover_path: string | null;
+  cover_url?: string | null;
 };
 
 type Profile = {
@@ -41,6 +42,7 @@ type CourseNode = {
   name: string;
   description: string | null;
   storage_path: string | null;
+  storage_url?: string | null;
   mime_type: string | null;
   size_bytes: number | null;
 
@@ -535,7 +537,15 @@ export default function CourseDetailPage() {
       return;
     }
     const base = process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") || "";
-    setCoverUrl(`${base}/media/${course.cover_path}`);
+    if (course.cover_url) {
+      setCoverUrl(course.cover_url);
+    } else if (course.cover_path) {
+      if (course.cover_path.startsWith("http://") || course.cover_path.startsWith("https://")) {
+        setCoverUrl(course.cover_path);
+      } else {
+        setCoverUrl(`${base}/media/${course.cover_path}`);
+      }
+    }
   }, [course?.cover_path]);
 
   // ===== Calendar =====
@@ -696,10 +706,12 @@ export default function CourseDetailPage() {
     void loadGradebook(course.id);
   }, [course?.id, accessToken, gradebookLoaded]);
 
-async function getSignedUrl(storage_path: string) {
-    const base = process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") || "";
-    return `${base}/media/${storage_path}`;
-  }
+async function getSignedUrl(storage_path: string, storage_url?: string | null) {
+  const base = process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") || "";
+  if (storage_url) return storage_url;
+  if (storage_path.startsWith("http://") || storage_path.startsWith("https://")) return storage_path;
+  return `${base}/media/${storage_path}`;
+}
 
   async function loadGradebook(courseId: string) {
     setGradebookLoading(true);
@@ -772,7 +784,7 @@ async function getSignedUrl(storage_path: string) {
   async function onPreview(node: CourseNode) {
     if (!node.storage_path) return;
     try {
-      const url = await getSignedUrl(node.storage_path);
+      const url = await getSignedUrl(node.storage_path, (node as any).storage_url);
       const t = guessPreviewType(node.storage_path);
       setPreviewType(t);
       setPreviewUrl(url);
@@ -789,7 +801,7 @@ async function getSignedUrl(storage_path: string) {
   async function onDownload(node: CourseNode) {
     if (!node.storage_path) return;
     try {
-      const url = await getSignedUrl(node.storage_path);
+      const url = await getSignedUrl(node.storage_path, (node as any).storage_url);
       window.open(url, "_blank");
     } catch (e: any) {
       alert(e?.message ?? "Download failed");

@@ -191,7 +191,7 @@ class CourseCoverUploadView(APIView):
         course.cover_path = saved_path
         course.save(update_fields=["cover_path"])
 
-        cover_url = request.build_absolute_uri(settings.MEDIA_URL + saved_path)
+        cover_url = default_storage.url(saved_path)
         return Response({"ok": True, "cover_path": saved_path, "cover_url": cover_url})
 
 
@@ -455,7 +455,7 @@ class CourseNodeUploadView(APIView):
             published=True,
         )
 
-        file_url = request.build_absolute_uri(settings.MEDIA_URL + saved_path)
+        file_url = default_storage.url(saved_path)
 
         return Response(
             {

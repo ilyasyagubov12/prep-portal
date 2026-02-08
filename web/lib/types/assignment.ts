@@ -20,6 +20,7 @@ export type Submission = {
   assignment_id: string;
   student_id: string;
   file_path: string;
+  file_url?: string | null;
   file_name: string | null;
   file_size: number | null;
   mime_type: string | null;
@@ -46,6 +47,7 @@ export type AssignmentFile = {
   assignment_id: string;
   name: string;
   storage_path: string;
+  url?: string | null;
   mime_type: string | null;
   size_bytes: number | null;
   created_by: string | null;
