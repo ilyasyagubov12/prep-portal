@@ -5,7 +5,7 @@ from .models import User, Profile
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ["id", "email", "username"]
+        fields = ["id", "email", "username", "first_name", "last_name"]
 
 
 class ProfileSerializer(serializers.ModelSerializer):
@@ -19,6 +19,7 @@ class ProfileSerializer(serializers.ModelSerializer):
         fields = [
             "user",
             "nickname",
+            "student_id",
             "role",
             "is_admin",
             "avatar",
@@ -26,6 +27,11 @@ class ProfileSerializer(serializers.ModelSerializer):
             "selected_exam_date",
             "goal_math",
             "goal_verbal",
+            "math_level",
+            "verbal_level",
+            "phone_number",
+            "parent_name",
+            "parent_phone",
         ]
 
     def get_avatar(self, obj):

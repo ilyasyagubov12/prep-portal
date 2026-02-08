@@ -32,9 +32,23 @@ export default function HomePage() {
   const [uniPreview, setUniPreview] = useState<string | null>(null);
   const [uniFile, setUniFile] = useState<File | null>(null);
   const [uniUploading, setUniUploading] = useState(false);
+  const [displayName, setDisplayName] = useState("there");
+  const [streakCount, setStreakCount] = useState(0);
+  const [streakMath, setStreakMath] = useState(0);
+  const [streakVerbal, setStreakVerbal] = useState(0);
+  const [streakDone, setStreakDone] = useState(false);
+  const [streakTimeLeft, setStreakTimeLeft] = useState(0);
+  const [streakLoaded, setStreakLoaded] = useState(false);
 
   useEffect(() => {
     const id = window.setInterval(() => setNow(new Date()), 60_000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setStreakTimeLeft((t) => (t > 0 ? t - 1 : 0));
+    }, 1000);
     return () => window.clearInterval(id);
   }, []);
 
@@ -53,6 +67,9 @@ export default function HomePage() {
             const prof = await me.json().catch(() => null);
             const role = (prof?.role ?? "").toLowerCase();
             setIsStaff(!!prof?.is_admin || role === "admin" || role === "teacher");
+            const first = (prof?.user?.first_name || "").trim();
+            const last = (prof?.user?.last_name || "").trim();
+            setDisplayName(first || last ? `${first} ${last}`.trim() : "there");
             const sel = prof?.selected_exam_date;
             if (sel?.id && sel?.date) {
               setSelectedExam({ id: Number(sel.id), date: sel.date });
@@ -60,6 +77,19 @@ export default function HomePage() {
             if (typeof prof?.goal_math === "number") setMathGoal(prof.goal_math);
             if (typeof prof?.goal_verbal === "number") setVerbalGoal(prof.goal_verbal);
             if (prof?.university_icon) setUniPreview(prof.university_icon);
+          }
+
+          const streakRes = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/streak/status/`, {
+            headers: { Authorization: `Bearer ${access}` },
+          }).catch(() => null);
+          if (streakRes && streakRes.ok) {
+            const streakJson = await streakRes.json().catch(() => null);
+            setStreakCount(streakJson?.streak_count ?? 0);
+            setStreakMath(streakJson?.today?.math_count ?? 0);
+            setStreakVerbal(streakJson?.today?.verbal_count ?? 0);
+            setStreakDone(!!streakJson?.today?.completed);
+            setStreakTimeLeft(streakJson?.time_left_seconds ?? 0);
+            setStreakLoaded(true);
           }
         }
 
@@ -98,6 +128,24 @@ export default function HomePage() {
     if (days === 0) return "Today";
     return `${days} days left`;
   }, [selectedExam, now]);
+
+  function formatCountdown(seconds: number) {
+    const safe = Math.max(0, Math.floor(seconds));
+    const h = Math.floor(safe / 3600);
+    const m = Math.floor((safe % 3600) / 60);
+    const s = safe % 60;
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  }
+
+  const mathProgress = Math.min(1, streakMath / 5);
+  const verbalProgress = Math.min(1, streakVerbal / 5);
+  const ringSize = 112;
+  const ringStroke = 10;
+  const ringRadius = (ringSize - ringStroke) / 2;
+  const ringCirc = 2 * Math.PI * ringRadius;
+  const semiCirc = ringCirc / 2;
+  const mathOffset = semiCirc * (1 - mathProgress);
+  const verbalOffset = semiCirc * (1 - verbalProgress);
 
   async function selectExamDate(dateId: number) {
     const access = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
@@ -192,7 +240,7 @@ export default function HomePage() {
         {/* Greeting */}
         <div className="mt-2 flex items-center gap-2 text-lg font-semibold">
           <span>👋</span>
-          <span>Hi Suleyman Karimov</span>
+          <span>Hi {displayName}</span>
         </div>
 
         {error ? <div className="mt-3 text-sm text-red-600">{error}</div> : null}
@@ -202,22 +250,166 @@ export default function HomePage() {
           {/* Left column */}
           <div className="grid gap-4">
             <div className="relative rounded-3xl border border-slate-200 bg-white p-5 sm:p-6 shadow-sm">
-              <div className="text-sm text-slate-600">Last Test</div>
+              <div className="text-sm text-slate-600">Last Mock</div>
               <div className="text-sm text-slate-600">Result</div>
-              <div className="mt-6 text-4xl font-semibold text-rose-600 pr-40 sm:pr-56 lg:pr-72">0</div>
-              <div className="text-sm text-slate-500 pr-40 sm:pr-56 lg:pr-72">0/0</div>
+              <div className="mt-6 text-lg font-semibold text-slate-500 pr-40 sm:pr-56 lg:pr-72">
+                Coming soon...
+              </div>
               <div className="pointer-events-none absolute right-0 bottom-0 top-0 w-32 sm:w-48 lg:w-80">
                 <div className="absolute inset-0 rounded-2xl bg-slate-200/40 blur-2xl" />
                 <Image src={mascot} alt="Mascot" fill className="object-contain object-bottom drop-shadow-lg" />
               </div>
             </div>
 
-            <div className="relative rounded-3xl border border-slate-200 bg-white p-5 sm:p-6 shadow-sm">
-              <div className="text-sm text-slate-600">Roadmap</div>
-              <div className="mt-8 text-center text-lg font-semibold">Soon... 🙂</div>
-              <div className="pointer-events-none absolute right-6 bottom-6 h-16 w-24 rounded-2xl bg-slate-100" />
-              <div className="pointer-events-none absolute right-12 bottom-12 h-4 w-4 rounded-full bg-rose-500" />
-              <div className="pointer-events-none absolute right-20 bottom-8 h-4 w-4 rounded-full bg-slate-400" />
+            <div className="relative overflow-hidden rounded-3xl border border-blue-100 bg-gradient-to-br from-blue-50 via-white to-sky-50 p-5 sm:p-6 shadow-sm">
+              <div className="pointer-events-none absolute -right-10 -top-12 h-32 w-32 rounded-full bg-blue-200/40 blur-2xl" />
+              <div className="pointer-events-none absolute -left-10 -bottom-12 h-32 w-32 rounded-full bg-sky-200/40 blur-2xl" />
+              <div className="relative">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="text-[11px] uppercase tracking-[0.2em] text-blue-500">Daily streak</div>
+                    <div className="mt-1 text-lg font-semibold text-slate-900">SAT Streak</div>
+                    <div className="text-xs text-slate-500">Complete 5 Math + 5 Verbal daily</div>
+                  </div>
+                  <div className="rounded-full border border-blue-200 bg-white/80 px-3 py-1 text-xs font-semibold text-blue-600 shadow-sm">
+                    {streakCount} day{streakCount === 1 ? "" : "s"}
+                  </div>
+                </div>
+
+                <div className="mt-6 grid gap-4 lg:grid-cols-[1.1fr_1.6fr]">
+                  <div className="flex flex-col items-center justify-center rounded-2xl border border-blue-100 bg-white/80 p-5 text-center shadow-sm">
+                    <div className="relative h-20 w-20">
+                      <span
+                        className={`absolute inset-0 flex items-center justify-center text-6xl ${
+                          streakDone ? "opacity-100" : "opacity-40 grayscale"
+                        }`}
+                      >
+                        🔥
+                      </span>
+                      <span
+                        className="absolute left-1/2 top-[58%] -translate-x-1/2 -translate-y-1/2 text-2xl font-extrabold text-white"
+                        style={{ textShadow: "0 1px 8px rgba(0,0,0,0.35)" }}
+                      >
+                        {streakCount}
+                      </span>
+                    </div>
+                    <div className="mt-2 text-xs font-semibold uppercase tracking-[0.2em] text-blue-500">
+                      Day Streak
+                    </div>
+                    <div className={`mt-2 text-xs font-semibold ${streakDone ? "text-emerald-600" : "text-slate-500"}`}>
+                      {streakDone ? "Completed today" : "Not completed yet"}
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <div className="flex items-center justify-between text-xs text-slate-500">
+                      <span>Time left</span>
+                      <span className="font-semibold text-slate-700">Resets at midnight</span>
+                    </div>
+                    <div className="mt-2 text-2xl font-semibold tracking-[0.08em] text-slate-900">
+                      {streakLoaded
+                        ? streakDone
+                          ? "DONE TODAY"
+                          : formatCountdown(streakTimeLeft)
+                        : "Loading..."}
+                    </div>
+
+                    <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                      <div className="flex flex-col items-center">
+                        <div className="text-xs font-semibold text-slate-700">Math</div>
+                        <div className="relative mt-3 h-20 w-28">
+                          <div className="absolute -inset-1 rounded-full bg-blue-100/60 blur-md" />
+                          <div className="absolute inset-x-0 bottom-0 h-10 overflow-hidden">
+                            <div className="absolute bottom-0 left-1/2 h-20 w-20 -translate-x-1/2 rounded-full bg-white shadow-inner" />
+                          </div>
+                          <svg
+                            width={ringSize}
+                            height={ringSize}
+                            className="absolute left-1/2 top-0 -translate-x-1/2"
+                            viewBox={`0 0 ${ringSize} ${ringSize}`}
+                          >
+                            <circle
+                              cx={ringSize / 2}
+                              cy={ringSize / 2}
+                              r={ringRadius}
+                              stroke="#e2e8f0"
+                              strokeWidth={ringStroke}
+                              fill="none"
+                              strokeDasharray={`${semiCirc} ${ringCirc}`}
+                              strokeDashoffset={0}
+                              strokeLinecap="round"
+                              transform={`rotate(-180 ${ringSize / 2} ${ringSize / 2})`}
+                            />
+                            <circle
+                              cx={ringSize / 2}
+                              cy={ringSize / 2}
+                              r={ringRadius}
+                              stroke="#2563eb"
+                              strokeWidth={ringStroke}
+                              fill="none"
+                              strokeDasharray={`${semiCirc} ${ringCirc}`}
+                              strokeDashoffset={mathOffset}
+                              strokeLinecap="round"
+                              transform={`rotate(-180 ${ringSize / 2} ${ringSize / 2})`}
+                            />
+                          </svg>
+                          <div className="absolute inset-0 flex flex-col items-center justify-end pb-1">
+                            <div className="text-base font-semibold text-slate-900">
+                              {Math.min(streakMath, 5)}/5
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col items-center">
+                        <div className="text-xs font-semibold text-slate-700">Verbal</div>
+                        <div className="relative mt-3 h-20 w-28">
+                          <div className="absolute -inset-1 rounded-full bg-emerald-100/60 blur-md" />
+                          <div className="absolute inset-x-0 bottom-0 h-10 overflow-hidden">
+                            <div className="absolute bottom-0 left-1/2 h-20 w-20 -translate-x-1/2 rounded-full bg-white shadow-inner" />
+                          </div>
+                          <svg
+                            width={ringSize}
+                            height={ringSize}
+                            className="absolute left-1/2 top-0 -translate-x-1/2"
+                            viewBox={`0 0 ${ringSize} ${ringSize}`}
+                          >
+                            <circle
+                              cx={ringSize / 2}
+                              cy={ringSize / 2}
+                              r={ringRadius}
+                              stroke="#e2e8f0"
+                              strokeWidth={ringStroke}
+                              fill="none"
+                              strokeDasharray={`${semiCirc} ${ringCirc}`}
+                              strokeDashoffset={0}
+                              strokeLinecap="round"
+                              transform={`rotate(-180 ${ringSize / 2} ${ringSize / 2})`}
+                            />
+                            <circle
+                              cx={ringSize / 2}
+                              cy={ringSize / 2}
+                              r={ringRadius}
+                              stroke="#22c55e"
+                              strokeWidth={ringStroke}
+                              fill="none"
+                              strokeDasharray={`${semiCirc} ${ringCirc}`}
+                              strokeDashoffset={verbalOffset}
+                              strokeLinecap="round"
+                              transform={`rotate(-180 ${ringSize / 2} ${ringSize / 2})`}
+                            />
+                          </svg>
+                          <div className="absolute inset-0 flex flex-col items-center justify-end pb-1">
+                            <div className="text-base font-semibold text-slate-900">
+                              {Math.min(streakVerbal, 5)}/5
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 

@@ -18,7 +18,7 @@ from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import path, include
-from accounts.views import AdminCreateUserView, AdminSearchUsersView
+from accounts.views import AdminCreateUserView, AdminSearchUsersView, AdminUpdateUserView, AdminDeleteUserView
 from grades_stub import grades_me, grades_offline
 
 urlpatterns = [
@@ -28,6 +28,7 @@ urlpatterns = [
     path("api/", include("events.urls")),
     path("api/", include("assignments.urls")),
     path("api/", include("question_bank.urls")),
+    path("api/", include("streaks.urls")),
     path("api/", include("vocab.urls")),
     path("api/", include("exam_dates.urls")),
     # Temporary gradebook stubs
@@ -36,6 +37,8 @@ urlpatterns = [
     # Backwards-compatible aliases for admin user endpoints expected by the frontend
     path("api/admin/users/create/", AdminCreateUserView.as_view(), name="alias_admin_users_create"),
     path("api/admin/users/search/", AdminSearchUsersView.as_view(), name="alias_admin_users_search"),
+    path("api/admin/users/<uuid:user_id>/", AdminUpdateUserView.as_view(), name="alias_admin_users_update"),
+    path("api/admin/users/<uuid:user_id>/delete/", AdminDeleteUserView.as_view(), name="alias_admin_users_delete"),
 ]
 
 if settings.DEBUG:

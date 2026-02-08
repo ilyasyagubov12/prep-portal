@@ -37,6 +37,7 @@ export default function OfflineGradePage() {
   const router = useRouter();
 
   const [token, setToken] = useState<string | null>(null);
+  const [courseSlug, setCourseSlug] = useState<string | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [unit, setUnit] = useState<OfflineUnit | null>(null);
   const [students, setStudents] = useState<Student[]>([]);
@@ -86,6 +87,24 @@ export default function OfflineGradePage() {
       cancelled = true;
     };
   }, [courseId, unitId, router]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadCourseSlug() {
+      if (!token || !courseId) return;
+      const res = await fetch(`${API_BASE}/api/courses/`, {
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => null);
+      if (!res || !res.ok || cancelled) return;
+      const list = await res.json().catch(() => []);
+      const match = (Array.isArray(list) ? list : []).find((c: any) => c.id === courseId);
+      if (match?.slug) setCourseSlug(match.slug);
+    }
+    loadCourseSlug();
+    return () => {
+      cancelled = true;
+    };
+  }, [token, courseId]);
 
   async function loadData(tok: string) {
     const safeJson = async (res: Response | null) => {
@@ -248,9 +267,13 @@ export default function OfflineGradePage() {
           </div>
         </div>
         <div className="flex gap-2">
-          <button className="underline text-sm" type="button" onClick={() => router.push(`/courses/${courseId}`)}>
-            Back to course
-          </button>
+            <button
+              className="underline text-sm"
+              type="button"
+              onClick={() => router.push(courseSlug ? `/courses/${courseSlug}` : "/courses")}
+            >
+              Back to course
+            </button>
           <button
             className="border rounded px-3 py-2 text-sm text-red-600"
             type="button"
@@ -265,10 +288,10 @@ export default function OfflineGradePage() {
                 });
                 const json = await res.json().catch(() => null);
                 if (!res.ok) throw new Error(json?.error || "Delete failed");
-                router.push(`/courses/${courseId}`);
-              } catch (e: any) {
-                alert(e?.message ?? "Delete failed");
-              }
+                  router.push(courseSlug ? `/courses/${courseSlug}` : "/courses");
+                } catch (e: any) {
+                  alert(e?.message ?? "Delete failed");
+                }
             }}
           >
             Delete

@@ -114,7 +114,7 @@ export default function Sidebar({
           onClick={onClose}
           aria-label="Close menu"
         >
-          ×
+          X
         </button>
       </div>
 {/* Logo */}
@@ -165,7 +165,7 @@ export default function Sidebar({
                 style={{ width: "100%", height: "100%", objectFit: "cover" }}
               />
             ) : (
-              "🙂"
+              ':)'
             )}
           </div>
 
@@ -187,7 +187,7 @@ export default function Sidebar({
             fontSize: 13,
           }}
         >
-          ↗ Visit main website
+          - Visit main website
         </a>
       </div>
 

@@ -56,6 +56,7 @@ INSTALLED_APPS = [
     "courses",
     "assignments",
     "question_bank",
+    "streaks",
     "vocab",
     "exam_dates",
     "events",

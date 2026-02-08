@@ -5,9 +5,10 @@ from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
 from django.utils import timezone
 import os
-from django.db import transaction
+from django.db import transaction, models
 from django.contrib.auth import get_user_model
 from .serializers import ProfileSerializer, UserSerializer
+from streaks.utils import get_streak_base
 from .models import Profile
 
 User = get_user_model()
@@ -30,11 +31,27 @@ class ProfileUpdateView(APIView):
         prof = request.user.profile
         nickname = request.data.get("nickname")
         avatar = request.data.get("avatar")
+        first_name = request.data.get("first_name")
+        last_name = request.data.get("last_name")
+        phone_number = request.data.get("phone_number")
+        parent_name = request.data.get("parent_name")
+        parent_phone = request.data.get("parent_phone")
         if nickname is not None:
             prof.nickname = nickname.strip() or None
         if avatar is not None:
             prof.avatar = avatar.strip() or None
-        prof.save(update_fields=["nickname", "avatar"])
+        if phone_number is not None:
+            prof.phone_number = str(phone_number).strip() or None
+        if parent_name is not None:
+            prof.parent_name = str(parent_name).strip() or None
+        if parent_phone is not None:
+            prof.parent_phone = str(parent_phone).strip() or None
+        if first_name is not None:
+            request.user.first_name = str(first_name).strip()
+        if last_name is not None:
+            request.user.last_name = str(last_name).strip()
+        request.user.save(update_fields=["first_name", "last_name"])
+        prof.save(update_fields=["nickname", "avatar", "phone_number", "parent_name", "parent_phone"])
         return Response(ProfileSerializer(prof, context={"request": request}).data)
 
 
@@ -174,22 +191,166 @@ class AdminSearchUsersView(APIView):
         if role:
             qs = qs.filter(role=role)
         if q:
-            qs = qs.filter(nickname__icontains=q)
+            qs = qs.filter(
+                models.Q(nickname__icontains=q)
+                | models.Q(user__username__icontains=q)
+                | models.Q(user__first_name__icontains=q)
+                | models.Q(user__last_name__icontains=q)
+                | models.Q(student_id__icontains=q)
+            )
 
         qs = qs.order_by("nickname")[: max(1, min(limit, 100))]
         data = []
         for p in qs:
+            base = get_streak_base(p.user)
+            offset = p.streak_offset or 0
             data.append(
                 {
-                "user_id": str(p.user.id),
-                "username": p.user.username,
-                "nickname": p.nickname,
-                "role": p.role,
-                "is_admin": p.is_admin,
-                "avatar": p.avatar,
+                    "user_id": str(p.user.id),
+                    "username": p.user.username,
+                    "email": p.user.email,
+                    "first_name": p.user.first_name,
+                    "last_name": p.user.last_name,
+                    "nickname": p.nickname,
+                    "student_id": p.student_id,
+                    "role": p.role,
+                    "is_admin": p.is_admin,
+                    "math_level": p.math_level,
+                    "verbal_level": p.verbal_level,
+                    "phone_number": p.phone_number,
+                    "parent_name": p.parent_name,
+                    "parent_phone": p.parent_phone,
+                    "streak_count": max(0, base + offset),
+                    "avatar": p.avatar,
                 }
             )
         return Response({"ok": True, "users": data})
+
+
+class AdminUpdateUserView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def patch(self, request, user_id):
+        if not _require_admin(request.user):
+            return Response({"error": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        profile = user.profile
+        is_admin_target = user.is_superuser or profile.role == "admin" or profile.is_admin
+        if is_admin_target and request.user.username != "iyagubov00001":
+            return Response({"error": "Only iyagubov00001 can edit admin users"}, status=403)
+
+        username = request.data.get("username")
+        if username is not None:
+            clean = str(username).strip().lower()
+            if not clean:
+                return Response({"error": "username cannot be empty"}, status=status.HTTP_400_BAD_REQUEST)
+            if User.objects.exclude(id=user.id).filter(username=clean).exists():
+                return Response({"error": "username already exists"}, status=status.HTTP_400_BAD_REQUEST)
+            user.username = clean
+            user.email = f"{clean}@prep.local"
+
+        first_name = request.data.get("first_name")
+        if first_name is not None:
+            user.first_name = str(first_name).strip()
+
+        last_name = request.data.get("last_name")
+        if last_name is not None:
+            user.last_name = str(last_name).strip()
+
+        password = request.data.get("password")
+        if password:
+            user.set_password(password)
+
+        role = request.data.get("role")
+        if role is not None:
+            clean_role = str(role).strip().lower()
+            if clean_role not in ["student", "teacher", "admin"]:
+                return Response({"error": "role must be student, teacher, or admin"}, status=400)
+            profile.role = clean_role
+            profile.is_admin = clean_role == "admin"
+            user.is_staff = clean_role == "admin"
+
+        nickname = request.data.get("nickname")
+        if nickname is not None:
+            profile.nickname = str(nickname).strip() or None
+
+        student_id = request.data.get("student_id")
+        if student_id is not None:
+            profile.student_id = str(student_id).strip() or None
+
+        math_level = request.data.get("math_level")
+        if math_level is not None:
+            profile.math_level = str(math_level).strip() or None
+
+        verbal_level = request.data.get("verbal_level")
+        if verbal_level is not None:
+            profile.verbal_level = str(verbal_level).strip() or None
+
+        phone_number = request.data.get("phone_number")
+        if phone_number is not None:
+            profile.phone_number = str(phone_number).strip() or None
+
+        parent_name = request.data.get("parent_name")
+        if parent_name is not None:
+            profile.parent_name = str(parent_name).strip() or None
+
+        parent_phone = request.data.get("parent_phone")
+        if parent_phone is not None:
+            profile.parent_phone = str(parent_phone).strip() or None
+
+        streak_count = request.data.get("streak_count")
+        if streak_count is not None:
+            try:
+                desired = int(streak_count)
+            except Exception:
+                return Response({"error": "streak_count must be a number"}, status=400)
+            if desired < 0:
+                desired = 0
+            base = get_streak_base(user)
+            profile.streak_offset = desired - base
+
+        user.save()
+        profile.save()
+
+        return Response(
+            {
+                "ok": True,
+                "user": UserSerializer(user).data,
+                "profile": ProfileSerializer(profile, context={"request": request}).data,
+            }
+        )
+
+
+class AdminDeleteUserView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def delete(self, request, user_id):
+        if not _require_admin(request.user):
+            return Response({"error": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        profile = getattr(user, "profile", None)
+        is_admin_target = user.is_superuser or (profile and profile.role == "admin") or (
+            profile and profile.is_admin
+        )
+
+        if is_admin_target:
+            required = os.getenv("ADMIN_DELETE_PASSWORD") or "O95Ay5g9"
+            provided = (request.data.get("admin_delete_password") or "").strip()
+            if provided != required:
+                return Response({"error": "Admin delete password required"}, status=status.HTTP_403_FORBIDDEN)
+
+        user.delete()
+        return Response({"ok": True})
 
 
 class BootstrapAdminView(APIView):

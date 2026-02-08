@@ -25,12 +25,19 @@ class Profile(models.Model):
 
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="profile")
     nickname = models.CharField(max_length=120, blank=True, null=True)
+    student_id = models.CharField(max_length=64, blank=True, null=True)
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default="student")
     is_admin = models.BooleanField(default=False)
     avatar = models.URLField(blank=True, null=True)
     university_icon = models.URLField(blank=True, null=True)
     goal_math = models.IntegerField(default=600)
     goal_verbal = models.IntegerField(default=600)
+    math_level = models.CharField(max_length=60, blank=True, null=True)
+    verbal_level = models.CharField(max_length=60, blank=True, null=True)
+    phone_number = models.CharField(max_length=40, blank=True, null=True)
+    parent_name = models.CharField(max_length=120, blank=True, null=True)
+    parent_phone = models.CharField(max_length=40, blank=True, null=True)
+    streak_offset = models.IntegerField(default=0)
     selected_exam_date = models.ForeignKey(
         "exam_dates.ExamDate",
         on_delete=models.SET_NULL,

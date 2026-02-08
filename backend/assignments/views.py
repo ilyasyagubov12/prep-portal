@@ -46,6 +46,14 @@ class AssignmentDetailView(APIView):
         if not (_require_staff(user, course) or is_student):
             return Response({"error": "Forbidden"}, status=403)
 
+        # Auto-publish if a scheduled publish time has passed
+        if assignment.status != "published":
+            node = CourseNode.objects.filter(assignment_id=assignment.id).first()
+            if node and node.publish_at and node.publish_at <= timezone.now():
+                assignment.status = "published"
+                assignment.published_at = timezone.now()
+                assignment.save(update_fields=["status", "published_at"])
+
         return Response({"ok": True, "assignment": AssignmentSerializer(assignment).data})
 
 

@@ -3,6 +3,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser
+from django.utils import timezone
 from django.db import transaction
 from django.contrib.auth import get_user_model
 from django.core.files.storage import default_storage
@@ -228,7 +229,21 @@ class CourseNodesListView(APIView):
         if assignment_ids:
             from assignments.models import Assignment
 
-            for a in Assignment.objects.filter(id__in=assignment_ids):
+            now = timezone.now()
+            assignments = {a.id: a for a in Assignment.objects.filter(id__in=assignment_ids)}
+            # Auto-publish assignments whose node publish_at has passed
+            for node in qs.filter(kind="assignment"):
+                if not node.assignment_id:
+                    continue
+                a = assignments.get(node.assignment_id)
+                if not a:
+                    continue
+                if a.status != "published" and node.publish_at and node.publish_at <= now:
+                    a.status = "published"
+                    a.published_at = now
+                    a.save(update_fields=["status", "published_at"])
+
+            for a in assignments.values():
                 assignments_map[a.id] = {
                     "id": str(a.id),
                     "title": a.title,

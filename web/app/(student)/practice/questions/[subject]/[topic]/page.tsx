@@ -145,6 +145,18 @@ export default function TopicQuestionsPage() {
         [pick]: pick === correct ? "correct" : "incorrect",
       },
     }));
+
+    const access = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
+    if (access) {
+      fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/streak/attempt/`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${access}`,
+        },
+        body: JSON.stringify({ question_id: qid, subject }),
+      }).catch(() => null);
+    }
   }
 
   function toggleEliminate(qid: string, label: string) {
