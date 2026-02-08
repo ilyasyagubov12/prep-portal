@@ -1,10 +1,17 @@
 from datetime import timedelta
+from zoneinfo import ZoneInfo
 from django.utils import timezone
 from .models import DailyStreakProgress
 
+BAKU_TZ = ZoneInfo("Asia/Baku")
+
+
+def _baku_date():
+    return timezone.localtime(timezone.now(), BAKU_TZ).date()
+
 
 def get_streak_base(user):
-    today = timezone.localdate()
+    today = _baku_date()
     today_progress = DailyStreakProgress.objects.filter(user=user, date=today).first()
     completed_today = bool(today_progress and today_progress.completed_at)
     start_date = today if completed_today else today - timedelta(days=1)

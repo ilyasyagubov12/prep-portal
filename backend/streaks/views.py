@@ -1,4 +1,5 @@
-from datetime import timedelta
+from datetime import timedelta, datetime
+from zoneinfo import ZoneInfo
 from django.utils import timezone
 from django.db import transaction
 from rest_framework import permissions, status
@@ -9,13 +10,15 @@ from question_bank.views import is_staff
 from .models import DailyStreakProgress, QuestionAttempt
 from .utils import get_streak_base
 
+BAKU_TZ = ZoneInfo("Asia/Baku")
+
 
 def _local_now():
-    return timezone.localtime(timezone.now())
+    return timezone.localtime(timezone.now(), BAKU_TZ)
 
 
 def _local_date():
-    return timezone.localdate()
+    return _local_now().date()
 
 
 def _get_streak_count(user):
@@ -38,8 +41,8 @@ class StreakStatusView(APIView):
         now = _local_now()
         next_midnight = (today + timedelta(days=1))
         next_midnight_dt = timezone.make_aware(
-            timezone.datetime.combine(next_midnight, timezone.datetime.min.time()),
-            timezone.get_current_timezone(),
+            datetime.combine(next_midnight, datetime.min.time()),
+            BAKU_TZ,
         )
         time_left = max(0, int((next_midnight_dt - now).total_seconds()))
 
@@ -105,8 +108,8 @@ class StreakAttemptView(APIView):
         now = _local_now()
         next_midnight = (today + timedelta(days=1))
         next_midnight_dt = timezone.make_aware(
-            timezone.datetime.combine(next_midnight, timezone.datetime.min.time()),
-            timezone.get_current_timezone(),
+            datetime.combine(next_midnight, datetime.min.time()),
+            BAKU_TZ,
         )
         time_left = max(0, int((next_midnight_dt - now).total_seconds()))
 
