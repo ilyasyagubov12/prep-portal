@@ -154,6 +154,9 @@ if os.getenv("CLOUDINARY_URL"):
         "default": {"BACKEND": "cloudinary_storage.storage.MediaCloudinaryStorage"},
         "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
     }
+    CLOUDINARY_STORAGE = {
+        "resource_type": "auto",
+    }
 
 # Default primary key type
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
