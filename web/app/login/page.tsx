@@ -19,7 +19,6 @@ export default function LoginPage() {
     setLoading(true);
 
     const cleanUsername = username.trim().toLowerCase();
-    const email = `${cleanUsername}@prep.local`;
 
     try {
       const res = await fetch(
@@ -27,7 +26,7 @@ export default function LoginPage() {
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email, password }),
+          body: JSON.stringify({ username: cleanUsername, password }),
         }
       );
 
