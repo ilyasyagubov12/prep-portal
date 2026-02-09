@@ -1,4 +1,6 @@
 from rest_framework import serializers
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from django.contrib.auth import get_user_model
 from .models import User, Profile
 
 
@@ -6,6 +8,26 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ["id", "email", "username", "first_name", "last_name"]
+
+
+class EmailOrUsernameTokenObtainPairSerializer(TokenObtainPairSerializer):
+    """
+    Allow login with either username or email.
+    The underlying auth model uses email as USERNAME_FIELD.
+    """
+
+    @classmethod
+    def get_token(cls, user):
+        return super().get_token(user)
+
+    def validate(self, attrs):
+        data = dict(attrs)
+        if not data.get("email") and data.get("username"):
+            User = get_user_model()
+            user = User.objects.filter(username=data["username"]).first()
+            if user:
+                data["email"] = user.email
+        return super().validate(data)
 
 
 class ProfileSerializer(serializers.ModelSerializer):

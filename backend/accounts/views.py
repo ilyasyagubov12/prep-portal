@@ -1,4 +1,5 @@
 from rest_framework import generics, permissions, status
+from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.core.files.storage import default_storage
@@ -7,7 +8,7 @@ from django.utils import timezone
 import os
 from django.db import transaction, models
 from django.contrib.auth import get_user_model
-from .serializers import ProfileSerializer, UserSerializer
+from .serializers import ProfileSerializer, UserSerializer, EmailOrUsernameTokenObtainPairSerializer
 from streaks.utils import get_streak_base
 from .models import Profile
 
@@ -351,6 +352,10 @@ class AdminDeleteUserView(APIView):
 
         user.delete()
         return Response({"ok": True})
+
+
+class EmailOrUsernameTokenObtainPairView(TokenObtainPairView):
+    serializer_class = EmailOrUsernameTokenObtainPairSerializer
 
 
 class BootstrapAdminView(APIView):
