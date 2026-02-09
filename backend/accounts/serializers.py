@@ -13,8 +13,16 @@ class UserSerializer(serializers.ModelSerializer):
 class EmailOrUsernameTokenObtainPairSerializer(TokenObtainPairSerializer):
     """
     Allow login with either username or email.
-    The underlying auth model uses email as USERNAME_FIELD.
+    The user model uses email as USERNAME_FIELD, but we want to accept username too.
     """
+
+    username_field = "username"
+
+    def get_fields(self):
+        fields = super().get_fields()
+        # Add optional email field for convenience
+        fields["email"] = serializers.EmailField(required=False, allow_blank=True)
+        return fields
 
     @classmethod
     def get_token(cls, user):
@@ -22,11 +30,11 @@ class EmailOrUsernameTokenObtainPairSerializer(TokenObtainPairSerializer):
 
     def validate(self, attrs):
         data = dict(attrs)
-        if not data.get("email") and data.get("username"):
+        if not data.get("username") and data.get("email"):
             User = get_user_model()
-            user = User.objects.filter(username=data["username"]).first()
+            user = User.objects.filter(email=data["email"]).first()
             if user:
-                data["email"] = user.email
+                data["username"] = user.username
         return super().validate(data)
 
 
