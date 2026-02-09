@@ -28,6 +28,21 @@ export default function AdminCoursesPage() {
   const getToken = () =>
     typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
 
+  function formatError(err: any) {
+    if (!err) return "Request failed";
+    if (typeof err === "string") return err;
+    if (Array.isArray(err)) return err.join(", ");
+    if (typeof err === "object") {
+      const parts = Object.entries(err).flatMap(([key, val]) => {
+        if (Array.isArray(val)) return `${key}: ${val.join(", ")}`;
+        if (val && typeof val === "object") return `${key}: ${JSON.stringify(val)}`;
+        return `${key}: ${val}`;
+      });
+      return parts.join(" | ") || "Request failed";
+    }
+    return "Request failed";
+  }
+
   async function loadCourses() {
     setMsg(null);
     const token = getToken();
@@ -46,7 +61,7 @@ export default function AdminCoursesPage() {
 
     const json = await res.json();
     if (!res.ok) {
-      setMsg(json?.error ?? "Failed to load courses");
+      setMsg(formatError(json?.error) ?? "Failed to load courses");
       return;
     }
 
@@ -89,7 +104,7 @@ export default function AdminCoursesPage() {
     setLoading(false);
 
     if (!res.ok) {
-      setMsg(json?.error ?? "Failed to create course");
+      setMsg(formatError(json?.error) ?? "Failed to create course");
       return;
     }
 
@@ -144,7 +159,7 @@ export default function AdminCoursesPage() {
     setLoading(false);
 
     if (!res.ok) {
-      setMsg(json?.error ?? "Failed to update course");
+      setMsg(formatError(json?.error) ?? "Failed to update course");
       return;
     }
 
@@ -183,7 +198,7 @@ export default function AdminCoursesPage() {
     setLoading(false);
 
     if (!res.ok) {
-      setMsg(json?.error ?? "Failed to delete course");
+      setMsg(formatError(json?.error) ?? "Failed to delete course");
       return;
     }
 
