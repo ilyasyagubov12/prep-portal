@@ -454,6 +454,7 @@ class CourseNodeUploadView(APIView):
                 public_id=public_id,
                 resource_type="raw",
                 type="upload",
+                access_mode="public",
                 overwrite=True,
             )
             saved_path = public_id

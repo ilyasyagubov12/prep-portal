@@ -284,6 +284,7 @@ class AssignmentAttachmentUploadView(APIView):
                 public_id=public_id,
                 resource_type="raw",
                 type="upload",
+                access_mode="public",
                 overwrite=True,
             )
             saved = public_id
@@ -370,6 +371,7 @@ class SubmissionCreateView(APIView):
                 public_id=public_id,
                 resource_type="raw",
                 type="upload",
+                access_mode="public",
                 overwrite=True,
             )
             saved = public_id
