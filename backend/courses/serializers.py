@@ -69,18 +69,22 @@ class CourseNodeSerializer(serializers.ModelSerializer):
             elif is_pdf:
                 # Use Cloudinary private download URL for PDFs to bypass ACL issues
                 public_id = path.rsplit(".", 1)[0] if lower.endswith(".pdf") else path
-                for candidate in ("raw", "image"):
-                    try:
-                        cloudinary.api.resource(public_id, resource_type=candidate, type="upload")
-                        return private_download_url(
-                            public_id,
-                            "pdf",
-                            resource_type=candidate,
-                            type="upload",
-                            attachment=False,
-                        )
-                    except Exception:
-                        continue
+                variants = [public_id]
+                if " " in public_id:
+                    variants.append(public_id.replace(" ", "_"))
+                for vid in variants:
+                    for candidate in ("raw", "image"):
+                        try:
+                            cloudinary.api.resource(vid, resource_type=candidate, type="upload")
+                            return private_download_url(
+                                vid,
+                                "pdf",
+                                resource_type=candidate,
+                                type="upload",
+                                attachment=False,
+                            )
+                        except Exception:
+                            continue
                 return private_download_url(
                     public_id,
                     "pdf",
