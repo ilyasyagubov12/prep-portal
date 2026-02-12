@@ -60,18 +60,24 @@ class CourseNodeSerializer(serializers.ModelSerializer):
             path = obj.storage_path
             mime = (obj.mime_type or "").lower()
             lower = path.lower()
+            is_pdf = mime == "application/pdf" or lower.endswith(".pdf")
             if mime.startswith("image/") or lower.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif")):
                 resource_type = "image"
-            elif mime == "application/pdf" or lower.endswith(".pdf"):
-                resource_type = "raw"
+                fmt = None
+            elif is_pdf:
+                # Cloudinary stores many PDFs under image resource_type.
+                resource_type = "image"
+                fmt = "pdf"
             else:
                 resource_type = "raw"
+                fmt = None
             url, _ = cloudinary_url(
                 path,
                 resource_type=resource_type,
                 type="upload",
                 secure=True,
                 sign_url=True,
+                format=fmt,
             )
             return url
         try:

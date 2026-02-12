@@ -574,18 +574,23 @@ def _cloud_url(path: str | None, mime_type: str | None = None):
     if os.getenv("CLOUDINARY_URL"):
         lower = path.lower()
         mime = (mime_type or "").lower()
+        is_pdf = mime == "application/pdf" or lower.endswith(".pdf")
         if mime.startswith("image/") or lower.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif")):
             resource_type = "image"
-        elif mime == "application/pdf" or lower.endswith(".pdf"):
-            resource_type = "raw"
+            fmt = None
+        elif is_pdf:
+            resource_type = "image"
+            fmt = "pdf"
         else:
             resource_type = "raw"
+            fmt = None
         url, _ = cloudinary_url(
             path,
             resource_type=resource_type,
             type="upload",
             secure=True,
             sign_url=True,
+            format=fmt,
         )
         return url
     return default_storage.url(path)
