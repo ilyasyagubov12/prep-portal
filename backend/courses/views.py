@@ -457,14 +457,19 @@ class CourseNodeUploadView(APIView):
                 access_mode="public",
                 overwrite=True,
             )
-            saved_path = result.get("public_id") or public_id
-            file_url, _ = cloudinary_url(
-                saved_path,
-                resource_type="raw",
-                type="upload",
-                secure=True,
-                format="pdf",
-            )
+            uploaded_url = result.get("secure_url") or result.get("url")
+            if uploaded_url:
+                saved_path = uploaded_url
+                file_url = uploaded_url
+            else:
+                saved_path = result.get("public_id") or public_id
+                file_url, _ = cloudinary_url(
+                    saved_path,
+                    resource_type="raw",
+                    type="upload",
+                    secure=True,
+                    format="pdf",
+                )
         else:
             saved_path = default_storage.save(rel_path, file_obj)
             file_url = default_storage.url(saved_path)

@@ -57,6 +57,8 @@ class CourseNodeSerializer(serializers.ModelSerializer):
     def get_storage_url(self, obj):
         if not obj.storage_path:
             return None
+        if str(obj.storage_path).startswith("http://") or str(obj.storage_path).startswith("https://"):
+            return obj.storage_path
         # If Cloudinary is configured, return a signed URL so protected assets load.
         if os.getenv("CLOUDINARY_URL"):
             def _normalize_name(value: str) -> str:

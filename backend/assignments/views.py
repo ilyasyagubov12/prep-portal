@@ -602,6 +602,8 @@ class OfflineGradesListView(APIView):
 def _cloud_url(path: str | None, mime_type: str | None = None):
     if not path:
         return None
+    if str(path).startswith("http://") or str(path).startswith("https://"):
+        return path
     if os.getenv("CLOUDINARY_URL"):
         def _normalize_name(value: str) -> str:
             return re.sub(r"[^a-z0-9]+", "", value.lower())
