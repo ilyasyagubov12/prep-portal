@@ -578,16 +578,19 @@ def _cloud_url(path: str | None, mime_type: str | None = None):
         if mime.startswith("image/") or lower.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif")):
             resource_type = "image"
             fmt = None
+            delivery_type = "upload"
         elif is_pdf:
-            resource_type = "image"
+            resource_type = "raw"
             fmt = "pdf"
+            delivery_type = "authenticated"
         else:
             resource_type = "raw"
             fmt = None
+            delivery_type = "authenticated"
         url, _ = cloudinary_url(
             path,
             resource_type=resource_type,
-            type="upload",
+            type=delivery_type,
             secure=True,
             sign_url=True,
             format=fmt,
