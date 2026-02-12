@@ -603,65 +603,79 @@ class OfflineGradesListView(APIView):
 def _cloud_url(path: str | None, mime_type: str | None = None):
     if not path:
         return None
-    if str(path).startswith("http://") or str(path).startswith("https://"):
-        if os.getenv("CLOUDINARY_URL"):
-            mime = (mime_type or "").lower()
-            lower = str(path).lower()
-            is_pdf = mime == "application/pdf" or lower.endswith(".pdf")
-            if is_pdf and "res.cloudinary.com" in lower:
-                try:
-                    parts = urlparse(path).path.strip("/").split("/")
-                    if len(parts) >= 5:
-                        resource_type = parts[1]
-                        delivery_type = parts[2]
-                        public_tail = "/".join(parts[4:])
-                        public_tail = unquote(public_tail)
-                        public_id = public_tail.rsplit(".", 1)[0]
-                        return private_download_url(
-                            public_id,
-                            "pdf",
-                            resource_type=resource_type,
-                            type=delivery_type,
-                            attachment=False,
-                        )
-                except Exception:
-                    pass
-        return path
-    if os.getenv("CLOUDINARY_URL"):
-        def _normalize_name(value: str) -> str:
-            return re.sub(r"[^a-z0-9]+", "", value.lower())
+    def _normalize_name(value: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "", value.lower())
 
-        def _resolve_pdf_public_id(base_public_id: str):
-            base_public_id = base_public_id[:-4] if base_public_id.lower().endswith(".pdf") else base_public_id
-            variants = [base_public_id]
-            if " " in base_public_id:
-                variants.append(base_public_id.replace(" ", "_"))
-            for vid in variants:
-                for candidate in ("raw", "image"):
+    def _resolve_pdf_public_id(base_public_id: str):
+        if not os.getenv("CLOUDINARY_URL"):
+            return None, None, None
+        base_public_id = base_public_id[:-4] if base_public_id.lower().endswith(".pdf") else base_public_id
+        variants = {base_public_id}
+        if " " in base_public_id:
+            variants.add(base_public_id.replace(" ", "_"))
+        if base_public_id.startswith("media/"):
+            variants.add(base_public_id[len("media/"):])
+        else:
+            variants.add(f"media/{base_public_id}")
+        target_norm = _normalize_name(base_public_id.split("/")[-1])
+        delivery_types = ("upload", "authenticated", "private")
+
+        for vid in variants:
+            for candidate in ("raw", "image"):
+                for delivery in delivery_types:
                     try:
-                        cloudinary.api.resource(vid, resource_type=candidate, type="upload")
-                        return vid, candidate
+                        cloudinary.api.resource(vid, resource_type=candidate, type=delivery)
+                        return vid, candidate, delivery
                     except Exception:
                         continue
-            folder = "/".join(base_public_id.split("/")[:-1])
-            target_norm = _normalize_name(base_public_id.split("/")[-1])
-            if folder:
-                for candidate in ("raw", "image"):
+
+        for vid in variants:
+            folder = "/".join(vid.split("/")[:-1])
+            if not folder:
+                continue
+            for candidate in ("raw", "image"):
+                for delivery in delivery_types:
                     try:
                         res = cloudinary.api.resources(
                             resource_type=candidate,
-                            type="upload",
+                            type=delivery,
                             prefix=f"{folder}/",
-                            max_results=200,
+                            max_results=500,
                         )
                         for item in res.get("resources", []):
                             pid = item.get("public_id", "")
                             if _normalize_name(pid.split("/")[-1]) == target_norm:
-                                return pid, candidate
+                                return pid, candidate, delivery
                     except Exception:
                         continue
-            return None, None
+        return None, None, None
 
+    if str(path).startswith("http://") or str(path).startswith("https://"):
+        mime = (mime_type or "").lower()
+        lower = str(path).lower()
+        is_pdf = mime == "application/pdf" or lower.endswith(".pdf")
+        if os.getenv("CLOUDINARY_URL") and is_pdf and "res.cloudinary.com" in lower:
+            try:
+                parts = urlparse(path).path.strip("/").split("/")
+                if len(parts) >= 5:
+                    resource_type = parts[1]
+                    delivery_type = parts[2]
+                    public_tail = "/".join(parts[4:])
+                    public_tail = unquote(public_tail)
+                    public_id = public_tail.rsplit(".", 1)[0]
+                    resolved_id, resolved_type, resolved_delivery = _resolve_pdf_public_id(public_id)
+                    return private_download_url(
+                        resolved_id or public_id,
+                        "pdf",
+                        resource_type=resolved_type or resource_type,
+                        type=resolved_delivery or delivery_type,
+                        attachment=False,
+                    )
+            except Exception:
+                pass
+        return path
+
+    if os.getenv("CLOUDINARY_URL"):
         lower = path.lower()
         mime = (mime_type or "").lower()
         is_pdf = mime == "application/pdf" or lower.endswith(".pdf")
@@ -670,13 +684,13 @@ def _cloud_url(path: str | None, mime_type: str | None = None):
             fmt = None
             delivery_type = "upload"
         elif is_pdf:
-            public_id, candidate = _resolve_pdf_public_id(path)
-            if public_id and candidate:
+            public_id, candidate, delivery_type = _resolve_pdf_public_id(path)
+            if public_id and candidate and delivery_type:
                 return private_download_url(
                     public_id,
                     "pdf",
                     resource_type=candidate,
-                    type="upload",
+                    type=delivery_type,
                     attachment=False,
                 )
             return private_download_url(
