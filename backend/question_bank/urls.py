@@ -5,6 +5,9 @@ from .views import (
     QuestionCountsView,
     QuestionImageUploadView,
     QuestionImportView,
+    QuestionProgressView,
+    QuestionQuizView,
+    QuestionQuizSubmitView,
 )
 
 urlpatterns = [
@@ -13,4 +16,7 @@ urlpatterns = [
     path("questions/counts/", QuestionCountsView.as_view(), name="question_counts"),
     path("questions/upload/", QuestionImageUploadView.as_view(), name="question_image_upload"),
     path("questions/import/", QuestionImportView.as_view(), name="question_import"),
+    path("questions/progress/", QuestionProgressView.as_view(), name="question_progress"),
+    path("questions/quiz/", QuestionQuizView.as_view(), name="question_quiz"),
+    path("questions/quiz/submit/", QuestionQuizSubmitView.as_view(), name="question_quiz_submit"),
 ]

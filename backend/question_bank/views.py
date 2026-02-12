@@ -11,8 +11,9 @@ import os
 import csv
 import io
 from accounts.views import _require_admin
-from .models import Question
+from .models import Question, SubtopicProgress, TopicProgress
 from .serializers import QuestionSerializer
+from .topic_map import subtopic_order, topic_order
 
 
 User = get_user_model()
@@ -227,3 +228,225 @@ class QuestionImportView(APIView):
                 errors.append(f"Row {idx}: {e}")
 
         return Response({"ok": True, "created": created, "errors": errors})
+
+
+def _parse_level(raw) -> int:
+    try:
+        return int(str(raw).strip())
+    except Exception:
+        return 0
+
+
+def _effective_level(user, subject: str) -> int:
+    prof = getattr(user, "profile", None)
+    if not prof:
+        return 0
+    base = _parse_level(prof.math_level if subject == "math" else prof.verbal_level)
+    completed = SubtopicProgress.objects.filter(user=user, subject=subject, passed=True).count()
+    return max(base, completed)
+
+
+def _set_level(user, subject: str, level: int):
+    prof = getattr(user, "profile", None)
+    if not prof:
+        return
+    if subject == "math":
+        prof.math_level = str(level)
+        prof.save(update_fields=["math_level"])
+    else:
+        prof.verbal_level = str(level)
+        prof.save(update_fields=["verbal_level"])
+
+
+def _topic_unlocked(subject: str, topic: str, completed_topics: set[str], level: int) -> bool:
+    topics = topic_order(subject)
+    if topic not in topics:
+        return True
+    idx = topics.index(topic)
+    if idx == 0:
+        return True
+    prev_topic = topics[idx - 1]
+    if prev_topic in completed_topics:
+        return True
+    # If level already covers all subtopics in previous topic, unlock.
+    order = subtopic_order(subject)
+    prev_indices = [i for i, (t, _) in enumerate(order) if t == prev_topic]
+    if not prev_indices:
+        return True
+    return level >= max(prev_indices) + 1
+
+
+def _subtopic_unlocked(subject: str, topic: str, subtopic: str, level: int, completed_topics: set[str]) -> bool:
+    if not _topic_unlocked(subject, topic, completed_topics, level):
+        return False
+    order = subtopic_order(subject)
+    try:
+        idx = order.index((topic, subtopic))
+    except ValueError:
+        return False
+    return idx <= level
+
+
+class QuestionProgressView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        subject = request.query_params.get("subject")
+        sub_qs = SubtopicProgress.objects.filter(user=request.user)
+        topic_qs = TopicProgress.objects.filter(user=request.user)
+        if subject:
+            sub_qs = sub_qs.filter(subject=subject)
+            topic_qs = topic_qs.filter(subject=subject)
+
+        subtopics = [
+            {
+                "subject": s.subject,
+                "topic": s.topic,
+                "subtopic": s.subtopic,
+                "passed": s.passed,
+                "best_score": s.best_score,
+            }
+            for s in sub_qs
+        ]
+        topics = [
+            {"subject": t.subject, "topic": t.topic, "passed": t.passed, "best_score": t.best_score}
+            for t in topic_qs
+        ]
+        return Response({"ok": True, "subtopics": subtopics, "topics": topics})
+
+
+class QuestionQuizView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        subject = (request.query_params.get("subject") or "").lower()
+        topic = request.query_params.get("topic")
+        subtopic = request.query_params.get("subtopic")
+        if not subject or not topic:
+            return Response({"error": "subject and topic required"}, status=400)
+
+        if not is_staff(request.user):
+            completed_topics = set(
+                TopicProgress.objects.filter(user=request.user, subject=subject, passed=True).values_list("topic", flat=True)
+            )
+            level = _effective_level(request.user, subject)
+            if subtopic:
+                if not _subtopic_unlocked(subject, topic, subtopic, level, completed_topics):
+                    return Response({"error": "Locked"}, status=403)
+            else:
+                # topic quiz lock: require all subtopics completed and topic unlocked
+                if not _topic_unlocked(subject, topic, completed_topics, level):
+                    return Response({"error": "Locked"}, status=403)
+                required = {(topic, s) for (t, s) in subtopic_order(subject) if t == topic}
+                completed = set(
+                    SubtopicProgress.objects.filter(user=request.user, subject=subject, passed=True, topic=topic)
+                    .values_list("topic", "subtopic")
+                )
+                if required and not required.issubset(completed):
+                    # allow if level already covers all subtopics in this topic
+                    order = subtopic_order(subject)
+                    indices = [i for i, (t, _) in enumerate(order) if t == topic]
+                    if indices and level < max(indices) + 1:
+                        return Response({"error": "Complete all subtopics first"}, status=403)
+
+        qs = Question.objects.filter(subject=subject, topic=topic)
+        if subtopic:
+            qs = qs.filter(subtopic=subtopic)
+        if not is_staff(request.user):
+            qs = qs.filter(published=True)
+
+        try:
+            limit = int(request.query_params.get("limit") or (10 if subtopic else 15))
+        except Exception:
+            limit = 10 if subtopic else 15
+        limit = max(1, min(limit, 50))
+        qs = qs.order_by("?")[:limit]
+
+        questions = []
+        for q in qs:
+            data = QuestionSerializer(q).data
+            for c in data.get("choices") or []:
+                c.pop("is_correct", None)
+            data.pop("correct_answer", None)
+            questions.append(data)
+
+        return Response(
+            {
+                "ok": True,
+                "quiz": {
+                    "subject": subject,
+                    "topic": topic,
+                    "subtopic": subtopic,
+                    "total": len(questions),
+                },
+                "questions": questions,
+            }
+        )
+
+
+class QuestionQuizSubmitView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        subject = (request.data.get("subject") or "").lower()
+        topic = request.data.get("topic")
+        subtopic = request.data.get("subtopic")
+        answers = request.data.get("answers") or []
+        if not subject or not topic or not isinstance(answers, list):
+            return Response({"error": "subject, topic, and answers required"}, status=400)
+
+        ids = [a.get("question_id") for a in answers if a.get("question_id")]
+        if not ids:
+            return Response({"error": "No answers provided"}, status=400)
+
+        qs = Question.objects.filter(id__in=ids, subject=subject, topic=topic)
+        if subtopic:
+            qs = qs.filter(subtopic=subtopic)
+
+        by_id = {str(q.id): q for q in qs}
+        total = 0
+        correct = 0
+        for a in answers:
+            qid = a.get("question_id")
+            if not qid or qid not in by_id:
+                continue
+            q = by_id[qid]
+            total += 1
+            if q.is_open_ended:
+                expected = (q.correct_answer or "").strip().lower()
+                actual = str(a.get("answer") or "").strip().lower()
+                if expected and actual == expected:
+                    correct += 1
+            else:
+                pick = (a.get("answer") or "").strip()
+                correct_label = next((c.get("label") for c in q.choices if c.get("is_correct")), None)
+                if pick and correct_label and pick == correct_label:
+                    correct += 1
+
+        score = (correct / total) if total else 0
+        passed = score >= 0.8
+
+        if passed:
+            if subtopic:
+                prog, _ = SubtopicProgress.objects.get_or_create(
+                    user=request.user, subject=subject, topic=topic, subtopic=subtopic
+                )
+                prog.best_score = max(prog.best_score or 0, score)
+                prog.passed = True
+                prog.completed_at = timezone.now()
+                prog.save()
+
+                # update level based on completed subtopics
+                completed = SubtopicProgress.objects.filter(user=request.user, subject=subject, passed=True).count()
+                current_level = _parse_level(
+                    request.user.profile.math_level if subject == "math" else request.user.profile.verbal_level
+                )
+                _set_level(request.user, subject, max(current_level, completed))
+            else:
+                prog, _ = TopicProgress.objects.get_or_create(user=request.user, subject=subject, topic=topic)
+                prog.best_score = max(prog.best_score or 0, score)
+                prog.passed = True
+                prog.completed_at = timezone.now()
+                prog.save()
+
+        return Response({"ok": True, "total": total, "correct": correct, "score": score, "passed": passed})

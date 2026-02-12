@@ -1,9 +1,9 @@
 ﻿"use client";
 
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef, memo } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import Image from "next/image";
-import { Crimson_Text, Space_Grotesk } from "next/font/google";
+import { Crimson_Text, Space_Grotesk, Source_Serif_4 } from "next/font/google";
 import { typesetMath } from "@/lib/mathjax";
 import eliminateIcon from "@/sss/d2.png";
 
@@ -14,10 +14,66 @@ type Question = {
   choices: { label: string; content: string; is_correct: boolean }[];
   explanation?: string | null;
   image_url?: string | null;
+  is_open_ended?: boolean | null;
+  correct_answer?: string | null;
 };
 
 const uiFont = Space_Grotesk({ subsets: ["latin"], weight: ["400", "500", "600", "700"] });
-const passageFont = Crimson_Text({ subsets: ["latin"], weight: ["400", "600"] });
+const passageFont = Source_Serif_4({ subsets: ["latin"], weight: ["400", "600"], style: ["normal"] });
+
+const TimerDisplay = memo(function TimerDisplay({
+  paused,
+  hidden,
+  resetKey,
+}: {
+  paused: boolean;
+  hidden: boolean;
+  resetKey: string;
+}) {
+  const [timeElapsed, setTimeElapsed] = useState(0);
+
+  useEffect(() => {
+    setTimeElapsed(0);
+  }, [resetKey]);
+
+  useEffect(() => {
+    if (paused) return;
+    const id = window.setInterval(() => {
+      setTimeElapsed((t) => t + 1);
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [paused]);
+
+  function formatTime(seconds: number) {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  }
+
+  return (
+    <div className="rounded-full border border-slate-200 bg-white px-3 py-1.5 font-semibold tracking-[0.08em]">
+      {hidden ? "--:--" : formatTime(timeElapsed)}
+    </div>
+  );
+});
+
+const MathContent = memo(function MathContent({
+  html,
+  className,
+}: {
+  html: string;
+  className?: string;
+}) {
+  const ref = useRef<HTMLSpanElement | null>(null);
+
+  useEffect(() => {
+    if (!ref.current) return;
+    ref.current.innerHTML = html || "";
+    typesetMath(ref.current);
+  }, [html]);
+
+  return <span ref={ref} className={className} />;
+});
 
 export default function TopicQuestionsPage() {
   const params = useParams<{ subject: string; topic: string }>();
@@ -35,18 +91,19 @@ export default function TopicQuestionsPage() {
   const [current, setCurrent] = useState(0);
   const [selected, setSelected] = useState<Record<string, string>>({});
   const [evaluation, setEvaluation] = useState<Record<string, Record<string, "correct" | "incorrect">>>({});
+  const [statusMap, setStatusMap] = useState<Record<string, "correct" | "incorrect">>({});
   const [eliminated, setEliminated] = useState<Record<string, Set<string>>>({});
   const [passageHtml, setPassageHtml] = useState<Record<string, string>>({});
   const [passageOriginal, setPassageOriginal] = useState<Record<string, string>>({});
   const [crossMode, setCrossMode] = useState(false);
   const [showExplanation, setShowExplanation] = useState<Record<string, boolean>>({});
   const [explanationNotice, setExplanationNotice] = useState<Record<string, string>>({});
-  const [timeElapsed, setTimeElapsed] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
   const [timerHidden, setTimerHidden] = useState(false);
   const [showNavigator, setShowNavigator] = useState(false);
   const passageRef = useRef<HTMLDivElement | null>(null);
   const stemRef = useRef<HTMLDivElement | null>(null);
+  const choicesRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -73,16 +130,32 @@ export default function TopicQuestionsPage() {
         );
         const json = await res.json();
         if (!res.ok) throw new Error(json?.error || "Failed to load questions");
-        setQuestions(json.questions ?? []);
+        const qs = json.questions ?? [];
+        setQuestions(qs);
         const ph: Record<string, string> = {};
         const orig: Record<string, string> = {};
-        (json.questions ?? []).forEach((q: Question) => {
+        qs.forEach((q: Question) => {
           const val = q.passage ?? "";
           ph[q.id] = val;
           orig[q.id] = val;
         });
         setPassageHtml(ph);
         setPassageOriginal(orig);
+        if (access && qs.length) {
+          fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/streak/attempts/`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${access}`,
+            },
+            body: JSON.stringify({ question_ids: qs.map((q: Question) => q.id) }),
+          })
+            .then((r) => r.json())
+            .then((j) => {
+              if (j?.statuses) setStatusMap(j.statuses);
+            })
+            .catch(() => null);
+        }
       } catch (e: any) {
         setError(e?.message ?? "Failed to load questions");
       } finally {
@@ -105,26 +178,20 @@ export default function TopicQuestionsPage() {
     typesetMath(passageRef.current);
   }, [passageHtml, current]);
 
-  useEffect(() => {
-    setTimeElapsed(0);
-  }, [current]);
 
-  useEffect(() => {
-    if (isPaused) return;
-    const id = window.setInterval(() => {
-      setTimeElapsed((t) => t + 1);
-    }, 1000);
-    return () => window.clearInterval(id);
-  }, [isPaused]);
-
-  function wrapLatexIfNeeded(text: string) {
-    const trimmed = text.trim();
+  function wrapLatexIfNeeded(input: string) {
+    const trimmed = input.trim();
     if (!trimmed) return "";
-    const hasDelims = trimmed.startsWith("\\(") || trimmed.startsWith("\\[") || trimmed.startsWith("$");
+    const hasDelims = trimmed.includes("\\(") || trimmed.includes("\\[") || trimmed.includes("$$");
     return hasDelims ? trimmed : `\\(${trimmed}\\)`;
   }
 
   const currentQ = questions[current];
+  const isOpenEnded = !!(currentQ as any)?.is_open_ended;
+  const imageUrl = (currentQ as any)?.image_url || (currentQ as any)?.imageUrl || (currentQ as any)?.image || null;
+  const resolvedImageUrl = imageUrl && imageUrl.startsWith('/')
+    ? `${process.env.NEXT_PUBLIC_API_BASE}${imageUrl}`
+    : imageUrl;
   const passage = currentQ?.passage;
   const total = questions.length;
 
@@ -137,14 +204,31 @@ export default function TopicQuestionsPage() {
     if (!q) return;
     const pick = selected[qid];
     if (!pick) return;
-    const correct = q.choices.find((c) => c.is_correct)?.label;
-    setEvaluation((p) => ({
-      ...p,
-      [qid]: {
-        ...(p[qid] ?? {}),
-        [pick]: pick === correct ? "correct" : "incorrect",
-      },
-    }));
+    let isCorrect = false;
+    if (q.is_open_ended) {
+      const expected = (q.correct_answer ?? "").trim().toLowerCase();
+      const actual = String(pick).trim().toLowerCase();
+      isCorrect = expected.length > 0 && actual === expected;
+      setStatusMap((p) => ({ ...p, [qid]: isCorrect ? "correct" : "incorrect" }));
+      setEvaluation((p) => ({
+        ...p,
+        [qid]: {
+          ...(p[qid] ?? {}),
+          __open__: isCorrect ? "correct" : "incorrect",
+        },
+      }));
+    } else {
+      const correct = q.choices.find((c) => c.is_correct)?.label;
+      isCorrect = pick === correct;
+      setStatusMap((p) => ({ ...p, [qid]: isCorrect ? "correct" : "incorrect" }));
+      setEvaluation((p) => ({
+        ...p,
+        [qid]: {
+          ...(p[qid] ?? {}),
+          [pick]: isCorrect ? "correct" : "incorrect",
+        },
+      }));
+    }
 
     const access = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
     if (access) {
@@ -154,7 +238,12 @@ export default function TopicQuestionsPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${access}`,
         },
-        body: JSON.stringify({ question_id: qid, subject }),
+        body: JSON.stringify({
+          question_id: qid,
+          subject,
+          selected_label: q.is_open_ended ? null : pick,
+          is_correct: isCorrect,
+        }),
       }).catch(() => null);
     }
   }
@@ -202,7 +291,35 @@ export default function TopicQuestionsPage() {
   }
 
   const isMath = subject === "math";
-  const stemHtml = (text: string) => (isMath ? wrapLatexIfNeeded(text || "") : text || "");
+  const stemHtmlValue = useMemo(() => {
+    if (!currentQ) return "";
+    const raw = currentQ.stem || "";
+    const html = isMath ? wrapLatexIfNeeded(raw) : raw;
+    return html.replace(/\n/g, "<br/>");
+  }, [currentQ, isMath]);
+  const explanationHtml = useMemo(() => {
+    if (!currentQ?.explanation) return "";
+    return currentQ.explanation.replace(/\n/g, "<br/>");
+  }, [currentQ]);
+  useEffect(() => {
+    if (!isMath) return;
+    typesetMath();
+    if (stemRef.current) typesetMath(stemRef.current);
+  }, [currentQ, isMath]);
+  useEffect(() => {
+    if (!stemRef.current) return;
+    stemRef.current.innerHTML = stemHtmlValue || "<span class='text-neutral-400'>No question text</span>";
+    if (isMath) typesetMath(stemRef.current);
+  }, [stemHtmlValue, isMath]);
+  useEffect(() => {
+    if (!isMath) return;
+    if (choicesRef.current) typesetMath(choicesRef.current);
+  }, [currentQ, selected, evaluation, showExplanation, explanationNotice, isMath]);
+
+  useEffect(() => {
+    if (!isMath) return;
+    if (stemRef.current) typesetMath(stemRef.current);
+  }, [currentQ, showExplanation, explanationNotice, isMath]);
   const passageSections = useMemo(() => {
     const html = currentQ ? passageHtml[currentQ.id] ?? "" : "";
     if (!html.trim()) return [];
@@ -214,12 +331,6 @@ export default function TopicQuestionsPage() {
     if (typeof document === "undefined") return;
     if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => null);
     else document.exitFullscreen?.().catch?.(() => null);
-  }
-
-  function formatTime(seconds: number) {
-    const m = Math.floor(seconds / 60);
-    const s = seconds % 60;
-    return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   }
 
   function handleExplanationClick() {
@@ -258,7 +369,7 @@ export default function TopicQuestionsPage() {
   }
 
   return (
-    <div className={`${uiFont.className} min-h-screen bg-[#f5f3ef] text-slate-900`}>
+    <div className={`${uiFont.className} min-h-screen bg-white text-slate-900`}>
       <div className="mx-auto max-w-none px-0 pb-[96px] pt-0 space-y-3">
         <div className="flex flex-col gap-3 text-sm px-4 pt-4 sm:px-6 sm:pt-5 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-4">
@@ -267,9 +378,11 @@ export default function TopicQuestionsPage() {
             </button>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <div className="rounded-full border border-slate-200 bg-white px-3 py-1.5 font-semibold tracking-[0.08em]">
-              {timerHidden ? "--:--" : formatTime(timeElapsed)}
-            </div>
+            <TimerDisplay
+              paused={isPaused}
+              hidden={timerHidden}
+              resetKey={currentQ?.id ?? ""}
+            />
             <button
               className="rounded-full border border-slate-200 bg-white px-3 py-1.5"
               onClick={() => setIsPaused((v) => !v)}
@@ -327,11 +440,11 @@ export default function TopicQuestionsPage() {
             {isMath ? (
               <div className="px-4 sm:px-6 py-6 sm:py-8 min-h-0">
                 <div className="mx-auto max-w-3xl space-y-6 min-h-0">
-                  {currentQ.image_url ? (
+                  {imageUrl ? (
                     <div className="rounded-xl border border-slate-200 bg-slate-50 overflow-hidden">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
-                        src={currentQ.image_url}
+                        src={resolvedImageUrl}
                         alt="question illustration"
                         className="w-full max-h-[360px] object-contain"
                       />
@@ -341,15 +454,11 @@ export default function TopicQuestionsPage() {
                   <div
                     ref={stemRef}
                     className="text-lg font-semibold text-neutral-900 whitespace-pre-wrap leading-relaxed break-words break-all"
-                    dangerouslySetInnerHTML={{
-                      __html:
-                        stemHtml(currentQ.stem || "").replace(/\n/g, "<br/>") ||
-                        "<span class='text-neutral-400'>No question text</span>",
-                    }}
+
                   />
 
-                  <div className="space-y-3">
-                    {currentQ.choices && currentQ.choices.length > 0 ? (
+                  <div ref={choicesRef} className="space-y-3">
+                    {!isOpenEnded && currentQ.choices && currentQ.choices.length > 0 ? (
                       currentQ.choices.map((c) => {
                         const picked = selected[currentQ.id] === c.label;
                         const status = evaluation[currentQ.id]?.[c.label];
@@ -379,7 +488,11 @@ export default function TopicQuestionsPage() {
                                 className="text-neutral-900 text-left flex-1 min-w-0 break-words break-all"
                                 onClick={() => (isCross ? null : selectChoice(currentQ.id, c.label))}
                               >
-                                {c.content}
+                              {isMath ? (
+                                <MathContent html={wrapLatexIfNeeded(c.content || "").replace(/\n/g, "<br/>")} />
+                              ) : (
+                                c.content
+                              )}
                               </button>
                               {isCross ? (
                                 <button
@@ -416,12 +529,36 @@ export default function TopicQuestionsPage() {
                             }))
                           }
                         />
+                        <div className="mt-2 flex items-center gap-2">
+                          <button
+                            className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700"
+                            onClick={() => checkAnswer(currentQ.id)}
+                          >
+                            Check
+                          </button>
+                          {evaluation[currentQ.id]?.__open__ ? (
+                            <span
+                              className={`text-xs font-semibold ${
+                                evaluation[currentQ.id]?.__open__ === "correct"
+                                  ? "text-emerald-700"
+                                  : "text-red-700"
+                              }`}
+                            >
+                              {evaluation[currentQ.id]?.__open__ === "correct" ? "Correct" : "Incorrect"}
+                            </span>
+                          ) : null}
+                        </div>
                       </div>
                     )}
                   </div>
                   {showExplanation[currentQ.id] && currentQ.explanation ? (
                     <div className="mt-4 rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-sm text-neutral-700">
-                      Explanation: {currentQ.explanation}
+                      <span className="font-semibold">Explanation:</span>{" "}
+                      {isMath ? (
+                        <MathContent html={explanationHtml} />
+                      ) : (
+                        <span dangerouslySetInnerHTML={{ __html: explanationHtml }} />
+                      )}
                     </div>
                   ) : null}
                   {explanationNotice[currentQ.id] ? (
@@ -431,8 +568,17 @@ export default function TopicQuestionsPage() {
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 min-h-0">
-                <div className="md:border-r border-slate-200 bg-[#fbfaf7] px-4 sm:px-6 py-6 min-h-0">
+                <div className="md:border-r border-slate-200 bg-white px-4 sm:px-6 py-6 min-h-0">
                   <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Reading passages</div>
+                  {imageUrl ? (
+                    <div className="mt-4 rounded-xl border border-slate-200 bg-white overflow-hidden">
+                      <img
+                        src={resolvedImageUrl}
+                        alt="question illustration"
+                        className="w-full max-h-[260px] object-contain"
+                      />
+                    </div>
+                  ) : null}
                   <div
                     ref={passageRef}
                     className={`${passageFont.className} mt-4 max-h-none overflow-y-auto min-h-0 pr-3 text-[15px] leading-[1.7] text-slate-800`}
@@ -455,15 +601,11 @@ export default function TopicQuestionsPage() {
                   <div
                     ref={stemRef}
                     className="mt-3 text-base font-semibold text-neutral-900 whitespace-pre-wrap leading-relaxed break-words break-all"
-                    dangerouslySetInnerHTML={{
-                      __html:
-                        stemHtml(currentQ.stem || "").replace(/\n/g, "<br/>") ||
-                        "<span class='text-neutral-400'>No question text</span>",
-                    }}
+
                   />
 
-                  <div className="mt-5 space-y-3 overflow-y-auto min-h-0 max-h-[calc(100vh-340px)] pr-1">
-                    {currentQ.choices && currentQ.choices.length > 0 ? (
+                  <div ref={choicesRef} className="mt-5 space-y-3 overflow-y-auto min-h-0 max-h-[calc(100vh-340px)] pr-1">
+                    {!isOpenEnded && currentQ.choices && currentQ.choices.length > 0 ? (
                       currentQ.choices.map((c) => {
                         const picked = selected[currentQ.id] === c.label;
                         const status = evaluation[currentQ.id]?.[c.label];
@@ -493,7 +635,15 @@ export default function TopicQuestionsPage() {
                                 className="text-neutral-900 text-left flex-1 min-w-0 break-words break-all"
                                 onClick={() => (isCross ? null : selectChoice(currentQ.id, c.label))}
                               >
-                                {c.content}
+                                {isMath ? (
+                                  <span
+                                    dangerouslySetInnerHTML={{
+                                      __html: wrapLatexIfNeeded(c.content || "").replace(/\n/g, "<br/>"),
+                                    }}
+                                  />
+                                ) : (
+                                  c.content
+                                )}
                               </button>
                               {isCross ? (
                                 <button
@@ -530,6 +680,25 @@ export default function TopicQuestionsPage() {
                             }))
                           }
                         />
+                        <div className="mt-2 flex items-center gap-2">
+                          <button
+                            className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700"
+                            onClick={() => checkAnswer(currentQ.id)}
+                          >
+                            Check
+                          </button>
+                          {evaluation[currentQ.id]?.__open__ ? (
+                            <span
+                              className={`text-xs font-semibold ${
+                                evaluation[currentQ.id]?.__open__ === "correct"
+                                  ? "text-emerald-700"
+                                  : "text-red-700"
+                              }`}
+                            >
+                              {evaluation[currentQ.id]?.__open__ === "correct" ? "Correct" : "Incorrect"}
+                            </span>
+                          ) : null}
+                        </div>
                       </div>
                     )}
                   </div>
@@ -621,7 +790,7 @@ export default function TopicQuestionsPage() {
             <div className="px-5 py-4 text-xs text-slate-600 flex items-center gap-4">
               <div className="flex items-center gap-2">
                 <span className="h-3 w-3 rounded bg-emerald-100 border border-emerald-200" />
-                Easy/Correct
+                Easy
               </div>
               <div className="flex items-center gap-2">
                 <span className="h-3 w-3 rounded bg-amber-100 border border-amber-200" />
@@ -629,25 +798,42 @@ export default function TopicQuestionsPage() {
               </div>
               <div className="flex items-center gap-2">
                 <span className="h-3 w-3 rounded bg-red-100 border border-red-200" />
-                Hard/Incorrect
+                Hard
               </div>
             </div>
             <div className="px-5 pb-5">
               <div className="grid grid-cols-4 sm:grid-cols-6 gap-2 max-h-[320px] overflow-y-auto pr-1">
-                {questions.map((q, idx) => (
-                  <button
-                    key={q.id}
-                    onClick={() => {
-                      setCurrent(idx);
-                      setShowNavigator(false);
-                    }}
-                    className={`h-9 w-9 rounded-lg border text-xs font-semibold ${getDifficultyTone(q, q.id)} ${
-                      idx === current ? "ring-2 ring-slate-900/30" : ""
-                    }`}
-                  >
-                    {idx + 1}
-                  </button>
-                ))}
+                {questions.map((q, idx) => {
+                  const status = statusMap[q.id];
+                  const statusIcon = status === "correct" ? "✓" : status === "incorrect" ? "✕" : "";
+                  const statusClass =
+                    status === "correct"
+                      ? "bg-emerald-100 text-emerald-700 border-emerald-200"
+                      : status === "incorrect"
+                        ? "bg-red-100 text-red-700 border-red-200"
+                        : "bg-white text-slate-400 border-slate-200";
+                  return (
+                    <button
+                      key={q.id}
+                      onClick={() => {
+                        setCurrent(idx);
+                        setShowNavigator(false);
+                      }}
+                      className={`relative h-9 w-9 rounded-lg border text-xs font-semibold ${getDifficultyTone(q, q.id)} ${
+                        idx === current ? "ring-2 ring-slate-900/30" : ""
+                      }`}
+                    >
+                      {idx + 1}
+                      {statusIcon ? (
+                        <span
+                          className={`absolute -top-1 -right-1 h-4 w-4 rounded-full border text-[10px] inline-flex items-center justify-center ${statusClass}`}
+                        >
+                          {statusIcon}
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           </div>

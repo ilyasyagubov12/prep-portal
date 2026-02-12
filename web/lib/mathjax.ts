@@ -11,6 +11,12 @@ let mathJaxLoading: Promise<void> | null = null;
 function ensureLoader(): Promise<void> {
   if (typeof window === "undefined") return Promise.resolve();
   if (window.MathJax) return Promise.resolve();
+  if (!window.MathJax) {
+    (window as any).MathJax = {
+      tex: { inlineMath: [["\\(", "\\)"], ["$", "$"]] },
+      options: { skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"] },
+    };
+  }
   if (mathJaxLoading) return mathJaxLoading;
 
   mathJaxLoading = new Promise((resolve, reject) => {

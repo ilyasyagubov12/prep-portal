@@ -33,6 +33,8 @@ export default function HomePage() {
   const [uniFile, setUniFile] = useState<File | null>(null);
   const [uniUploading, setUniUploading] = useState(false);
   const [displayName, setDisplayName] = useState("there");
+  const [mathLevel, setMathLevel] = useState(0);
+  const [verbalLevel, setVerbalLevel] = useState(0);
   const [streakCount, setStreakCount] = useState(0);
   const [streakMath, setStreakMath] = useState(0);
   const [streakVerbal, setStreakVerbal] = useState(0);
@@ -76,6 +78,10 @@ export default function HomePage() {
             }
             if (typeof prof?.goal_math === "number") setMathGoal(prof.goal_math);
             if (typeof prof?.goal_verbal === "number") setVerbalGoal(prof.goal_verbal);
+            const mLvl = parseInt(prof?.math_level ?? "0", 10);
+            const vLvl = parseInt(prof?.verbal_level ?? "0", 10);
+            setMathLevel(Number.isFinite(mLvl) ? mLvl : 0);
+            setVerbalLevel(Number.isFinite(vLvl) ? vLvl : 0);
             if (prof?.university_icon) setUniPreview(prof.university_icon);
           }
 
@@ -146,6 +152,9 @@ export default function HomePage() {
   const semiCirc = ringCirc / 2;
   const mathOffset = semiCirc * (1 - mathProgress);
   const verbalOffset = semiCirc * (1 - verbalProgress);
+  const auraRatio = Math.min(1, streakCount / 20);
+  const auraHue = 120 + (280 - 120) * auraRatio;
+  const auraGlow = `radial-gradient(closest-side, hsla(${auraHue}, 85%, 65%, 0.75), hsla(${auraHue}, 85%, 55%, 0.35) 55%, transparent 70%)`;
 
   async function selectExamDate(dateId: number) {
     const access = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
@@ -241,6 +250,34 @@ export default function HomePage() {
         <div className="mt-2 flex items-center gap-2 text-lg font-semibold">
           <span>👋</span>
           <span>Hi {displayName}</span>
+        </div>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          {[
+            { label: "Math", value: mathLevel, accent: "from-emerald-400 via-teal-400 to-indigo-500" },
+            { label: "Verbal", value: verbalLevel, accent: "from-amber-400 via-rose-400 to-purple-500" },
+          ].map((item) => {
+            const cap = 20;
+            const pct = Math.min(1, item.value / cap);
+            return (
+              <div
+                key={item.label}
+                className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm"
+              >
+                <div className="absolute right-0 top-0 h-16 w-16 -translate-y-6 translate-x-6 rounded-full bg-slate-100/70 blur-2xl" />
+                <div className="flex items-center justify-between">
+                  <div className="text-xs uppercase tracking-[0.2em] text-slate-400">{item.label} level</div>
+                  <div className="text-lg font-extrabold text-slate-900">{item.value}</div>
+                </div>
+                <div className="mt-2 h-2 w-full rounded-full bg-slate-100">
+                  <div
+                    className={`h-2 rounded-full bg-gradient-to-r ${item.accent}`}
+                    style={{ width: `${Math.round(pct * 100)}%` }}
+                  />
+                </div>
+                <div className="mt-1 text-[11px] text-slate-500">Progress to 20</div>
+              </div>
+            );
+          })}
         </div>
 
         {error ? <div className="mt-3 text-sm text-red-600">{error}</div> : null}

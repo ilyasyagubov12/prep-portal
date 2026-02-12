@@ -69,6 +69,8 @@ class StreakAttemptView(APIView):
         user = request.user
         question_id = request.data.get("question_id")
         subject = (request.data.get("subject") or "").lower()
+        selected_label = request.data.get("selected_label")
+        is_correct = request.data.get("is_correct")
 
         if not question_id:
             return Response({"error": "question_id required"}, status=status.HTTP_400_BAD_REQUEST)
@@ -92,6 +94,12 @@ class StreakAttemptView(APIView):
             attempted_date=today,
             defaults={"subject": subject},
         )
+        # Update attempt info for navigator/status
+        if selected_label is not None:
+            attempt.selected_label = str(selected_label)[:5]
+        if is_correct is not None:
+            attempt.is_correct = bool(is_correct)
+        attempt.save()
 
         progress, _ = DailyStreakProgress.objects.get_or_create(user=user, date=today)
 
@@ -126,5 +134,25 @@ class StreakAttemptView(APIView):
                 "time_left_seconds": time_left,
             }
         )
+
+
+class QuestionAttemptStatusView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        ids = request.data.get("question_ids") or []
+        if not isinstance(ids, list) or not ids:
+            return Response({"error": "question_ids required"}, status=status.HTTP_400_BAD_REQUEST)
+        qs = QuestionAttempt.objects.filter(user=request.user, question_id__in=ids).order_by("-updated_at")
+        status_map = {}
+        for a in qs:
+            qid = str(a.question_id)
+            if qid in status_map:
+                continue
+            if a.is_correct is True:
+                status_map[qid] = "correct"
+            elif a.is_correct is False:
+                status_map[qid] = "incorrect"
+        return Response({"ok": True, "statuses": status_map})
 
 # Create your views here.
