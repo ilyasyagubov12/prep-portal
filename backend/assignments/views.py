@@ -580,7 +580,7 @@ def _cloud_url(path: str | None, mime_type: str | None = None):
             fmt = None
             delivery_type = "upload"
         elif is_pdf:
-            resource_type = "raw"
+            resource_type = "image"
             fmt = "pdf"
             delivery_type = "authenticated"
         else:

@@ -66,8 +66,8 @@ class CourseNodeSerializer(serializers.ModelSerializer):
                 fmt = None
                 delivery_type = "upload"
             elif is_pdf:
-                # PDFs are often stored as raw/authenticated in Cloudinary
-                resource_type = "raw"
+                # PDFs in this project are stored under image/authenticated
+                resource_type = "image"
                 fmt = "pdf"
                 delivery_type = "authenticated"
             else:
