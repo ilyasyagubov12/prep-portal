@@ -609,15 +609,20 @@ def _cloud_url(path: str | None, mime_type: str | None = None):
     def _resolve_pdf_public_id(base_public_id: str):
         if not os.getenv("CLOUDINARY_URL"):
             return None, None, None
-        base_public_id = base_public_id[:-4] if base_public_id.lower().endswith(".pdf") else base_public_id
-        variants = {base_public_id}
-        if " " in base_public_id:
-            variants.add(base_public_id.replace(" ", "_"))
-        if base_public_id.startswith("media/"):
-            variants.add(base_public_id[len("media/"):])
+        original_public_id = base_public_id
+        variants = {original_public_id}
+        if original_public_id.lower().endswith(".pdf"):
+            variants.add(original_public_id[:-4])
+        if " " in original_public_id:
+            variants.add(original_public_id.replace(" ", "_"))
+        if original_public_id.startswith("media/"):
+            variants.add(original_public_id[len("media/"):])
         else:
-            variants.add(f"media/{base_public_id}")
-        target_norm = _normalize_name(base_public_id.split("/")[-1])
+            variants.add(f"media/{original_public_id}")
+        target_name = original_public_id.split("/")[-1]
+        if target_name.lower().endswith(".pdf"):
+            target_name = target_name[:-4]
+        target_norm = _normalize_name(target_name)
         delivery_types = ("upload", "authenticated", "private")
 
         for vid in variants:
