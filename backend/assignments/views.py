@@ -8,6 +8,7 @@ from django.utils import timezone
 from django.contrib.auth import get_user_model
 from django.core.files.storage import default_storage
 import os
+import cloudinary.uploader
 from cloudinary.utils import cloudinary_url
 from django.conf import settings
 from courses.models import Course, CourseNode, CourseTeacher, Enrollment
@@ -274,7 +275,20 @@ class AssignmentAttachmentUploadView(APIView):
             return Response({"error": "Forbidden"}, status=403)
 
         rel_path = f"assignment_attachments/{assignment.id}/{file_obj.name}"
-        saved = default_storage.save(rel_path, file_obj)
+        mime = getattr(file_obj, "content_type", "") or ""
+        is_pdf = mime.lower() == "application/pdf" or rel_path.lower().endswith(".pdf")
+        if os.getenv("CLOUDINARY_URL") and is_pdf:
+            public_id = f"media/{rel_path.rsplit('.', 1)[0]}"
+            cloudinary.uploader.upload(
+                file_obj,
+                public_id=public_id,
+                resource_type="raw",
+                type="authenticated",
+                overwrite=True,
+            )
+            saved = public_id
+        else:
+            saved = default_storage.save(rel_path, file_obj)
         af = AssignmentFile.objects.create(
             assignment=assignment,
             name=file_obj.name,
@@ -347,7 +361,20 @@ class SubmissionCreateView(APIView):
                 return Response({"error": "Submission limit reached"}, status=400)
 
         rel_path = f"assignment_submissions/{assignment.id}/{user.id}/{file_obj.name}"
-        saved = default_storage.save(rel_path, file_obj)
+        mime = getattr(file_obj, "content_type", "") or ""
+        is_pdf = mime.lower() == "application/pdf" or rel_path.lower().endswith(".pdf")
+        if os.getenv("CLOUDINARY_URL") and is_pdf:
+            public_id = f"media/{rel_path.rsplit('.', 1)[0]}"
+            cloudinary.uploader.upload(
+                file_obj,
+                public_id=public_id,
+                resource_type="raw",
+                type="authenticated",
+                overwrite=True,
+            )
+            saved = public_id
+        else:
+            saved = default_storage.save(rel_path, file_obj)
         sub = Submission.objects.create(
             assignment=assignment,
             student=user,
@@ -580,7 +607,7 @@ def _cloud_url(path: str | None, mime_type: str | None = None):
             fmt = None
             delivery_type = "upload"
         elif is_pdf:
-            resource_type = "image"
+            resource_type = "raw"
             fmt = "pdf"
             delivery_type = "authenticated"
         else:

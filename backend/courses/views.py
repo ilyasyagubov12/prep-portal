@@ -7,6 +7,9 @@ from django.utils import timezone
 from django.db import transaction
 from django.contrib.auth import get_user_model
 from django.core.files.storage import default_storage
+import os
+import cloudinary.uploader
+from cloudinary.utils import cloudinary_url
 from django.conf import settings
 from accounts.models import Profile
 from .models import Course, CourseTeacher, Enrollment, CourseNode
@@ -440,7 +443,31 @@ class CourseNodeUploadView(APIView):
                 return Response({"error": "Parent not found"}, status=404)
 
         rel_path = f"course_files/{course.id}/{file_obj.name}"
-        saved_path = default_storage.save(rel_path, file_obj)
+        mime = getattr(file_obj, "content_type", "") or ""
+        is_pdf = mime.lower() == "application/pdf" or rel_path.lower().endswith(".pdf")
+
+        if os.getenv("CLOUDINARY_URL") and is_pdf:
+            # Store PDFs as raw/authenticated in Cloudinary
+            public_id = f"media/{rel_path.rsplit('.', 1)[0]}"
+            cloudinary.uploader.upload(
+                file_obj,
+                public_id=public_id,
+                resource_type="raw",
+                type="authenticated",
+                overwrite=True,
+            )
+            saved_path = public_id
+            file_url, _ = cloudinary_url(
+                saved_path,
+                resource_type="raw",
+                type="authenticated",
+                secure=True,
+                sign_url=True,
+                format="pdf",
+            )
+        else:
+            saved_path = default_storage.save(rel_path, file_obj)
+            file_url = default_storage.url(saved_path)
 
         node = CourseNode.objects.create(
             course=course,
@@ -454,8 +481,6 @@ class CourseNodeUploadView(APIView):
             created_by=user,
             published=True,
         )
-
-        file_url = default_storage.url(saved_path)
 
         return Response(
             {

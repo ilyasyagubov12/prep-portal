@@ -66,8 +66,8 @@ class CourseNodeSerializer(serializers.ModelSerializer):
                 fmt = None
                 delivery_type = "upload"
             elif is_pdf:
-                # PDFs in this project are stored under image/authenticated
-                resource_type = "image"
+                # PDFs are stored as raw/authenticated
+                resource_type = "raw"
                 fmt = "pdf"
                 delivery_type = "authenticated"
             else:
