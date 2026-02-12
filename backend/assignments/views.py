@@ -11,6 +11,7 @@ import os
 import cloudinary.uploader
 import cloudinary.api
 import re
+from urllib.parse import urlparse, unquote
 from cloudinary.utils import cloudinary_url, private_download_url
 from django.conf import settings
 from courses.models import Course, CourseNode, CourseTeacher, Enrollment
@@ -603,6 +604,28 @@ def _cloud_url(path: str | None, mime_type: str | None = None):
     if not path:
         return None
     if str(path).startswith("http://") or str(path).startswith("https://"):
+        if os.getenv("CLOUDINARY_URL"):
+            mime = (mime_type or "").lower()
+            lower = str(path).lower()
+            is_pdf = mime == "application/pdf" or lower.endswith(".pdf")
+            if is_pdf and "res.cloudinary.com" in lower:
+                try:
+                    parts = urlparse(path).path.strip("/").split("/")
+                    if len(parts) >= 5:
+                        resource_type = parts[1]
+                        delivery_type = parts[2]
+                        public_tail = "/".join(parts[4:])
+                        public_tail = unquote(public_tail)
+                        public_id = public_tail.rsplit(".", 1)[0]
+                        return private_download_url(
+                            public_id,
+                            "pdf",
+                            resource_type=resource_type,
+                            type=delivery_type,
+                            attachment=False,
+                        )
+                except Exception:
+                    pass
         return path
     if os.getenv("CLOUDINARY_URL"):
         def _normalize_name(value: str) -> str:
