@@ -80,7 +80,10 @@ function isVisible(node: CourseNode) {
   return t <= Date.now();
 }
 
-function guessPreviewType(path: string): "pdf" | "image" | "other" {
+function guessPreviewType(path: string, mimeType?: string | null): "pdf" | "image" | "other" {
+  const mime = (mimeType || "").toLowerCase();
+  if (mime === "application/pdf") return "pdf";
+  if (mime.startsWith("image/")) return "image";
   const p = path.toLowerCase();
   if (p.endsWith(".pdf")) return "pdf";
   if (
@@ -708,7 +711,11 @@ export default function CourseDetailPage() {
 
 async function getSignedUrl(storage_path: string, storage_url?: string | null) {
   const base = process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") || "";
-  if (storage_url) return storage_url;
+  if (storage_url) {
+    if (storage_url.startsWith("http://") || storage_url.startsWith("https://")) return storage_url;
+    if (storage_url.startsWith("/")) return `${base}${storage_url}`;
+    return `${base}/${storage_url}`;
+  }
   if (storage_path.startsWith("http://") || storage_path.startsWith("https://")) return storage_path;
   return `${base}/media/${storage_path}`;
 }
@@ -785,7 +792,7 @@ async function getSignedUrl(storage_path: string, storage_url?: string | null) {
     if (!node.storage_path) return;
     try {
       const url = await getSignedUrl(node.storage_path, (node as any).storage_url);
-      const t = guessPreviewType(node.storage_path);
+      const t = guessPreviewType(node.storage_path, node.mime_type);
       setPreviewType(t);
       setPreviewUrl(url);
       setPreviewTitle(node.name);

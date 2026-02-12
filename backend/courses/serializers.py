@@ -1,5 +1,7 @@
 from rest_framework import serializers
 from django.core.files.storage import default_storage
+import os
+from cloudinary.utils import cloudinary_url
 from .models import Course, CourseNode
 
 
@@ -53,6 +55,25 @@ class CourseNodeSerializer(serializers.ModelSerializer):
     def get_storage_url(self, obj):
         if not obj.storage_path:
             return None
+        # If Cloudinary is configured, return a signed URL so protected assets load.
+        if os.getenv("CLOUDINARY_URL"):
+            path = obj.storage_path
+            mime = (obj.mime_type or "").lower()
+            lower = path.lower()
+            if mime.startswith("image/") or lower.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif")):
+                resource_type = "image"
+            elif mime == "application/pdf" or lower.endswith(".pdf"):
+                resource_type = "raw"
+            else:
+                resource_type = "raw"
+            url, _ = cloudinary_url(
+                path,
+                resource_type=resource_type,
+                type="upload",
+                secure=True,
+                sign_url=True,
+            )
+            return url
         try:
             return default_storage.url(obj.storage_path)
         except Exception:

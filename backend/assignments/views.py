@@ -7,6 +7,8 @@ from django.db import transaction
 from django.utils import timezone
 from django.contrib.auth import get_user_model
 from django.core.files.storage import default_storage
+import os
+from cloudinary.utils import cloudinary_url
 from django.conf import settings
 from courses.models import Course, CourseNode, CourseTeacher, Enrollment
 from .models import Assignment, AssignmentFile, Submission, Grade, OfflineUnit, OfflineGrade
@@ -215,7 +217,7 @@ class AssignmentSubmissionsListView(APIView):
             row = SubmissionSerializer(s).data
             g = grades.get(s.id)
             row["grade"] = GradeSerializer(g).data if g else None
-            row["file_url"] = _cloud_url(s.file_path)
+            row["file_url"] = _cloud_url(s.file_path, s.mime_type)
             row["student_obj"] = {
                 "user_id": str(s.student.id),
                 "username": getattr(s.student, "username", None),
@@ -248,7 +250,7 @@ class AssignmentAttachmentListView(APIView):
         rows = []
         for f in files:
             row = AssignmentFileSerializer(f).data
-            row["url"] = _cloud_url(f.storage_path)
+            row["url"] = _cloud_url(f.storage_path, f.mime_type)
             rows.append(row)
         return Response({"ok": True, "files": rows})
 
@@ -281,7 +283,7 @@ class AssignmentAttachmentUploadView(APIView):
             size_bytes=getattr(file_obj, "size", None),
             created_by=request.user,
         )
-        file_url = _cloud_url(saved)
+        file_url = _cloud_url(saved, getattr(file_obj, "content_type", None))
         data = AssignmentFileSerializer(af).data
         data["url"] = file_url
         return Response({"ok": True, "file": data})
@@ -354,7 +356,7 @@ class SubmissionCreateView(APIView):
             file_size=getattr(file_obj, "size", None),
             mime_type=getattr(file_obj, "content_type", None),
         )
-        file_url = _cloud_url(saved)
+        file_url = _cloud_url(saved, getattr(file_obj, "content_type", None))
         data = SubmissionSerializer(sub).data
         data["file_url"] = file_url
         return Response({"ok": True, "submission": data}, status=201)
@@ -566,7 +568,24 @@ class OfflineGradesListView(APIView):
         return Response({"ok": True, "grades": data})
 
 
-def _cloud_url(path: str | None):
+def _cloud_url(path: str | None, mime_type: str | None = None):
     if not path:
         return None
+    if os.getenv("CLOUDINARY_URL"):
+        lower = path.lower()
+        mime = (mime_type or "").lower()
+        if mime.startswith("image/") or lower.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif")):
+            resource_type = "image"
+        elif mime == "application/pdf" or lower.endswith(".pdf"):
+            resource_type = "raw"
+        else:
+            resource_type = "raw"
+        url, _ = cloudinary_url(
+            path,
+            resource_type=resource_type,
+            type="upload",
+            secure=True,
+            sign_url=True,
+        )
+        return url
     return default_storage.url(path)
