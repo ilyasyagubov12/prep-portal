@@ -447,22 +447,21 @@ class CourseNodeUploadView(APIView):
         is_pdf = mime.lower() == "application/pdf" or rel_path.lower().endswith(".pdf")
 
         if os.getenv("CLOUDINARY_URL") and is_pdf:
-            # Store PDFs as raw/authenticated in Cloudinary
+            # Store PDFs as raw/public in Cloudinary for easy access
             public_id = f"media/{rel_path.rsplit('.', 1)[0]}"
             cloudinary.uploader.upload(
                 file_obj,
                 public_id=public_id,
                 resource_type="raw",
-                type="authenticated",
+                type="upload",
                 overwrite=True,
             )
             saved_path = public_id
             file_url, _ = cloudinary_url(
                 saved_path,
                 resource_type="raw",
-                type="authenticated",
+                type="upload",
                 secure=True,
-                sign_url=True,
                 format="pdf",
             )
         else:

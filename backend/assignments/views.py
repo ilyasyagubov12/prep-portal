@@ -283,7 +283,7 @@ class AssignmentAttachmentUploadView(APIView):
                 file_obj,
                 public_id=public_id,
                 resource_type="raw",
-                type="authenticated",
+                type="upload",
                 overwrite=True,
             )
             saved = public_id
@@ -369,7 +369,7 @@ class SubmissionCreateView(APIView):
                 file_obj,
                 public_id=public_id,
                 resource_type="raw",
-                type="authenticated",
+                type="upload",
                 overwrite=True,
             )
             saved = public_id
@@ -609,7 +609,7 @@ def _cloud_url(path: str | None, mime_type: str | None = None):
         elif is_pdf:
             resource_type = "raw"
             fmt = "pdf"
-            delivery_type = "authenticated"
+            delivery_type = "upload"
         else:
             resource_type = "raw"
             fmt = None
@@ -619,7 +619,7 @@ def _cloud_url(path: str | None, mime_type: str | None = None):
             resource_type=resource_type,
             type=delivery_type,
             secure=True,
-            sign_url=True,
+            sign_url=(delivery_type != "upload"),
             format=fmt,
         )
         return url

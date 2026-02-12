@@ -66,10 +66,10 @@ class CourseNodeSerializer(serializers.ModelSerializer):
                 fmt = None
                 delivery_type = "upload"
             elif is_pdf:
-                # PDFs are stored as raw/authenticated
+                # PDFs are stored as raw/public
                 resource_type = "raw"
                 fmt = "pdf"
-                delivery_type = "authenticated"
+                delivery_type = "upload"
             else:
                 resource_type = "raw"
                 fmt = None
@@ -79,7 +79,7 @@ class CourseNodeSerializer(serializers.ModelSerializer):
                 resource_type=resource_type,
                 type=delivery_type,
                 secure=True,
-                sign_url=True,
+                sign_url=(delivery_type != "upload"),
                 format=fmt,
             )
             return url
