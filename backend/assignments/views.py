@@ -24,7 +24,7 @@ from .serializers import (
     OfflineUnitSerializer,
     OfflineGradeSerializer,
 )
-from courses.views import _require_admin
+from courses.views import _require_admin, _delete_cloudinary_asset
 
 User = get_user_model()
 
@@ -324,6 +324,9 @@ class AssignmentAttachmentDeleteView(APIView):
         if not _require_staff(request.user, assignment.course):
             return Response({"error": "Forbidden"}, status=403)
 
+        file_row = AssignmentFile.objects.filter(assignment=assignment, storage_path=storage_path).first()
+        if file_row:
+            _delete_cloudinary_asset(file_row.storage_path, file_row.mime_type)
         AssignmentFile.objects.filter(assignment=assignment, storage_path=storage_path).delete()
         try:
             default_storage.delete(storage_path)

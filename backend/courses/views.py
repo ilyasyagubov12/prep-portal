@@ -9,6 +9,8 @@ from django.contrib.auth import get_user_model
 from django.core.files.storage import default_storage
 import os
 import cloudinary.uploader
+import re
+from urllib.parse import urlparse, unquote
 from cloudinary.utils import cloudinary_url
 from django.conf import settings
 from accounts.models import Profile
@@ -29,6 +31,76 @@ def _is_teacher(user: User) -> bool:
     prof = getattr(user, "profile", None)
     role = (getattr(prof, "role", None) or "").lower()
     return role == "teacher"
+
+
+def _cloudinary_public_id_from_url(url: str) -> str | None:
+    try:
+        parts = urlparse(url).path.strip("/").split("/")
+        if len(parts) < 5:
+            return None
+        public_tail = "/".join(parts[4:])
+        public_tail = unquote(public_tail)
+        return public_tail.rsplit(".", 1)[0]
+    except Exception:
+        return None
+
+
+def _delete_cloudinary_asset(path: str | None, mime_type: str | None = None) -> bool:
+    if not path or not os.getenv("CLOUDINARY_URL"):
+        return False
+
+    base = str(path)
+    if base.startswith("http://") or base.startswith("https://"):
+        if "res.cloudinary.com" not in base:
+            return False
+        base = _cloudinary_public_id_from_url(base) or base
+
+    def _normalize(value: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "", value.lower())
+
+    variants = {base}
+    if base.lower().endswith(".pdf"):
+        variants.add(base[:-4])
+    if " " in base:
+        variants.add(base.replace(" ", "_"))
+    if base.startswith("media/"):
+        variants.add(base[len("media/"):])
+    else:
+        variants.add(f"media/{base}")
+
+    expanded = set()
+    for v in variants:
+        expanded.add(v)
+        if v.lower().endswith(".pdf"):
+            expanded.add(v[:-4])
+        if " " in v:
+            expanded.add(v.replace(" ", "_"))
+        if v.startswith("media/"):
+            expanded.add(v[len("media/"):])
+        else:
+            expanded.add(f"media/{v}")
+
+    target_norm = _normalize(base.split("/")[-1].rsplit(".", 1)[0])
+    resource_types = ["image", "raw"] if (mime_type or "").lower().startswith("image/") else ["raw", "image"]
+    delivery_types = ["upload", "authenticated", "private"]
+
+    for public_id in expanded:
+        if _normalize(public_id.split("/")[-1]) != target_norm:
+            continue
+        for resource_type in resource_types:
+            for delivery_type in delivery_types:
+                try:
+                    result = cloudinary.uploader.destroy(
+                        public_id,
+                        resource_type=resource_type,
+                        type=delivery_type,
+                        invalidate=True,
+                    )
+                    if result.get("result") == "ok":
+                        return True
+                except Exception:
+                    continue
+    return False
 
 
 class AdminCoursesListView(APIView):
@@ -404,6 +476,15 @@ class CourseNodeDeleteView(APIView):
         user = request.user
         if not (_require_admin(user) or CourseTeacher.objects.filter(course=node.course, teacher=user).exists()):
             return Response({"error": "Forbidden"}, status=403)
+
+        # Clean up any stored assets for this node and its descendants
+        to_visit = [node]
+        while to_visit:
+            current = to_visit.pop()
+            if current.kind == "file" and current.storage_path:
+                _delete_cloudinary_asset(current.storage_path, current.mime_type)
+            children = CourseNode.objects.filter(parent=current)
+            to_visit.extend(list(children))
 
         node.delete()
         return Response({"ok": True})
