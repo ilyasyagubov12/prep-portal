@@ -281,7 +281,7 @@ class AssignmentAttachmentUploadView(APIView):
         is_pdf = mime.lower() == "application/pdf" or rel_path.lower().endswith(".pdf")
         if os.getenv("CLOUDINARY_URL") and is_pdf:
             public_id = f"media/{rel_path.rsplit('.', 1)[0]}"
-            cloudinary.uploader.upload(
+            result = cloudinary.uploader.upload(
                 file_obj,
                 public_id=public_id,
                 resource_type="raw",
@@ -289,7 +289,7 @@ class AssignmentAttachmentUploadView(APIView):
                 access_mode="public",
                 overwrite=True,
             )
-            saved = public_id
+            saved = result.get("public_id") or public_id
         else:
             saved = default_storage.save(rel_path, file_obj)
         af = AssignmentFile.objects.create(
@@ -368,7 +368,7 @@ class SubmissionCreateView(APIView):
         is_pdf = mime.lower() == "application/pdf" or rel_path.lower().endswith(".pdf")
         if os.getenv("CLOUDINARY_URL") and is_pdf:
             public_id = f"media/{rel_path.rsplit('.', 1)[0]}"
-            cloudinary.uploader.upload(
+            result = cloudinary.uploader.upload(
                 file_obj,
                 public_id=public_id,
                 resource_type="raw",
@@ -376,7 +376,7 @@ class SubmissionCreateView(APIView):
                 access_mode="public",
                 overwrite=True,
             )
-            saved = public_id
+            saved = result.get("public_id") or public_id
         else:
             saved = default_storage.save(rel_path, file_obj)
         sub = Submission.objects.create(
