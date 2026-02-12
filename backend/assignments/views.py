@@ -9,7 +9,7 @@ from django.contrib.auth import get_user_model
 from django.core.files.storage import default_storage
 import os
 import cloudinary.uploader
-from cloudinary.utils import cloudinary_url
+from cloudinary.utils import cloudinary_url, private_download_url
 from django.conf import settings
 from courses.models import Course, CourseNode, CourseTeacher, Enrollment
 from .models import Assignment, AssignmentFile, Submission, Grade, OfflineUnit, OfflineGrade
@@ -609,9 +609,14 @@ def _cloud_url(path: str | None, mime_type: str | None = None):
             fmt = None
             delivery_type = "upload"
         elif is_pdf:
-            resource_type = "raw"
-            fmt = "pdf"
-            delivery_type = "upload"
+            public_id = path.rsplit(".", 1)[0] if lower.endswith(".pdf") else path
+            return private_download_url(
+                public_id,
+                "pdf",
+                resource_type="raw",
+                type="upload",
+                attachment=False,
+            )
         else:
             resource_type = "raw"
             fmt = None

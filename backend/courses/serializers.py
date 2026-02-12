@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.core.files.storage import default_storage
 import os
-from cloudinary.utils import cloudinary_url
+from cloudinary.utils import cloudinary_url, private_download_url
 from .models import Course, CourseNode
 
 
@@ -66,10 +66,15 @@ class CourseNodeSerializer(serializers.ModelSerializer):
                 fmt = None
                 delivery_type = "upload"
             elif is_pdf:
-                # PDFs are stored as raw/public
-                resource_type = "raw"
-                fmt = "pdf"
-                delivery_type = "upload"
+                # Use Cloudinary private download URL for PDFs to bypass ACL issues
+                public_id = path.rsplit(".", 1)[0] if lower.endswith(".pdf") else path
+                return private_download_url(
+                    public_id,
+                    "pdf",
+                    resource_type="raw",
+                    type="upload",
+                    attachment=False,
+                )
             else:
                 resource_type = "raw"
                 fmt = None
