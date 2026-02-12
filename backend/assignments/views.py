@@ -10,6 +10,7 @@ from django.core.files.storage import default_storage
 import os
 import cloudinary.uploader
 import cloudinary.api
+import re
 from cloudinary.utils import cloudinary_url, private_download_url
 from django.conf import settings
 from courses.models import Course, CourseNode, CourseTeacher, Enrollment
@@ -602,6 +603,40 @@ def _cloud_url(path: str | None, mime_type: str | None = None):
     if not path:
         return None
     if os.getenv("CLOUDINARY_URL"):
+        def _normalize_name(value: str) -> str:
+            return re.sub(r"[^a-z0-9]+", "", value.lower())
+
+        def _resolve_pdf_public_id(base_public_id: str):
+            base_public_id = base_public_id[:-4] if base_public_id.lower().endswith(".pdf") else base_public_id
+            variants = [base_public_id]
+            if " " in base_public_id:
+                variants.append(base_public_id.replace(" ", "_"))
+            for vid in variants:
+                for candidate in ("raw", "image"):
+                    try:
+                        cloudinary.api.resource(vid, resource_type=candidate, type="upload")
+                        return vid, candidate
+                    except Exception:
+                        continue
+            folder = "/".join(base_public_id.split("/")[:-1])
+            target_norm = _normalize_name(base_public_id.split("/")[-1])
+            if folder:
+                for candidate in ("raw", "image"):
+                    try:
+                        res = cloudinary.api.resources(
+                            resource_type=candidate,
+                            type="upload",
+                            prefix=f"{folder}/",
+                            max_results=200,
+                        )
+                        for item in res.get("resources", []):
+                            pid = item.get("public_id", "")
+                            if _normalize_name(pid.split("/")[-1]) == target_norm:
+                                return pid, candidate
+                    except Exception:
+                        continue
+            return None, None
+
         lower = path.lower()
         mime = (mime_type or "").lower()
         is_pdf = mime == "application/pdf" or lower.endswith(".pdf")
@@ -610,25 +645,17 @@ def _cloud_url(path: str | None, mime_type: str | None = None):
             fmt = None
             delivery_type = "upload"
         elif is_pdf:
-            public_id = path.rsplit(".", 1)[0] if lower.endswith(".pdf") else path
-            variants = [public_id]
-            if " " in public_id:
-                variants.append(public_id.replace(" ", "_"))
-            for vid in variants:
-                for candidate in ("raw", "image"):
-                    try:
-                        cloudinary.api.resource(vid, resource_type=candidate, type="upload")
-                        return private_download_url(
-                            vid,
-                            "pdf",
-                            resource_type=candidate,
-                            type="upload",
-                            attachment=False,
-                        )
-                    except Exception:
-                        continue
+            public_id, candidate = _resolve_pdf_public_id(path)
+            if public_id and candidate:
+                return private_download_url(
+                    public_id,
+                    "pdf",
+                    resource_type=candidate,
+                    type="upload",
+                    attachment=False,
+                )
             return private_download_url(
-                public_id,
+                path.rsplit(".", 1)[0] if lower.endswith(".pdf") else path,
                 "pdf",
                 resource_type="raw",
                 type="upload",

@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from django.core.files.storage import default_storage
 import os
+import re
 import cloudinary.api
 from cloudinary.utils import cloudinary_url, private_download_url
 from .models import Course, CourseNode
@@ -58,6 +59,40 @@ class CourseNodeSerializer(serializers.ModelSerializer):
             return None
         # If Cloudinary is configured, return a signed URL so protected assets load.
         if os.getenv("CLOUDINARY_URL"):
+            def _normalize_name(value: str) -> str:
+                return re.sub(r"[^a-z0-9]+", "", value.lower())
+
+            def _resolve_pdf_public_id(base_public_id: str):
+                base_public_id = base_public_id[:-4] if base_public_id.lower().endswith(".pdf") else base_public_id
+                variants = [base_public_id]
+                if " " in base_public_id:
+                    variants.append(base_public_id.replace(" ", "_"))
+                for vid in variants:
+                    for candidate in ("raw", "image"):
+                        try:
+                            cloudinary.api.resource(vid, resource_type=candidate, type="upload")
+                            return vid, candidate
+                        except Exception:
+                            continue
+                folder = "/".join(base_public_id.split("/")[:-1])
+                target_norm = _normalize_name(base_public_id.split("/")[-1])
+                if folder:
+                    for candidate in ("raw", "image"):
+                        try:
+                            res = cloudinary.api.resources(
+                                resource_type=candidate,
+                                type="upload",
+                                prefix=f"{folder}/",
+                                max_results=200,
+                            )
+                            for item in res.get("resources", []):
+                                pid = item.get("public_id", "")
+                                if _normalize_name(pid.split("/")[-1]) == target_norm:
+                                    return pid, candidate
+                        except Exception:
+                            continue
+                return None, None
+
             path = obj.storage_path
             mime = (obj.mime_type or "").lower()
             lower = path.lower()
@@ -68,25 +103,17 @@ class CourseNodeSerializer(serializers.ModelSerializer):
                 delivery_type = "upload"
             elif is_pdf:
                 # Use Cloudinary private download URL for PDFs to bypass ACL issues
-                public_id = path.rsplit(".", 1)[0] if lower.endswith(".pdf") else path
-                variants = [public_id]
-                if " " in public_id:
-                    variants.append(public_id.replace(" ", "_"))
-                for vid in variants:
-                    for candidate in ("raw", "image"):
-                        try:
-                            cloudinary.api.resource(vid, resource_type=candidate, type="upload")
-                            return private_download_url(
-                                vid,
-                                "pdf",
-                                resource_type=candidate,
-                                type="upload",
-                                attachment=False,
-                            )
-                        except Exception:
-                            continue
+                public_id, candidate = _resolve_pdf_public_id(path)
+                if public_id and candidate:
+                    return private_download_url(
+                        public_id,
+                        "pdf",
+                        resource_type=candidate,
+                        type="upload",
+                        attachment=False,
+                    )
                 return private_download_url(
-                    public_id,
+                    path.rsplit(".", 1)[0] if lower.endswith(".pdf") else path,
                     "pdf",
                     resource_type="raw",
                     type="upload",
