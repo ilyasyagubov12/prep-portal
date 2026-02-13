@@ -338,6 +338,11 @@ export default function AssignmentPage() {
     return submissions.filter((s) => s.student_id === profile.user_id).length;
   }, [assignment?.max_submissions, profile, submissions]);
 
+  const submissionsLeft = useMemo(() => {
+    if (!assignment?.max_submissions) return null;
+    return Math.max(0, assignment.max_submissions - submissionsUsed);
+  }, [assignment?.max_submissions, submissionsUsed]);
+
   const groupedSubmissions = useMemo(() => {
     if (!canManage) return null;
     const byStudent = new Map<string, { name: string; submissions: SubmissionRow[] }>();
@@ -489,7 +494,7 @@ export default function AssignmentPage() {
                 <div>
                   <div className="font-medium text-sm">{f.name}</div>
                   <div className="text-xs text-neutral-500">
-                    {f.size_bytes ?? 0} bytes · {f.mime_type ?? "file"}
+                    {f.size_bytes ?? 0} bytes - {f.mime_type ?? "file"}
                   </div>
                 </div>
                 <div className="flex gap-2">
@@ -513,23 +518,71 @@ export default function AssignmentPage() {
       </div>
 
       {/* Submissions */}
-      <div className="border rounded-lg p-4 space-y-3">
+      <div className="border rounded-xl p-4 md:p-6 space-y-4 bg-white shadow-sm">
         <div className="flex items-center justify-between gap-2">
-          <div className="font-medium">Submissions</div>
-          {!canManage ? <div className="text-xs text-neutral-500">Upload one file; latest will be graded.</div> : null}
+          <div className="font-semibold">Submissions</div>
+          {!canManage ? <div className="text-xs text-neutral-500">Latest upload is graded</div> : null}
         </div>
 
         {!canManage ? (
-          <div className="grid gap-2 md:grid-cols-[1fr_auto] items-center">
-            <input type="file" className="text-sm" onChange={(e) => setSelectedFile(e.target.files?.[0] ?? null)} disabled={submitBusy} />
-            <button className="border rounded px-3 py-2 text-sm" type="button" onClick={uploadSubmission} disabled={!selectedFile || submitBusy}>
-              {submitBusy ? "Uploading…" : "Submit"}
-            </button>
+          <div className="rounded-xl border bg-gradient-to-br from-slate-50 via-white to-blue-50 p-4 md:p-5 space-y-4">
+            <div className="flex flex-wrap gap-2 text-xs">
+              <span className="px-2.5 py-1 rounded-full bg-blue-100 text-blue-700 font-semibold">Student upload</span>
+              {assignment.due_at ? (
+                <span className="px-2.5 py-1 rounded-full bg-slate-100 text-slate-700">
+                  Due {new Date(assignment.due_at).toLocaleString()}
+                </span>
+              ) : null}
+              {assignment.max_submissions ? (
+                <span className="px-2.5 py-1 rounded-full bg-slate-100 text-slate-700">
+                  {submissionsLeft ?? 0} left
+                </span>
+              ) : (
+                <span className="px-2.5 py-1 rounded-full bg-slate-100 text-slate-700">Unlimited</span>
+              )}
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-[1.2fr_0.8fr] items-stretch">
+              <label className="group border-2 border-dashed rounded-xl p-4 md:p-5 cursor-pointer hover:border-blue-400 transition">
+                <input
+                  type="file"
+                  className="hidden"
+                  onChange={(e) => setSelectedFile(e.target.files?.[0] ?? null)}
+                  disabled={submitBusy}
+                />
+                <div className="text-sm font-medium">Choose a file to submit</div>
+                <div className="mt-1 text-xs text-neutral-500">
+                  {selectedFile ? selectedFile.name : "PDF, DOCX, PPTX, CSV, images"}
+                </div>
+                <div className="mt-3 text-xs text-blue-700 font-semibold">Click to browse</div>
+              </label>
+
+              <div className="rounded-xl border p-4 md:p-5 bg-white">
+                <div className="text-xs text-neutral-500">Ready to submit</div>
+                <div className="mt-1 text-sm font-medium">
+                  {selectedFile ? selectedFile.name : "No file selected"}
+                </div>
+                <div className="mt-3 text-xs text-neutral-500">
+                  {selectedFile ? `${(selectedFile.size / 1024).toFixed(1)} KB` : "Attach your work before submitting"}
+                </div>
+                <button
+                  className="mt-4 w-full rounded-lg bg-blue-600 text-white py-2 text-sm font-semibold hover:bg-blue-700 disabled:opacity-60"
+                  type="button"
+                  onClick={uploadSubmission}
+                  disabled={!selectedFile || submitBusy || (assignment.max_submissions ? submissionsUsed >= assignment.max_submissions : false) || pastDue}
+                >
+                  {submitBusy ? "Uploading..." : "Submit assignment"}
+                </button>
+              </div>
+            </div>
+
+            {!canManage && pastDue ? (
+              <div className="text-xs text-red-600">Deadline passed; submissions are closed.</div>
+            ) : null}
+            {!canManage && assignment.max_submissions && submissionsUsed >= assignment.max_submissions ? (
+              <div className="text-xs text-red-600">Submission limit reached.</div>
+            ) : null}
           </div>
-        ) : null}
-        {!canManage && pastDue ? <div className="text-xs text-red-600">Deadline passed; submissions are closed.</div> : null}
-        {!canManage && assignment.max_submissions && submissionsUsed >= assignment.max_submissions ? (
-          <div className="text-xs text-red-600">Submission limit reached.</div>
         ) : null}
 
         {submissions.length === 0 ? (
@@ -550,7 +603,7 @@ export default function AssignmentPage() {
                         <div className="flex items-center justify-between gap-3">
                           <div>
                             <div className="font-medium text-sm">
-                              {s.file_name || "Submission"} · {new Date(s.created_at).toLocaleString()}
+                              {s.file_name || "Submission"} - {new Date(s.created_at).toLocaleString()}
                               {isLatest ? <span className="ml-2 text-xs text-amber-600">(Latest)</span> : null}
                             </div>
                             <div className="text-xs text-neutral-500">Size: {s.file_size ?? 0} bytes</div>
@@ -576,15 +629,15 @@ export default function AssignmentPage() {
             {submissions.map((s, idx) => {
               const isLatest = idx === 0;
               return (
-                <div key={s.id} className={`py-3 ${isLatest ? "bg-neutral-900/40 border-l-4 border-neutral-700" : ""}`}>
+                <div key={s.id} className={`py-3 ${isLatest ? "bg-blue-50 border-l-4 border-blue-500" : ""}`}>
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <div className="font-medium text-sm">
-                        {s.file_name || "Submission"} · {new Date(s.created_at).toLocaleString()}
-                        {isLatest ? <span className="ml-2 text-xs text-emerald-400">(Latest)</span> : null}
+                        {s.file_name || "Submission"} - {new Date(s.created_at).toLocaleString()}
+                        {isLatest ? <span className="ml-2 text-xs text-blue-700">(Latest)</span> : null}
                       </div>
                       <div className="text-xs text-neutral-500">
-                        Size: {s.file_size ?? 0} bytes · {s.grade ? `Score: ${s.grade.score ?? "N/A"}` : "Pending review"}
+                        Size: {s.file_size ?? 0} bytes - {s.grade ? `Score: ${s.grade.score ?? "N/A"}` : "Pending review"}
                       </div>
                     </div>
                     <button
