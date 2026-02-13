@@ -463,10 +463,15 @@ export default function CourseDetailPage() {
       }
       setAccessToken(token);
 
-      // fetch current profile
-      const meRes = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/auth/me/`, {
+      const base = process.env.NEXT_PUBLIC_API_BASE;
+      const meReq = fetch(`${base}/api/auth/me/`, {
         headers: { Authorization: `Bearer ${token}` },
       }).catch(() => null);
+      const coursesReq = fetch(`${base}/api/courses/?slug=${encodeURIComponent(slug)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => null);
+
+      const [meRes, coursesRes] = await Promise.all([meReq, coursesReq]);
 
       if (!meRes || !meRes.ok) {
         if (!cancelled) {
@@ -493,23 +498,16 @@ export default function CourseDetailPage() {
         nickname: me.nickname ?? null,
       };
 
-      // fetch courses and pick by slug
-      const coursesRes = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/courses/`, {
-        headers: { Authorization: `Bearer ${token}` },
-      }).catch(() => null);
-
       if (!coursesRes || !coursesRes.ok) {
         if (!cancelled) {
-          setError("Could not load courses.");
+          setError("Could not load course.");
           setLoading(false);
         }
         return;
       }
 
       const coursesJson = await coursesRes.json().catch(() => []);
-      const courseMatch = (Array.isArray(coursesJson) ? coursesJson : []).find(
-        (c: any) => c.slug === slug
-      );
+      const courseMatch = Array.isArray(coursesJson) ? coursesJson[0] : null;
 
       if (!courseMatch) {
         if (!cancelled) {

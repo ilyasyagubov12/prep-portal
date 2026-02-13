@@ -178,6 +178,7 @@ class CoursesListView(APIView):
 
     def get(self, request):
         user = request.user
+        slug = (request.query_params.get("slug") or "").strip()
         qs = Course.objects.all()
 
         if _require_admin(user):
@@ -188,6 +189,9 @@ class CoursesListView(APIView):
         else:
             enroll_ids = Enrollment.objects.filter(user=user).values_list("course_id", flat=True)
             qs = qs.filter(id__in=enroll_ids).order_by("-created_at")
+
+        if slug:
+            qs = qs.filter(slug=slug)
 
         data = CourseSerializer(qs, many=True).data
         return Response(data)
