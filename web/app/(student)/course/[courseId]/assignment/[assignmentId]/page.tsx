@@ -1210,7 +1210,6 @@ export default function AssignmentPage() {
       `}</style>
     </div>
   );
-  );
 }
 
 function GradeEditor({
