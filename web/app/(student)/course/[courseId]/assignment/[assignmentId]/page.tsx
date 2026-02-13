@@ -361,306 +361,855 @@ export default function AssignmentPage() {
     }));
   }, [submissions, canManage]);
 
-  if (loading) return <div className="p-4">Loading assignment…</div>;
+  if (loading) return <div className="p-4">Loading assignment...</div>;
   if (error) return <div className="p-4 text-red-600">Error: {error}</div>;
   if (!assignment) return null;
 
   return (
-    <div className="p-4 space-y-4">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <div className="text-xs text-neutral-500">Assignment</div>
-          <h1 className="text-xl font-semibold">{assignment.title}</h1>
-          <div className="text-sm text-neutral-600">
-            Status: {statusLabel}
-            {assignment.published_at ? ` · Published at ${new Date(assignment.published_at).toLocaleString()}` : ""}
-          </div>
-        </div>
-        <button className="text-sm underline" type="button" onClick={() => router.push(`/courses/${courseId}`)}>
-          Back to course
-        </button>
-      </div>
-
-      {canManage ? (
-        <div className="border rounded-lg p-4 space-y-3">
-          <div className="font-medium">Teacher controls</div>
-
-          <label className="grid gap-1 text-sm">
-            <span className="text-xs text-neutral-600">Title</span>
-            <input
-              className="border rounded px-3 py-2 text-sm"
-              value={assignment.title}
-              onChange={(e) => setAssignment((a) => (a ? { ...a, title: e.target.value } : a))}
-            />
-          </label>
-
-          <label className="grid gap-1 text-sm">
-            <span className="text-xs text-neutral-600">Description / Body</span>
-            <textarea
-              className="border rounded px-3 py-2 text-sm h-32"
-              value={bodyText}
-              onChange={(e) => setBodyText(e.target.value)}
-            />
-          </label>
-
-          <div className="grid md:grid-cols-3 gap-3">
-            <label className="grid gap-1 text-sm">
-              <span className="text-xs text-neutral-600">Due date</span>
-              <input
-                type="datetime-local"
-                className="border rounded px-3 py-2 text-sm"
-                value={dueAt}
-                onChange={(e) => setDueAt(e.target.value)}
-              />
-            </label>
-            <label className="grid gap-1 text-sm">
-              <span className="text-xs text-neutral-600">Max score</span>
-              <input
-                type="number"
-                className="border rounded px-3 py-2 text-sm"
-                value={maxScore}
-                onChange={(e) => setMaxScore(e.target.value)}
-              />
-            </label>
-            <label className="grid gap-1 text-sm">
-              <span className="text-xs text-neutral-600">Max submissions</span>
-              <input
-                type="number"
-                className="border rounded px-3 py-2 text-sm"
-                value={maxSubs}
-                onChange={(e) => setMaxSubs(e.target.value)}
-              />
-            </label>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            <button className="border rounded px-3 py-2 text-sm" type="button" onClick={saveAssignment} disabled={saveBusy}>
-              {saveBusy ? "Saving…" : "Save draft"}
-            </button>
+    <div className="assignment-shell">
+      <div className="assignment-orb" />
+      <div className="assignment-orb assignment-orb--alt" />
+      <div className="assignment-wrap">
+        <header className="assignment-hero" style={{ animationDelay: "0ms" }}>
+          <div className="hero-kicker">Assignment</div>
+          <div className="hero-row">
+            <h1 className="hero-title">{assignment.title}</h1>
             <button
-              className="border rounded px-3 py-2 text-sm"
+              className="hero-back"
               type="button"
-              onClick={() => publishAssignment(assignment.status !== "published")}
-              disabled={publishBusy}
+              onClick={() => router.push(`/courses/${courseId}`)}
             >
-              {publishBusy ? "Working…" : assignment.status === "published" ? "Unpublish" : "Publish"}
-            </button>
-            <button
-              className="border rounded px-3 py-2 text-sm text-red-600"
-              type="button"
-              onClick={deleteAssignment}
-              disabled={deleteBusy}
-            >
-              {deleteBusy ? "Deleting…" : "Delete"}
+              Back to course
             </button>
           </div>
-        </div>
-      ) : null}
+          <div className="hero-meta">
+            <span
+              className={`status-pill ${
+                assignment.status === "published" ? "status-pill--live" : "status-pill--draft"
+              }`}
+            >
+              {statusLabel}
+            </span>
+            <span className="meta-dot" />
+            <span className="meta-item">
+              {assignment.due_at ? `Due ${new Date(assignment.due_at).toLocaleString()}` : "No deadline"}
+            </span>
+            {assignment.max_score != null ? (
+              <>
+                <span className="meta-dot" />
+                <span className="meta-item">Max score {assignment.max_score}</span>
+              </>
+            ) : null}
+            {assignment.max_submissions != null ? (
+              <>
+                <span className="meta-dot" />
+                <span className="meta-item">{submissionsLeft ?? 0} submissions left</span>
+              </>
+            ) : null}
+          </div>
+        </header>
 
-      {!canManage ? (
-        <div className="border rounded-lg p-4 space-y-2">
-          <div className="font-medium">Assignment details</div>
-          {assignment.due_at ? <div className="text-sm">Due: {new Date(assignment.due_at).toLocaleString()}</div> : null}
-          {assignment.max_score != null ? <div className="text-sm">Max score: {assignment.max_score}</div> : null}
-          {assignment.max_submissions != null ? <div className="text-sm">Max submissions: {assignment.max_submissions}</div> : null}
-          <div className="text-sm whitespace-pre-wrap border rounded p-3 bg-neutral-50">{bodyText || "No description"}</div>
-        </div>
-      ) : null}
+        <div className="assignment-grid">
+          <main className="assignment-main">
+            {canManage ? (
+              <section className="card card-animate" style={{ animationDelay: "80ms" }}>
+                <div className="card-title">Teacher controls</div>
 
-      {/* Attachments */}
-      <div className="border rounded-lg p-4 space-y-3">
-        <div className="flex items-center justify-between gap-2">
-          <div className="font-medium">Attachments</div>
-          {attachmentBusy ? <div className="text-xs text-neutral-500">Working…</div> : null}
-        </div>
-        {canManage ? (
-          <input
-            type="file"
-            className="text-sm"
-            disabled={attachmentBusy}
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) void uploadAttachment(f);
-            }}
-          />
-        ) : null}
+                <label className="field">
+                  <span>Title</span>
+                  <input
+                    className="input"
+                    value={assignment.title}
+                    onChange={(e) => setAssignment((a) => (a ? { ...a, title: e.target.value } : a))}
+                  />
+                </label>
 
-        {attachments.length === 0 ? (
-          <div className="text-sm text-neutral-600">No attachments.</div>
-        ) : (
-          <div className="divide-y">
-            {attachments.map((f) => (
-              <div key={f.id} className="py-2 flex items-center justify-between gap-3">
-                <div>
-                  <div className="font-medium text-sm">{f.name}</div>
-                  <div className="text-xs text-neutral-500">
-                    {f.size_bytes ?? 0} bytes - {f.mime_type ?? "file"}
+                <label className="field">
+                  <span>Description / Body</span>
+                  <textarea
+                    className="textarea"
+                    value={bodyText}
+                    onChange={(e) => setBodyText(e.target.value)}
+                  />
+                </label>
+
+                <div className="field-grid">
+                  <label className="field">
+                    <span>Due date</span>
+                    <input
+                      type="datetime-local"
+                      className="input"
+                      value={dueAt}
+                      onChange={(e) => setDueAt(e.target.value)}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Max score</span>
+                    <input
+                      type="number"
+                      className="input"
+                      value={maxScore}
+                      onChange={(e) => setMaxScore(e.target.value)}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Max submissions</span>
+                    <input
+                      type="number"
+                      className="input"
+                      value={maxSubs}
+                      onChange={(e) => setMaxSubs(e.target.value)}
+                    />
+                  </label>
+                </div>
+
+                <div className="button-row">
+                  <button className="btn btn-ghost" type="button" onClick={saveAssignment} disabled={saveBusy}>
+                    {saveBusy ? "Saving..." : "Save draft"}
+                  </button>
+                  <button
+                    className="btn btn-ghost"
+                    type="button"
+                    onClick={() => publishAssignment(assignment.status !== "published")}
+                    disabled={publishBusy}
+                  >
+                    {publishBusy ? "Working..." : assignment.status === "published" ? "Unpublish" : "Publish"}
+                  </button>
+                  <button
+                    className="btn btn-danger"
+                    type="button"
+                    onClick={deleteAssignment}
+                    disabled={deleteBusy}
+                  >
+                    {deleteBusy ? "Deleting..." : "Delete"}
+                  </button>
+                </div>
+              </section>
+            ) : null}
+
+            {!canManage ? (
+              <section className="card card-animate" style={{ animationDelay: "120ms" }}>
+                <div className="card-title">Assignment details</div>
+                <div className="detail-grid">
+                  <div>
+                    <div className="detail-label">Due date</div>
+                    <div className="detail-value">{assignment.due_at ? new Date(assignment.due_at).toLocaleString() : "None"}</div>
+                  </div>
+                  <div>
+                    <div className="detail-label">Max score</div>
+                    <div className="detail-value">{assignment.max_score ?? "Not set"}</div>
+                  </div>
+                  <div>
+                    <div className="detail-label">Max submissions</div>
+                    <div className="detail-value">{assignment.max_submissions ?? "Unlimited"}</div>
                   </div>
                 </div>
-                <div className="flex gap-2">
-                  <button
-                    className="underline text-sm"
-                    type="button"
-                    onClick={() => window.open(mediaUrl((f as any).url || f.storage_path), "_blank")}
-                  >
-                    Open
-                  </button>
-                  {canManage ? (
-                    <button className="underline text-sm text-red-600" type="button" onClick={() => deleteAttachment(f.storage_path)}>
-                      Delete
-                    </button>
-                  ) : null}
+                <div className="body-card">{bodyText || "No description"}</div>
+              </section>
+            ) : null}
+
+            <section className="card card-animate" style={{ animationDelay: "160ms" }}>
+              <div className="card-row">
+                <div>
+                  <div className="card-title">Attachments</div>
+                  <div className="card-subtitle">Reference files attached by the teacher.</div>
                 </div>
+                {attachmentBusy ? <div className="mini-muted">Working...</div> : null}
               </div>
-            ))}
-          </div>
-        )}
-      </div>
 
-      {/* Submissions */}
-      <div className="border rounded-xl p-4 md:p-6 space-y-4 bg-white shadow-sm">
-        <div className="flex items-center justify-between gap-2">
-          <div className="font-semibold">Submissions</div>
-          {!canManage ? <div className="text-xs text-neutral-500">Latest upload is graded</div> : null}
-        </div>
-
-        {!canManage ? (
-          <div className="rounded-xl border bg-gradient-to-br from-slate-50 via-white to-blue-50 p-4 md:p-5 space-y-4">
-            <div className="flex flex-wrap gap-2 text-xs">
-              <span className="px-2.5 py-1 rounded-full bg-blue-100 text-blue-700 font-semibold">Student upload</span>
-              {assignment.due_at ? (
-                <span className="px-2.5 py-1 rounded-full bg-slate-100 text-slate-700">
-                  Due {new Date(assignment.due_at).toLocaleString()}
-                </span>
-              ) : null}
-              {assignment.max_submissions ? (
-                <span className="px-2.5 py-1 rounded-full bg-slate-100 text-slate-700">
-                  {submissionsLeft ?? 0} left
-                </span>
-              ) : (
-                <span className="px-2.5 py-1 rounded-full bg-slate-100 text-slate-700">Unlimited</span>
-              )}
-            </div>
-
-            <div className="grid gap-4 md:grid-cols-[1.2fr_0.8fr] items-stretch">
-              <label className="group border-2 border-dashed rounded-xl p-4 md:p-5 cursor-pointer hover:border-blue-400 transition">
+              {canManage ? (
                 <input
                   type="file"
-                  className="hidden"
-                  onChange={(e) => setSelectedFile(e.target.files?.[0] ?? null)}
-                  disabled={submitBusy}
+                  className="file-input"
+                  disabled={attachmentBusy}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) void uploadAttachment(f);
+                  }}
                 />
-                <div className="text-sm font-medium">Choose a file to submit</div>
-                <div className="mt-1 text-xs text-neutral-500">
-                  {selectedFile ? selectedFile.name : "PDF, DOCX, PPTX, CSV, images"}
-                </div>
-                <div className="mt-3 text-xs text-blue-700 font-semibold">Click to browse</div>
-              </label>
+              ) : null}
 
-              <div className="rounded-xl border p-4 md:p-5 bg-white">
-                <div className="text-xs text-neutral-500">Ready to submit</div>
-                <div className="mt-1 text-sm font-medium">
-                  {selectedFile ? selectedFile.name : "No file selected"}
+              {attachments.length === 0 ? (
+                <div className="empty-state">No attachments.</div>
+              ) : (
+                <div className="list">
+                  {attachments.map((f) => (
+                    <div key={f.id} className="list-row">
+                      <div>
+                        <div className="list-title">{f.name}</div>
+                        <div className="list-meta">{f.size_bytes ?? 0} bytes - {f.mime_type ?? "file"}</div>
+                      </div>
+                      <div className="list-actions">
+                        <button
+                          className="btn-link"
+                          type="button"
+                          onClick={() => window.open(mediaUrl((f as any).url || f.storage_path), "_blank")}
+                        >
+                          Open
+                        </button>
+                        {canManage ? (
+                          <button className="btn-link danger" type="button" onClick={() => deleteAttachment(f.storage_path)}>
+                            Delete
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                  ))}
                 </div>
-                <div className="mt-3 text-xs text-neutral-500">
-                  {selectedFile ? `${(selectedFile.size / 1024).toFixed(1)} KB` : "Attach your work before submitting"}
+              )}
+            </section>
+
+            <section className="card card-animate" style={{ animationDelay: "200ms" }}>
+              <div className="card-row">
+                <div>
+                  <div className="card-title">Submissions</div>
+                  <div className="card-subtitle">Your latest upload is the one we grade.</div>
                 </div>
-                <button
-                  className="mt-4 w-full rounded-lg bg-blue-600 text-white py-2 text-sm font-semibold hover:bg-blue-700 disabled:opacity-60"
-                  type="button"
-                  onClick={uploadSubmission}
-                  disabled={!selectedFile || submitBusy || (assignment.max_submissions ? submissionsUsed >= assignment.max_submissions : false) || pastDue}
-                >
-                  {submitBusy ? "Uploading..." : "Submit assignment"}
-                </button>
+                {!canManage ? <div className="mini-muted">Student view</div> : null}
               </div>
-            </div>
 
-            {!canManage && pastDue ? (
-              <div className="text-xs text-red-600">Deadline passed; submissions are closed.</div>
-            ) : null}
-            {!canManage && assignment.max_submissions && submissionsUsed >= assignment.max_submissions ? (
-              <div className="text-xs text-red-600">Submission limit reached.</div>
-            ) : null}
-          </div>
-        ) : null}
+              {!canManage ? (
+                <div className="rounded-xl border bg-gradient-to-br from-slate-50 via-white to-blue-50 p-4 md:p-5 space-y-4">
+                  <div className="flex flex-wrap gap-2 text-xs">
+                    <span className="badge">Student upload</span>
+                    {assignment.due_at ? (
+                      <span className="badge muted">Due {new Date(assignment.due_at).toLocaleString()}</span>
+                    ) : null}
+                    {assignment.max_submissions ? (
+                      <span className="badge muted">{submissionsLeft ?? 0} left</span>
+                    ) : (
+                      <span className="badge muted">Unlimited</span>
+                    )}
+                  </div>
 
-        {submissions.length === 0 ? (
-          <div className="text-sm text-neutral-600">No submissions yet.</div>
-        ) : canManage && groupedSubmissions ? (
-          <div className="space-y-4">
-            {groupedSubmissions.map((group) => (
-              <div key={group.studentId} className="border rounded-lg">
-                <div className="px-4 py-2 border-b flex justify-between text-sm">
-                  <div className="font-medium">Student: {group.name}</div>
-                  <div className="text-neutral-500">{group.submissions.length} submission(s)</div>
+                  <div className="grid gap-4 md:grid-cols-[1.2fr_0.8fr] items-stretch">
+                    <label className="upload-box">
+                      <input
+                        type="file"
+                        className="hidden"
+                        onChange={(e) => setSelectedFile(e.target.files?.[0] ?? null)}
+                        disabled={submitBusy}
+                      />
+                      <div className="upload-title">Choose a file to submit</div>
+                      <div className="upload-meta">
+                        {selectedFile ? selectedFile.name : "PDF, DOCX, PPTX, CSV, images"}
+                      </div>
+                      <div className="upload-cta">Click to browse</div>
+                    </label>
+
+                    <div className="upload-panel">
+                      <div className="upload-label">Ready to submit</div>
+                      <div className="upload-file">
+                        {selectedFile ? selectedFile.name : "No file selected"}
+                      </div>
+                      <div className="upload-size">
+                        {selectedFile ? `${(selectedFile.size / 1024).toFixed(1)} KB` : "Attach your work before submitting"}
+                      </div>
+                      <button
+                        className="btn btn-primary"
+                        type="button"
+                        onClick={uploadSubmission}
+                        disabled={!selectedFile || submitBusy || (assignment.max_submissions ? submissionsUsed >= assignment.max_submissions : false) || pastDue}
+                      >
+                        {submitBusy ? "Uploading..." : "Submit assignment"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {!canManage && pastDue ? (
+                    <div className="text-xs text-red-600">Deadline passed; submissions are closed.</div>
+                  ) : null}
+                  {!canManage && assignment.max_submissions && submissionsUsed >= assignment.max_submissions ? (
+                    <div className="text-xs text-red-600">Submission limit reached.</div>
+                  ) : null}
                 </div>
+              ) : null}
+
+              {submissions.length === 0 ? (
+                <div className="empty-state">No submissions yet.</div>
+              ) : canManage && groupedSubmissions ? (
+                <div className="space-y-4">
+                  {groupedSubmissions.map((group) => (
+                    <div key={group.studentId} className="border rounded-lg">
+                      <div className="px-4 py-2 border-b flex justify-between text-sm">
+                        <div className="font-medium">Student: {group.name}</div>
+                        <div className="text-neutral-500">{group.submissions.length} submission(s)</div>
+                      </div>
+                      <div className="divide-y">
+                        {group.submissions.map((s, idx) => {
+                          const isLatest = idx === 0;
+                          return (
+                            <div key={s.id} className={`p-4 ${isLatest ? "bg-amber-50 border-l-4 border-amber-400" : ""}`}>
+                              <div className="flex items-center justify-between gap-3">
+                                <div>
+                                  <div className="font-medium text-sm">
+                                    {s.file_name || "Submission"} - {new Date(s.created_at).toLocaleString()}
+                                    {isLatest ? <span className="ml-2 text-xs text-amber-600">(Latest)</span> : null}
+                                  </div>
+                                  <div className="text-xs text-neutral-500">Size: {s.file_size ?? 0} bytes</div>
+                                </div>
+                                <button
+                                  className="btn-link"
+                                  type="button"
+                                  onClick={() => window.open(mediaUrl((s as any).file_url || s.file_path), "_blank")}
+                                >
+                                  Open
+                                </button>
+                              </div>
+                              <GradeEditor submission={s} onSave={saveGrade} maxScore={assignment?.max_score ?? null} />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
                 <div className="divide-y">
-                  {group.submissions.map((s, idx) => {
+                  {submissions.map((s, idx) => {
                     const isLatest = idx === 0;
                     return (
-                      <div key={s.id} className={`p-4 ${isLatest ? "bg-amber-50 border-l-4 border-amber-400" : ""}`}>
+                      <div key={s.id} className={`py-3 ${isLatest ? "bg-blue-50 border-l-4 border-blue-500" : ""}`}>
                         <div className="flex items-center justify-between gap-3">
                           <div>
                             <div className="font-medium text-sm">
                               {s.file_name || "Submission"} - {new Date(s.created_at).toLocaleString()}
-                              {isLatest ? <span className="ml-2 text-xs text-amber-600">(Latest)</span> : null}
+                              {isLatest ? <span className="ml-2 text-xs text-blue-700">(Latest)</span> : null}
                             </div>
-                            <div className="text-xs text-neutral-500">Size: {s.file_size ?? 0} bytes</div>
+                            <div className="text-xs text-neutral-500">
+                              Size: {s.file_size ?? 0} bytes - {s.grade ? `Score: ${s.grade.score ?? "N/A"}` : "Pending review"}
+                            </div>
                           </div>
                           <button
-                            className="underline text-sm"
+                            className="btn-link"
                             type="button"
                             onClick={() => window.open(mediaUrl((s as any).file_url || s.file_path), "_blank")}
                           >
                             Open
                           </button>
                         </div>
-                        <GradeEditor submission={s} onSave={saveGrade} maxScore={assignment?.max_score ?? null} />
+                        {s.grade ? (
+                          <div className="mt-2 text-sm">
+                            <div>Score: {s.grade.score ?? "N/A"}</div>
+                            {s.grade.feedback ? <div className="text-neutral-600">Feedback: {s.grade.feedback}</div> : null}
+                          </div>
+                        ) : null}
                       </div>
                     );
                   })}
                 </div>
+              )}
+            </section>
+          </main>
+
+          <aside className="assignment-side">
+            <div className="side-card card-animate" style={{ animationDelay: "120ms" }}>
+              <div className="side-title">Summary</div>
+              <div className="side-row">
+                <span>Due date</span>
+                <strong>{assignment.due_at ? new Date(assignment.due_at).toLocaleString() : "None"}</strong>
               </div>
-            ))}
-          </div>
-        ) : (
-          <div className="divide-y">
-            {submissions.map((s, idx) => {
-              const isLatest = idx === 0;
-              return (
-                <div key={s.id} className={`py-3 ${isLatest ? "bg-blue-50 border-l-4 border-blue-500" : ""}`}>
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <div className="font-medium text-sm">
-                        {s.file_name || "Submission"} - {new Date(s.created_at).toLocaleString()}
-                        {isLatest ? <span className="ml-2 text-xs text-blue-700">(Latest)</span> : null}
-                      </div>
-                      <div className="text-xs text-neutral-500">
-                        Size: {s.file_size ?? 0} bytes - {s.grade ? `Score: ${s.grade.score ?? "N/A"}` : "Pending review"}
-                      </div>
-                    </div>
-                    <button
-                      className="underline text-sm"
-                      type="button"
-                      onClick={() => window.open(mediaUrl((s as any).file_url || s.file_path), "_blank")}
-                    >
-                      Open
-                    </button>
-                  </div>
-                  {s.grade ? (
-                    <div className="mt-2 text-sm">
-                      <div>Score: {s.grade.score ?? "N/A"}</div>
-                      {s.grade.feedback ? <div className="text-neutral-600">Feedback: {s.grade.feedback}</div> : null}
-                    </div>
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
-        )}
+              <div className="side-row">
+                <span>Status</span>
+                <strong>{statusLabel}</strong>
+              </div>
+              <div className="side-row">
+                <span>Max score</span>
+                <strong>{assignment.max_score ?? "Not set"}</strong>
+              </div>
+              <div className="side-row">
+                <span>Submissions left</span>
+                <strong>{assignment.max_submissions != null ? submissionsLeft ?? 0 : "Unlimited"}</strong>
+              </div>
+            </div>
+
+            {canManage ? (
+              <div className="side-card card-animate" style={{ animationDelay: "180ms" }}>
+                <div className="side-title">Quick actions</div>
+                <button className="btn btn-primary" type="button" onClick={saveAssignment} disabled={saveBusy}>
+                  {saveBusy ? "Saving..." : "Save changes"}
+                </button>
+                <button
+                  className="btn btn-ghost"
+                  type="button"
+                  onClick={() => publishAssignment(assignment.status !== "published")}
+                  disabled={publishBusy}
+                >
+                  {publishBusy ? "Working..." : assignment.status === "published" ? "Unpublish" : "Publish"}
+                </button>
+                <button className="btn btn-danger" type="button" onClick={deleteAssignment} disabled={deleteBusy}>
+                  {deleteBusy ? "Deleting..." : "Delete"}
+                </button>
+              </div>
+            ) : null}
+          </aside>
+        </div>
       </div>
+
+      <style jsx global>{`
+        @import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap");
+      `}</style>
+      <style jsx>{`
+        .assignment-shell {
+          min-height: 100vh;
+          background: radial-gradient(circle at 10% 20%, rgba(59, 130, 246, 0.14), transparent 55%),
+            radial-gradient(circle at 90% 10%, rgba(16, 185, 129, 0.12), transparent 40%),
+            #f6f8fb;
+          position: relative;
+          overflow: hidden;
+        }
+
+        .assignment-orb {
+          position: absolute;
+          width: 340px;
+          height: 340px;
+          border-radius: 999px;
+          background: radial-gradient(circle, rgba(37, 99, 235, 0.22), transparent 60%);
+          top: -120px;
+          left: -120px;
+          filter: blur(2px);
+        }
+
+        .assignment-orb--alt {
+          width: 260px;
+          height: 260px;
+          background: radial-gradient(circle, rgba(14, 165, 233, 0.2), transparent 65%);
+          top: 120px;
+          right: -80px;
+          left: auto;
+        }
+
+        .assignment-wrap {
+          max-width: 1180px;
+          margin: 0 auto;
+          padding: 28px 20px 60px;
+          position: relative;
+          z-index: 1;
+          font-family: "Plus Jakarta Sans", sans-serif;
+          color: #0f172a;
+        }
+
+        .assignment-hero {
+          background: linear-gradient(135deg, #0f172a, #1d4ed8 55%, #38bdf8);
+          color: #f8fafc;
+          border-radius: 28px;
+          padding: 28px 28px 32px;
+          box-shadow: 0 24px 60px rgba(15, 23, 42, 0.25);
+          animation: rise 0.45s ease forwards;
+          opacity: 0;
+        }
+
+        .hero-kicker {
+          font-size: 12px;
+          letter-spacing: 0.26em;
+          text-transform: uppercase;
+          color: rgba(248, 250, 252, 0.7);
+        }
+
+        .hero-row {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          margin-top: 12px;
+        }
+
+        .hero-title {
+          font-family: "Space Grotesk", sans-serif;
+          font-size: 28px;
+          font-weight: 700;
+          margin: 0;
+        }
+
+        .hero-back {
+          border: 1px solid rgba(248, 250, 252, 0.4);
+          color: #f8fafc;
+          background: rgba(15, 23, 42, 0.2);
+          padding: 8px 14px;
+          border-radius: 999px;
+          font-size: 13px;
+          transition: all 0.2s ease;
+        }
+
+        .hero-back:hover {
+          background: rgba(248, 250, 252, 0.14);
+        }
+
+        .hero-meta {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 10px;
+          margin-top: 12px;
+          font-size: 12px;
+          color: rgba(248, 250, 252, 0.85);
+        }
+
+        .meta-dot {
+          width: 4px;
+          height: 4px;
+          background: rgba(248, 250, 252, 0.6);
+          border-radius: 999px;
+        }
+
+        .status-pill {
+          padding: 6px 12px;
+          border-radius: 999px;
+          font-size: 12px;
+          font-weight: 700;
+          letter-spacing: 0.04em;
+          text-transform: uppercase;
+        }
+
+        .status-pill--live {
+          background: rgba(34, 197, 94, 0.2);
+          color: #bbf7d0;
+          border: 1px solid rgba(34, 197, 94, 0.35);
+        }
+
+        .status-pill--draft {
+          background: rgba(248, 113, 113, 0.2);
+          color: #fecaca;
+          border: 1px solid rgba(248, 113, 113, 0.35);
+        }
+
+        .assignment-grid {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr);
+          gap: 24px;
+          margin-top: 26px;
+        }
+
+        @media (min-width: 1024px) {
+          .assignment-grid {
+            grid-template-columns: minmax(0, 1fr) 300px;
+            align-items: start;
+          }
+        }
+
+        .card {
+          background: #fff;
+          border-radius: 20px;
+          border: 1px solid rgba(15, 23, 42, 0.08);
+          padding: 20px;
+          box-shadow: 0 20px 40px rgba(15, 23, 42, 0.08);
+        }
+
+        .card-animate {
+          animation: rise 0.45s ease forwards;
+          opacity: 0;
+        }
+
+        .card-title {
+          font-family: "Space Grotesk", sans-serif;
+          font-size: 18px;
+          margin-bottom: 12px;
+        }
+
+        .card-subtitle {
+          font-size: 12px;
+          color: #64748b;
+        }
+
+        .card-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 16px;
+          margin-bottom: 16px;
+        }
+
+        .field {
+          display: grid;
+          gap: 6px;
+          font-size: 13px;
+        }
+
+        .field span {
+          font-size: 12px;
+          color: #64748b;
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+        }
+
+        .field-grid {
+          display: grid;
+          gap: 12px;
+        }
+
+        @media (min-width: 768px) {
+          .field-grid {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+          }
+        }
+
+        .input,
+        .textarea {
+          border: 1px solid rgba(148, 163, 184, 0.6);
+          border-radius: 12px;
+          padding: 10px 12px;
+          font-size: 14px;
+          background: #f8fafc;
+        }
+
+        .textarea {
+          min-height: 120px;
+          resize: vertical;
+        }
+
+        .button-row {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 10px;
+          margin-top: 12px;
+        }
+
+        .btn {
+          border-radius: 12px;
+          padding: 10px 16px;
+          font-size: 13px;
+          font-weight: 600;
+          border: 1px solid transparent;
+          cursor: pointer;
+          transition: all 0.2s ease;
+        }
+
+        .btn-primary {
+          background: #2563eb;
+          color: #fff;
+        }
+
+        .btn-primary:hover {
+          background: #1d4ed8;
+        }
+
+        .btn-ghost {
+          border-color: rgba(15, 23, 42, 0.15);
+          background: #fff;
+          color: #0f172a;
+        }
+
+        .btn-ghost:hover {
+          border-color: rgba(37, 99, 235, 0.4);
+          color: #1d4ed8;
+        }
+
+        .btn-danger {
+          border-color: rgba(239, 68, 68, 0.3);
+          color: #dc2626;
+          background: #fff5f5;
+        }
+
+        .btn-danger:hover {
+          background: #fee2e2;
+        }
+
+        .detail-grid {
+          display: grid;
+          gap: 12px;
+          margin-bottom: 16px;
+        }
+
+        @media (min-width: 768px) {
+          .detail-grid {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+          }
+        }
+
+        .detail-label {
+          font-size: 12px;
+          color: #94a3b8;
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+        }
+
+        .detail-value {
+          font-size: 14px;
+          font-weight: 600;
+          color: #0f172a;
+        }
+
+        .body-card {
+          background: #f8fafc;
+          border-radius: 14px;
+          padding: 14px;
+          font-size: 14px;
+          line-height: 1.6;
+          color: #1f2937;
+          white-space: pre-wrap;
+        }
+
+        .file-input {
+          font-size: 13px;
+        }
+
+        .list {
+          display: grid;
+          gap: 12px;
+        }
+
+        .list-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 16px;
+          padding: 12px 0;
+          border-bottom: 1px dashed rgba(148, 163, 184, 0.35);
+        }
+
+        .list-row:last-child {
+          border-bottom: none;
+        }
+
+        .list-title {
+          font-weight: 600;
+          font-size: 14px;
+        }
+
+        .list-meta {
+          font-size: 12px;
+          color: #64748b;
+        }
+
+        .list-actions {
+          display: flex;
+          gap: 12px;
+          align-items: center;
+        }
+
+        .btn-link {
+          font-size: 13px;
+          color: #2563eb;
+          text-decoration: underline;
+        }
+
+        .btn-link.danger {
+          color: #dc2626;
+        }
+
+        .empty-state {
+          font-size: 13px;
+          color: #94a3b8;
+          padding: 12px 0;
+        }
+
+        .mini-muted {
+          font-size: 12px;
+          color: #94a3b8;
+        }
+
+        .badge {
+          padding: 6px 10px;
+          border-radius: 999px;
+          background: rgba(37, 99, 235, 0.12);
+          color: #1d4ed8;
+          font-weight: 600;
+        }
+
+        .badge.muted {
+          background: rgba(148, 163, 184, 0.2);
+          color: #475569;
+        }
+
+        .upload-box {
+          border: 2px dashed rgba(37, 99, 235, 0.3);
+          border-radius: 16px;
+          padding: 18px;
+          cursor: pointer;
+          transition: all 0.2s ease;
+          background: #fff;
+        }
+
+        .upload-box:hover {
+          border-color: rgba(37, 99, 235, 0.6);
+          background: rgba(37, 99, 235, 0.03);
+        }
+
+        .upload-title {
+          font-weight: 600;
+          font-size: 14px;
+        }
+
+        .upload-meta {
+          font-size: 12px;
+          color: #64748b;
+          margin-top: 4px;
+        }
+
+        .upload-cta {
+          font-size: 12px;
+          color: #2563eb;
+          margin-top: 12px;
+          font-weight: 600;
+        }
+
+        .upload-panel {
+          border-radius: 16px;
+          border: 1px solid rgba(148, 163, 184, 0.3);
+          padding: 18px;
+          background: #fff;
+          display: grid;
+          gap: 10px;
+        }
+
+        .upload-label {
+          font-size: 12px;
+          color: #94a3b8;
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+        }
+
+        .upload-file {
+          font-size: 14px;
+          font-weight: 600;
+        }
+
+        .upload-size {
+          font-size: 12px;
+          color: #64748b;
+        }
+
+        .assignment-side {
+          display: grid;
+          gap: 16px;
+        }
+
+        .side-card {
+          background: #fff;
+          border-radius: 18px;
+          border: 1px solid rgba(148, 163, 184, 0.25);
+          padding: 18px;
+          box-shadow: 0 16px 32px rgba(15, 23, 42, 0.08);
+          display: grid;
+          gap: 10px;
+        }
+
+        .side-title {
+          font-family: "Space Grotesk", sans-serif;
+          font-size: 16px;
+        }
+
+        .side-row {
+          display: flex;
+          justify-content: space-between;
+          font-size: 13px;
+          color: #475569;
+        }
+
+        @keyframes rise {
+          from {
+            opacity: 0;
+            transform: translateY(14px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+      `}</style>
     </div>
+  );
   );
 }
 
@@ -708,7 +1257,7 @@ function GradeEditor({
           setBusy(false);
         }}
       >
-        {busy ? "Saving…" : "Save grade"}
+        {busy ? "Saving..." : "Save grade"}
       </button>
     </div>
   );
