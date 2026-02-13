@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { mathGroups, verbalGroups } from "@/lib/questionBank/topics";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE;
 
@@ -30,6 +31,18 @@ type PracticeAttempt = {
   correct: number;
   total: number;
   completed_at: string | null;
+};
+
+type Question = {
+  id: string;
+  subject: "math" | "verbal";
+  topic: string;
+  subtopic?: string | null;
+  stem: string;
+  passage?: string | null;
+  choices?: { label: string; content: string }[];
+  is_open_ended?: boolean | null;
+  image_url?: string | null;
 };
 
 type Practice = {
@@ -148,12 +161,8 @@ export default function Page() {
     }
   }
 
-  async function saveModuleQuestions(practiceId: string, module: PracticeModule, raw: string) {
+  async function saveModuleQuestions(practiceId: string, module: PracticeModule, ids: string[]) {
     if (!accessToken) return;
-    const ids = raw
-      .split(/[\n,]+/)
-      .map((id) => id.trim())
-      .filter(Boolean);
     const res = await fetch(`${API_BASE}/api/module-practice/modules/set/`, {
       method: "POST",
       headers: {
@@ -358,6 +367,7 @@ export default function Page() {
                         practiceId={p.id}
                         module={m}
                         onSave={saveModuleQuestions}
+                        token={accessToken}
                       />
                     ))}
                   </div>
@@ -403,37 +413,309 @@ function ModuleEditor({
   practiceId,
   module,
   onSave,
+  token,
 }: {
   practiceId: string;
   module: PracticeModule;
-  onSave: (practiceId: string, module: PracticeModule, raw: string) => Promise<void>;
+  onSave: (practiceId: string, module: PracticeModule, ids: string[]) => Promise<void>;
+  token: string | null;
 }) {
-  const [value, setValue] = useState((module.question_ids || []).join("\n"));
+  const idsKey = (module.question_ids || []).join("|");
+  const [selectedIds, setSelectedIds] = useState<string[]>(module.question_ids || []);
+  const [selectedMap, setSelectedMap] = useState<Record<string, Question>>({});
+  const [newId, setNewId] = useState("");
+  const [topic, setTopic] = useState("");
+  const [subtopic, setSubtopic] = useState("");
+  const [search, setSearch] = useState("");
+  const [results, setResults] = useState<Question[]>([]);
   const [busy, setBusy] = useState(false);
+  const [loadingResults, setLoadingResults] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const groups = module.subject === "math" ? mathGroups : verbalGroups;
+  const subtopics = useMemo(() => {
+    const group = groups.find((g) => g.title === topic);
+    return group?.subtopics ?? [];
+  }, [groups, topic]);
+
+  useEffect(() => {
+    setSelectedIds(module.question_ids || []);
+  }, [module.id, idsKey]);
+
+  useEffect(() => {
+    if (!token) return;
+    const ids = module.question_ids || [];
+    if (!ids.length) {
+      setSelectedMap({});
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const fetched = await Promise.all(
+          ids.map(async (id) => {
+            const res = await fetch(`${API_BASE}/api/questions/${id}/`, {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            if (!res.ok) return null;
+            const json = await res.json();
+            return json?.question ?? null;
+          })
+        );
+        if (cancelled) return;
+        const map: Record<string, Question> = {};
+        for (const q of fetched) {
+          if (q?.id) map[q.id] = q;
+        }
+        setSelectedMap(map);
+      } catch {
+        if (!cancelled) setSelectedMap({});
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [module.id, token, idsKey]);
+
+  const filteredResults = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    if (!term) return results;
+    return results.filter((q) => {
+      const stem = (q.stem || "").toLowerCase();
+      return q.id.toLowerCase().includes(term) || stem.includes(term);
+    });
+  }, [results, search]);
+
+  function addQuestionById(id: string) {
+    const clean = id.trim();
+    if (!clean) return;
+    setSelectedIds((prev) => (prev.includes(clean) ? prev : [...prev, clean]));
+  }
+
+  async function handleAddId() {
+    const clean = newId.trim();
+    if (!clean) return;
+    if (selectedIds.includes(clean)) {
+      setNewId("");
+      return;
+    }
+    addQuestionById(clean);
+    setNewId("");
+    if (!token) return;
+    const res = await fetch(`${API_BASE}/api/questions/${clean}/`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return;
+    const json = await res.json();
+    if (json?.question?.id) {
+      setSelectedMap((prev) => ({ ...prev, [json.question.id]: json.question }));
+    }
+  }
+
+  function handleAddQuestion(q: Question) {
+    if (selectedIds.includes(q.id)) return;
+    setSelectedIds((prev) => [...prev, q.id]);
+    setSelectedMap((prev) => ({ ...prev, [q.id]: q }));
+  }
+
+  function handleRemove(id: string) {
+    setSelectedIds((prev) => prev.filter((x) => x !== id));
+  }
+
+  async function handleSearch() {
+    if (!token) return;
+    setLoadingResults(true);
+    setErr(null);
+    try {
+      const params = new URLSearchParams();
+      params.set("subject", module.subject);
+      if (topic) params.set("topic", topic);
+      if (subtopic) params.set("subtopic", subtopic);
+      params.set("limit", "50");
+      const res = await fetch(`${API_BASE}/api/questions/?${params}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Failed to load questions");
+      setResults(json.questions ?? []);
+    } catch (e: any) {
+      setErr(e?.message ?? "Failed to load questions");
+    } finally {
+      setLoadingResults(false);
+    }
+  }
 
   async function handleSave() {
     setBusy(true);
     try {
-      await onSave(practiceId, module, value);
+      await onSave(practiceId, module, selectedIds);
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <div className="rounded-xl border p-3">
-      <div className="text-sm font-semibold">{module.subject.toUpperCase()} module {module.module_index}</div>
-      <div className="text-xs text-slate-500">
-        {module.question_count} questions - {module.time_limit_minutes} minutes
+    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <div className="text-xs uppercase tracking-[0.18em] text-slate-400">Module</div>
+          <div className="text-sm font-semibold text-slate-900">
+            {module.subject.toUpperCase()} module {module.module_index}
+          </div>
+        </div>
+        <div className="text-xs text-slate-500">
+          {selectedIds.length} questions · {module.time_limit_minutes} min
+        </div>
       </div>
-      <textarea
-        className="mt-2 w-full rounded-lg border px-3 py-2 text-xs min-h-[120px]"
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        placeholder="Paste question IDs, one per line"
-      />
+
+      <div className="mt-3 grid gap-2">
+        <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Add by ID</div>
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            className="flex-1 min-w-[220px] rounded-lg border border-slate-200 px-3 py-2 text-xs"
+            placeholder="Paste question ID"
+            value={newId}
+            onChange={(e) => setNewId(e.target.value)}
+          />
+          <button
+            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700"
+            type="button"
+            onClick={handleAddId}
+          >
+            Add
+          </button>
+          <button
+            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700"
+            type="button"
+            onClick={() => setSelectedIds([])}
+          >
+            Clear list
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-4">
+        <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Selected questions</div>
+        <div className="mt-2 grid gap-2">
+          {selectedIds.length ? (
+            selectedIds.map((id, idx) => {
+              const q = selectedMap[id];
+              return (
+                <div key={id} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
+                      {q ? `${q.topic}${q.subtopic ? ` · ${q.subtopic}` : ""}` : "Question"}
+                    </div>
+                    <button className="text-[11px] font-semibold text-red-600" onClick={() => handleRemove(id)}>
+                      Remove
+                    </button>
+                  </div>
+                  <div className="mt-1 text-xs text-slate-700 line-clamp-2">
+                    {q ? (
+                      <span dangerouslySetInnerHTML={{ __html: q.stem }} />
+                    ) : (
+                      <span>{id}</span>
+                    )}
+                  </div>
+                  <div className="mt-1 text-[10px] text-slate-400">#{idx + 1}</div>
+                </div>
+              );
+            })
+          ) : (
+            <div className="rounded-lg border border-dashed border-slate-200 px-3 py-3 text-xs text-slate-500">
+              No questions selected yet.
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
+        <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Question bank</div>
+        <div className="mt-2 grid gap-2 sm:grid-cols-3">
+          <select
+            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs"
+            value={topic}
+            onChange={(e) => {
+              setTopic(e.target.value);
+              setSubtopic("");
+            }}
+          >
+            <option value="">All topics</option>
+            {groups.map((g) => (
+              <option key={g.title} value={g.title}>
+                {g.title}
+              </option>
+            ))}
+          </select>
+          <select
+            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs"
+            value={subtopic}
+            onChange={(e) => setSubtopic(e.target.value)}
+            disabled={!topic}
+          >
+            <option value="">All subtopics</option>
+            {subtopics.map((s) => (
+              <option key={s.title} value={s.title}>
+                {s.title}
+              </option>
+            ))}
+          </select>
+          <input
+            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs"
+            placeholder="Search stem or ID"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <button
+            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700"
+            type="button"
+            onClick={handleSearch}
+            disabled={loadingResults}
+          >
+            {loadingResults ? "Loading..." : "Load questions"}
+          </button>
+          {err ? <div className="text-xs text-red-600">{err}</div> : null}
+        </div>
+        <div className="mt-3 grid gap-2">
+          {filteredResults.map((q) => {
+            const added = selectedIds.includes(q.id);
+            return (
+              <div
+                key={q.id}
+                className="rounded-xl border border-slate-200 bg-white px-3 py-3 shadow-sm flex flex-col gap-2"
+              >
+                <div className="text-[10px] text-neutral-500 uppercase tracking-[0.12em]">
+                  {q.subject} · {q.topic}
+                  {q.subtopic ? ` · ${q.subtopic}` : ""}
+                </div>
+                <div className="text-xs text-neutral-900 line-clamp-2" dangerouslySetInnerHTML={{ __html: q.stem }} />
+                <div className="flex items-center justify-between pt-1">
+                  <div className="text-[10px] text-slate-400">{q.id}</div>
+                  <button
+                    className={`rounded-lg border px-3 py-1.5 text-[11px] font-semibold ${
+                      added ? "border-slate-200 text-slate-400" : "border-slate-300 text-slate-700"
+                    }`}
+                    onClick={() => handleAddQuestion(q)}
+                    disabled={added}
+                  >
+                    {added ? "Added" : "Add"}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+          {!filteredResults.length && !loadingResults ? (
+            <div className="rounded-lg border border-dashed border-slate-200 px-3 py-3 text-xs text-slate-500">
+              No questions loaded.
+            </div>
+          ) : null}
+        </div>
+      </div>
+
       <button
-        className="mt-2 rounded-lg border px-3 py-2 text-xs font-semibold"
+        className="mt-3 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700"
         onClick={handleSave}
         type="button"
         disabled={busy}

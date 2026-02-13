@@ -218,46 +218,93 @@ export default function Page() {
         <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
           <div className="rounded-2xl bg-white p-6 shadow-sm">
             {currentQ ? (
-              <div className="space-y-4">
-                {resolvedImageUrl ? (
-                  <img src={resolvedImageUrl} alt="question" className="max-h-[260px] w-full rounded-xl object-contain" />
-                ) : null}
+              isMath ? (
+                <div className="space-y-6">
+                  {resolvedImageUrl ? (
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 overflow-hidden">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={resolvedImageUrl} alt="question" className="w-full max-h-[320px] object-contain" />
+                    </div>
+                  ) : null}
 
-                <div className="text-lg font-semibold text-slate-900">
-                  {isMath ? <MathContent html={stemHtml} /> : <span dangerouslySetInnerHTML={{ __html: stemHtml }} />}
-                </div>
+                  <div className="text-lg font-semibold text-slate-900">
+                    <MathContent html={stemHtml} />
+                  </div>
 
-                {passageHtml ? (
-                  <div className="rounded-xl border bg-slate-50 p-4 text-sm" dangerouslySetInnerHTML={{ __html: passageHtml }} />
-                ) : null}
-
-                {currentQ.is_open_ended ? (
-                  <textarea
-                    className="w-full rounded-xl border px-3 py-2 text-sm min-h-[110px]"
-                    value={answers[currentQ.id] ?? ""}
-                    onChange={(e) => setAnswer(e.target.value)}
-                    placeholder="Type your answer"
-                  />
-                ) : (
-                  <div className="grid gap-2">
-                    {(currentQ.choices ?? []).map((c) => {
-                      const selected = answers[currentQ.id] === c.label;
-                      return (
+                  {currentQ.is_open_ended ? (
+                    <textarea
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm min-h-[110px]"
+                      value={answers[currentQ.id] ?? ""}
+                      onChange={(e) => setAnswer(e.target.value)}
+                      placeholder="Type your answer"
+                    />
+                  ) : (
+                    <div className="space-y-2">
+                      {(currentQ.choices || []).map((c) => (
                         <button
                           key={c.label}
-                          className={`rounded-xl border px-3 py-2 text-sm text-left ${
-                            selected ? "border-blue-500 bg-blue-50" : "border-slate-200"
+                          className={`w-full rounded-xl border px-4 py-3 text-left text-sm transition ${
+                            answers[currentQ.id] === c.label ? "border-slate-900 bg-slate-50" : "border-slate-200"
                           }`}
                           onClick={() => setAnswer(c.label)}
-                          type="button"
                         >
-                          <span className="mr-2 font-semibold">{c.label}.</span> {c.content}
+                          <span className="inline-flex items-center justify-center h-6 w-6 rounded-full border border-slate-300 text-xs font-semibold mr-2">
+                            {c.label}
+                          </span>
+                          <MathContent html={wrapLatexIfNeeded(c.content || "").replace(/\n/g, "<br/>")} />
                         </button>
-                      );
-                    })}
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="grid lg:grid-cols-[1fr_1fr] gap-6">
+                  <div>
+                    <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Reading passages</div>
+                    <div className="mt-3 rounded-xl border border-slate-200 bg-white p-4 text-sm leading-6 text-slate-700">
+                      {resolvedImageUrl ? (
+                        <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 overflow-hidden">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={resolvedImageUrl} alt="question" className="w-full max-h-[240px] object-contain" />
+                        </div>
+                      ) : null}
+                      {currentQ.passage ? <span dangerouslySetInnerHTML={{ __html: passageHtml }} /> : "No passage."}
+                    </div>
                   </div>
-                )}
-              </div>
+                  <div>
+                    <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Question</div>
+                    <div className="mt-3 text-sm font-semibold text-slate-900">
+                      <span dangerouslySetInnerHTML={{ __html: stemHtml }} />
+                    </div>
+
+                    {currentQ.is_open_ended ? (
+                      <textarea
+                        className="mt-4 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm min-h-[110px]"
+                        value={answers[currentQ.id] ?? ""}
+                        onChange={(e) => setAnswer(e.target.value)}
+                        placeholder="Type your answer"
+                      />
+                    ) : (
+                      <div className="mt-4 space-y-3">
+                        {(currentQ.choices || []).map((c) => (
+                          <button
+                            key={c.label}
+                            className={`w-full rounded-xl border px-4 py-3 text-left text-sm transition ${
+                              answers[currentQ.id] === c.label ? "border-slate-900 bg-slate-50" : "border-slate-200"
+                            }`}
+                            onClick={() => setAnswer(c.label)}
+                          >
+                            <span className="inline-flex items-center justify-center h-6 w-6 rounded-full border border-slate-300 text-xs font-semibold mr-2">
+                              {c.label}
+                            </span>
+                            <MathContent html={wrapLatexIfNeeded(c.content || "").replace(/\n/g, "<br/>")} />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )
             ) : (
               <div className="text-sm text-slate-500">No questions in this module.</div>
             )}
