@@ -118,7 +118,7 @@ export default function AssignmentPage() {
   useEffect(() => {
     let cancelled = false;
     async function loadAll() {
-      if (!assignmentId || !accessToken) return;
+      if (!assignmentId || !accessToken || !profile) return;
       setLoading(true);
       setError(null);
       try {
@@ -128,7 +128,9 @@ export default function AssignmentPage() {
         const json = await res.json();
         if (!res.ok) throw new Error(json?.error || "Assignment not found");
         const a = json.assignment as Assignment;
-        if (!canManage && a.status !== "published") throw new Error("This assignment is not published yet.");
+        if (!isTeacherOrAdmin(profile) && a.status !== "published") {
+          throw new Error("This assignment is not published yet.");
+        }
         setAssignment(a);
         setBodyText(typeof a.body === "string" ? a.body : JSON.stringify(a.body ?? "", null, 2));
         setDueAt(a.due_at ? toDatetimeLocal(a.due_at) : "");
@@ -145,7 +147,7 @@ export default function AssignmentPage() {
     return () => {
       cancelled = true;
     };
-  }, [assignmentId, accessToken, canManage]);
+  }, [assignmentId, accessToken, profile]);
 
   async function loadAttachments(aid: string) {
     if (!accessToken) return;
