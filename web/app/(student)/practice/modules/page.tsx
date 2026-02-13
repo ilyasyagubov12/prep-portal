@@ -151,7 +151,7 @@ export default function Page() {
   async function saveModuleQuestions(practiceId: string, module: PracticeModule, raw: string) {
     if (!accessToken) return;
     const ids = raw
-      .split(/[,\n]+/)
+      .split(/[\n,]+/)
       .map((id) => id.trim())
       .filter(Boolean);
     const res = await fetch(`${API_BASE}/api/module-practice/modules/set/`, {
@@ -299,7 +299,7 @@ export default function Page() {
                   <div key={m.id} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-sm">
                     <div className="font-medium">{formatModuleLabel(m)}</div>
                     <div className="text-slate-500">
-                      {m.question_count || 0} Q · {m.time_limit_minutes} min
+                      {m.question_count || 0} Q - {m.time_limit_minutes} min
                     </div>
                   </div>
                 ))}
@@ -424,7 +424,7 @@ function ModuleEditor({
     <div className="rounded-xl border p-3">
       <div className="text-sm font-semibold">{module.subject.toUpperCase()} module {module.module_index}</div>
       <div className="text-xs text-slate-500">
-        {module.question_count} questions · {module.time_limit_minutes} minutes
+        {module.question_count} questions - {module.time_limit_minutes} minutes
       </div>
       <textarea
         className="mt-2 w-full rounded-lg border px-3 py-2 text-xs min-h-[120px]"
@@ -443,4 +443,3 @@ function ModuleEditor({
     </div>
   );
 }
-
