@@ -65,6 +65,7 @@ INSTALLED_APPS = [
     "events",
     "offline_grades",
     "mediafiles",
+    "module_practice",
 ]
 
 MIDDLEWARE = [
