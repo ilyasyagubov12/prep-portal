@@ -167,7 +167,7 @@ class CourseNodeSerializer(serializers.ModelSerializer):
             else:
                 resource_type = "raw"
                 fmt = None
-                delivery_type = "authenticated"
+                delivery_type = "upload"
             url, _ = cloudinary_url(
                 path,
                 resource_type=resource_type,

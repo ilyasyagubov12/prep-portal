@@ -530,9 +530,12 @@ class CourseNodeUploadView(APIView):
         rel_path = f"course_files/{course.id}/{file_obj.name}"
         mime = getattr(file_obj, "content_type", "") or ""
         is_pdf = mime.lower() == "application/pdf" or rel_path.lower().endswith(".pdf")
+        is_image = mime.lower().startswith("image/") or rel_path.lower().endswith(
+            (".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg")
+        )
 
-        if os.getenv("CLOUDINARY_URL") and is_pdf:
-            # Store PDFs as raw/public in Cloudinary for easy access
+        if os.getenv("CLOUDINARY_URL") and (is_pdf or not is_image):
+            # Store non-images as raw/public in Cloudinary for easy access
             public_id = f"media/{rel_path.rsplit('.', 1)[0]}"
             result = cloudinary.uploader.upload(
                 file_obj,
@@ -548,7 +551,7 @@ class CourseNodeUploadView(APIView):
                 resource_type="raw",
                 type="upload",
                 secure=True,
-                format="pdf",
+                format="pdf" if is_pdf else None,
             )
         else:
             saved_path = default_storage.save(rel_path, file_obj)

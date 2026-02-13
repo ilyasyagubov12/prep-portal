@@ -280,7 +280,10 @@ class AssignmentAttachmentUploadView(APIView):
         rel_path = f"assignment_attachments/{assignment.id}/{file_obj.name}"
         mime = getattr(file_obj, "content_type", "") or ""
         is_pdf = mime.lower() == "application/pdf" or rel_path.lower().endswith(".pdf")
-        if os.getenv("CLOUDINARY_URL") and is_pdf:
+        is_image = mime.lower().startswith("image/") or rel_path.lower().endswith(
+            (".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg")
+        )
+        if os.getenv("CLOUDINARY_URL") and (is_pdf or not is_image):
             public_id = f"media/{rel_path.rsplit('.', 1)[0]}"
             result = cloudinary.uploader.upload(
                 file_obj,
@@ -370,7 +373,10 @@ class SubmissionCreateView(APIView):
         rel_path = f"assignment_submissions/{assignment.id}/{user.id}/{file_obj.name}"
         mime = getattr(file_obj, "content_type", "") or ""
         is_pdf = mime.lower() == "application/pdf" or rel_path.lower().endswith(".pdf")
-        if os.getenv("CLOUDINARY_URL") and is_pdf:
+        is_image = mime.lower().startswith("image/") or rel_path.lower().endswith(
+            (".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg")
+        )
+        if os.getenv("CLOUDINARY_URL") and (is_pdf or not is_image):
             public_id = f"media/{rel_path.rsplit('.', 1)[0]}"
             result = cloudinary.uploader.upload(
                 file_obj,
@@ -711,7 +717,7 @@ def _cloud_url(path: str | None, mime_type: str | None = None):
         else:
             resource_type = "raw"
             fmt = None
-            delivery_type = "authenticated"
+            delivery_type = "upload"
         url, _ = cloudinary_url(
             path,
             resource_type=resource_type,
