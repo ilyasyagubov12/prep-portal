@@ -179,6 +179,7 @@ class CoursesListView(APIView):
     def get(self, request):
         user = request.user
         slug = (request.query_params.get("slug") or "").strip()
+        course_id = (request.query_params.get("course_id") or request.query_params.get("id") or "").strip()
         qs = Course.objects.all()
 
         if _require_admin(user):
@@ -192,6 +193,8 @@ class CoursesListView(APIView):
 
         if slug:
             qs = qs.filter(slug=slug)
+        if course_id:
+            qs = qs.filter(id=course_id)
 
         data = CourseSerializer(qs, many=True).data
         return Response(data)

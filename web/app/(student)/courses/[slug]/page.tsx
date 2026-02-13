@@ -507,7 +507,18 @@ export default function CourseDetailPage() {
       }
 
       const coursesJson = await coursesRes.json().catch(() => []);
-      const courseMatch = Array.isArray(coursesJson) ? coursesJson[0] : null;
+      let courseMatch = Array.isArray(coursesJson) ? coursesJson[0] : null;
+
+      if (!courseMatch) {
+        const byIdRes = await fetch(
+          `${base}/api/courses/?course_id=${encodeURIComponent(slug)}`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        ).catch(() => null);
+        if (byIdRes && byIdRes.ok) {
+          const byIdJson = await byIdRes.json().catch(() => []);
+          courseMatch = Array.isArray(byIdJson) ? byIdJson[0] : null;
+        }
+      }
 
       if (!courseMatch) {
         if (!cancelled) {
