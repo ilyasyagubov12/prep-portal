@@ -241,6 +241,13 @@ class ModulePracticeModuleSetView(APIView):
         if not isinstance(question_ids, list):
             return Response({"error": "question_ids must be a list"}, status=400)
 
+        required = 22 if subject == "math" else 27
+        if len(question_ids) != required:
+            return Response(
+                {"error": f"{subject.title()} modules require exactly {required} questions"},
+                status=400,
+            )
+
         try:
             practice = ModulePractice.objects.get(id=pid)
         except ModulePractice.DoesNotExist:
@@ -256,10 +263,7 @@ class ModulePracticeModuleSetView(APIView):
         module.question_ids = question_ids
         if time_limit is not None:
             module.time_limit_minutes = int(time_limit)
-        if question_count is not None:
-            module.question_count = int(question_count)
-        else:
-            module.question_count = len(question_ids)
+        module.question_count = required
         module.save()
 
         return Response({"ok": True})

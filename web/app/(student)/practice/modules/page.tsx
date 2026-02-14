@@ -44,6 +44,7 @@ type Question = {
   choices?: { label: string; content: string }[];
   is_open_ended?: boolean | null;
   image_url?: string | null;
+  difficulty?: string | null;
 };
 
 function MathContent({ html, className }: { html: string; className?: string }) {
@@ -477,9 +478,13 @@ function ModuleEditor({
   const [busy, setBusy] = useState(false);
   const [loadingResults, setLoadingResults] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [openPreview, setOpenPreview] = useState<Record<string, boolean>>({});
+  const [activePreviewId, setActivePreviewId] = useState<string | null>(null);
 
   const groups = module.subject === "math" ? mathGroups : verbalGroups;
+  const requiredCount = module.subject === "math" ? 22 : 27;
+  const remaining = requiredCount - selectedIds.length;
+  const isFull = remaining <= 0;
+  const canSave = selectedIds.length === requiredCount;
   const subtopics = useMemo(() => {
     const group = groups.find((g) => g.title === topic);
     return group?.subtopics ?? [];
@@ -533,8 +538,14 @@ function ModuleEditor({
     });
   }, [results, search]);
 
+  const previewQuestion = useMemo(() => {
+    if (!activePreviewId) return null;
+    if (selectedMap[activePreviewId]) return selectedMap[activePreviewId];
+    return results.find((q) => q.id === activePreviewId) ?? null;
+  }, [activePreviewId, selectedMap, results]);
+
   function togglePreview(id: string) {
-    setOpenPreview((prev) => ({ ...prev, [id]: !prev[id] }));
+    setActivePreviewId((prev) => (prev === id ? null : id));
   }
 
   function QuestionPreview({ question }: { question: Question }) {
@@ -547,76 +558,173 @@ function ModuleEditor({
 
     if (isMath) {
       return (
-        <div className="space-y-3">
-          {resolvedImageUrl ? (
-            <div className="rounded-lg border border-slate-200 bg-slate-50 overflow-hidden">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={resolvedImageUrl} alt="question" className="w-full max-h-[220px] object-contain" />
-            </div>
-          ) : null}
-          <div className="text-sm font-semibold text-slate-900">
-            <MathContent html={stemHtml} />
-          </div>
-          {question.is_open_ended ? (
-            <div className="rounded-lg border border-dashed border-slate-200 px-3 py-2 text-xs text-slate-500">
-              Open-ended response
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {(question.choices || []).map((c) => (
-                <div key={c.label} className="rounded-lg border border-slate-200 px-3 py-2 text-xs">
-                  <span className="inline-flex items-center justify-center h-5 w-5 rounded-full border border-slate-300 text-[10px] font-semibold mr-2">
-                    {c.label}
-                  </span>
-                  <MathContent html={wrapLatexIfNeeded(c.content || "").replace(/\n/g, "<br/>")} />
+        <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
+          <div className="space-y-4">
+            <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="text-sm font-semibold text-slate-900">Question stem</div>
+              <div className="text-xs text-slate-500 mt-1">Math format with LaTeX support.</div>
+              <div className="mt-3 text-sm font-semibold text-slate-900">
+                <MathContent html={stemHtml} />
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="text-sm font-semibold text-slate-900">Answer choices</div>
+              <div className="text-xs text-slate-500 mt-1">Mark one as correct.</div>
+              {question.is_open_ended ? (
+                <div className="mt-3 rounded-lg border border-dashed border-slate-200 px-3 py-2 text-xs text-slate-500">
+                  Open-ended response
                 </div>
-              ))}
-            </div>
-          )}
+              ) : (
+                <div className="mt-3 space-y-2">
+                  {(question.choices || []).map((c) => (
+                    <div key={c.label} className="rounded-lg border border-slate-200 px-3 py-2 text-xs">
+                      <span className="inline-flex items-center justify-center h-5 w-5 rounded-full border border-slate-300 text-[10px] font-semibold mr-2">
+                        {c.label}
+                      </span>
+                      <MathContent html={wrapLatexIfNeeded(c.content || "").replace(/\n/g, "<br/>")} />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+          </div>
+          <aside className="space-y-4">
+            <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Question setup</div>
+              <div className="mt-3 grid gap-2 text-sm text-slate-700">
+                <div>
+                  <div className="text-xs font-semibold text-slate-600">Topic</div>
+                  <div className="mt-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
+                    {question.topic || "—"}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs font-semibold text-slate-600">Subtopic</div>
+                  <div className="mt-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
+                    {question.subtopic || "—"}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs font-semibold text-slate-600">Difficulty</div>
+                  <div className="mt-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
+                    {question.difficulty || "—"}
+                  </div>
+                </div>
+              </div>
+            </section>
+            <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="text-sm font-semibold text-slate-900">Image (optional)</div>
+              <div className="text-xs text-slate-500 mt-1">Used for diagrams or graphs.</div>
+              <div className="mt-3">
+                {resolvedImageUrl ? (
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 overflow-hidden">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={resolvedImageUrl} alt="question" className="w-full max-h-[220px] object-contain" />
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-dashed border-slate-200 px-3 py-3 text-xs text-slate-500">
+                    No image
+                  </div>
+                )}
+              </div>
+            </section>
+          </aside>
         </div>
       );
     }
 
     return (
-      <div className="grid gap-3 md:grid-cols-[1fr_1fr]">
-        <div>
-          <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Reading passage</div>
-          <div className="mt-2 rounded-lg border border-slate-200 bg-white p-3 text-xs leading-5 text-slate-700">
-            {resolvedImageUrl ? (
-              <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 overflow-hidden">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={resolvedImageUrl} alt="question" className="w-full max-h-[200px] object-contain" />
+      <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
+        <div className="space-y-4">
+          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="text-sm font-semibold text-slate-900">Passage</div>
+                <div className="text-xs text-slate-500">Optional reading text for this question.</div>
               </div>
-            ) : null}
-            {question.passage ? (
-              <span dangerouslySetInnerHTML={{ __html: passageHtml }} />
-            ) : (
-              <span className="text-slate-400">No passage.</span>
-            )}
-          </div>
-        </div>
-        <div>
-          <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Question</div>
-          <div className="mt-2 text-xs font-semibold text-slate-900">
-            <span dangerouslySetInnerHTML={{ __html: stemHtml }} />
-          </div>
-          {question.is_open_ended ? (
-            <div className="mt-3 rounded-lg border border-dashed border-slate-200 px-3 py-2 text-xs text-slate-500">
-              Open-ended response
             </div>
-          ) : (
-            <div className="mt-3 space-y-2">
-              {(question.choices || []).map((c) => (
-                <div key={c.label} className="rounded-lg border border-slate-200 px-3 py-2 text-xs">
-                  <span className="inline-flex items-center justify-center h-5 w-5 rounded-full border border-slate-300 text-[10px] font-semibold mr-2">
-                    {c.label}
-                  </span>
-                  <span dangerouslySetInnerHTML={{ __html: (c.content || "").replace(/\n/g, "<br/>") }} />
+            <div className="mt-3 rounded-lg border border-slate-200 bg-white p-4 text-sm leading-6 text-slate-700">
+              {resolvedImageUrl ? (
+                <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 overflow-hidden">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={resolvedImageUrl} alt="question" className="w-full max-h-[240px] object-contain" />
                 </div>
-              ))}
+              ) : null}
+              {question.passage ? <span dangerouslySetInnerHTML={{ __html: passageHtml }} /> : "No passage."}
             </div>
-          )}
+          </section>
+
+          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="text-sm font-semibold text-slate-900">Question stem</div>
+            <div className="text-xs text-slate-500 mt-1">Required.</div>
+            <div className="mt-3 text-sm font-semibold text-slate-900">
+              <span dangerouslySetInnerHTML={{ __html: stemHtml }} />
+            </div>
+          </section>
+
+          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="text-sm font-semibold text-slate-900">Answer choices</div>
+            <div className="text-xs text-slate-500 mt-1">Mark exactly one as correct.</div>
+            {question.is_open_ended ? (
+              <div className="mt-3 rounded-lg border border-dashed border-slate-200 px-3 py-2 text-xs text-slate-500">
+                Open-ended response
+              </div>
+            ) : (
+              <div className="mt-3 space-y-2">
+                {(question.choices || []).map((c) => (
+                  <div key={c.label} className="rounded-lg border border-slate-200 px-3 py-2 text-xs">
+                    <span className="inline-flex items-center justify-center h-5 w-5 rounded-full border border-slate-300 text-[10px] font-semibold mr-2">
+                      {c.label}
+                    </span>
+                    <span dangerouslySetInnerHTML={{ __html: (c.content || "").replace(/\n/g, "<br/>") }} />
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
         </div>
+        <aside className="space-y-4">
+          <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Question setup</div>
+            <div className="mt-3 grid gap-2 text-sm text-slate-700">
+              <div>
+                <div className="text-xs font-semibold text-slate-600">Topic</div>
+                <div className="mt-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
+                  {question.topic || "—"}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs font-semibold text-slate-600">Subtopic</div>
+                <div className="mt-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
+                  {question.subtopic || "—"}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs font-semibold text-slate-600">Difficulty</div>
+                <div className="mt-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
+                  {question.difficulty || "—"}
+                </div>
+              </div>
+            </div>
+          </section>
+          <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="text-sm font-semibold text-slate-900">Image (optional)</div>
+            <div className="text-xs text-slate-500 mt-1">Used for diagrams or graphs.</div>
+            <div className="mt-3">
+              {resolvedImageUrl ? (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 overflow-hidden">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={resolvedImageUrl} alt="question" className="w-full max-h-[220px] object-contain" />
+                </div>
+              ) : (
+                <div className="rounded-lg border border-dashed border-slate-200 px-3 py-3 text-xs text-slate-500">
+                  No image
+                </div>
+              )}
+            </div>
+          </section>
+        </aside>
       </div>
     );
   }
@@ -624,12 +732,20 @@ function ModuleEditor({
   function addQuestionById(id: string) {
     const clean = id.trim();
     if (!clean) return;
+    if (isFull) {
+      setErr(`This module must have exactly ${requiredCount} questions.`);
+      return;
+    }
     setSelectedIds((prev) => (prev.includes(clean) ? prev : [...prev, clean]));
   }
 
   async function handleAddId() {
     const clean = newId.trim();
     if (!clean) return;
+    if (isFull) {
+      setErr(`This module must have exactly ${requiredCount} questions.`);
+      return;
+    }
     if (selectedIds.includes(clean)) {
       setNewId("");
       return;
@@ -648,6 +764,10 @@ function ModuleEditor({
   }
 
   function handleAddQuestion(q: Question) {
+    if (isFull) {
+      setErr(`This module must have exactly ${requiredCount} questions.`);
+      return;
+    }
     if (selectedIds.includes(q.id)) return;
     setSelectedIds((prev) => [...prev, q.id]);
     setSelectedMap((prev) => ({ ...prev, [q.id]: q }));
@@ -681,6 +801,10 @@ function ModuleEditor({
   }
 
   async function handleSave() {
+    if (!canSave) {
+      setErr(`This module must have exactly ${requiredCount} questions before saving.`);
+      return;
+    }
     setBusy(true);
     try {
       await onSave(practiceId, module, selectedIds);
@@ -698,9 +822,12 @@ function ModuleEditor({
             {module.subject.toUpperCase()} module {module.module_index}
           </div>
         </div>
-        <div className="text-xs text-slate-500">
-          {selectedIds.length} questions · {module.time_limit_minutes} min
+      <div className="text-xs text-slate-500 text-right">
+        {selectedIds.length}/{requiredCount} questions · {module.time_limit_minutes} min
+        <div className={canSave ? "text-emerald-600" : "text-amber-600"}>
+          {canSave ? "Ready to save" : `${remaining} remaining`}
         </div>
+      </div>
       </div>
 
       <div className="mt-3 grid gap-2">
@@ -716,6 +843,7 @@ function ModuleEditor({
             className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700"
             type="button"
             onClick={handleAddId}
+            disabled={isFull}
           >
             Add
           </button>
@@ -731,6 +859,7 @@ function ModuleEditor({
 
       <div className="mt-4">
         <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Selected questions</div>
+        {err ? <div className="mt-2 text-xs text-red-600">{err}</div> : null}
         <div className="mt-2 grid gap-2">
           {selectedIds.length ? (
             selectedIds.map((id, idx) => {
@@ -747,7 +876,7 @@ function ModuleEditor({
                           className="text-[11px] font-semibold text-slate-600"
                           onClick={() => togglePreview(id)}
                         >
-                          {openPreview[id] ? "Hide" : "Preview"}
+                          {activePreviewId === id ? "Hide" : "Preview"}
                         </button>
                       ) : null}
                       <button className="text-[11px] font-semibold text-red-600" onClick={() => handleRemove(id)}>
@@ -763,11 +892,6 @@ function ModuleEditor({
                     )}
                   </div>
                   <div className="mt-1 text-[10px] text-slate-400">#{idx + 1}</div>
-                  {q && openPreview[id] ? (
-                    <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
-                      <QuestionPreview question={q} />
-                    </div>
-                  ) : null}
                 </div>
               );
             })
@@ -775,6 +899,17 @@ function ModuleEditor({
             <div className="rounded-lg border border-dashed border-slate-200 px-3 py-3 text-xs text-slate-500">
               No questions selected yet.
             </div>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-4">
+        <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Preview</div>
+        <div className="mt-2 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          {previewQuestion ? (
+            <QuestionPreview question={previewQuestion} />
+          ) : (
+            <div className="text-xs text-slate-500">Select “Preview” on a question to view it here.</div>
           )}
         </div>
       </div>
@@ -846,7 +981,7 @@ function ModuleEditor({
                       className="text-[11px] font-semibold text-slate-600"
                       onClick={() => togglePreview(q.id)}
                     >
-                      {openPreview[q.id] ? "Hide" : "Preview"}
+                      {activePreviewId === q.id ? "Hide" : "Preview"}
                     </button>
                     <button
                       className={`rounded-lg border px-3 py-1.5 text-[11px] font-semibold ${
@@ -861,11 +996,6 @@ function ModuleEditor({
                 </div>
                 <div className="text-xs text-neutral-900 line-clamp-2" dangerouslySetInnerHTML={{ __html: q.stem }} />
                 <div className="text-[10px] text-slate-400">{q.id}</div>
-                {openPreview[q.id] ? (
-                  <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
-                    <QuestionPreview question={q} />
-                  </div>
-                ) : null}
               </div>
             );
           })}
@@ -881,7 +1011,7 @@ function ModuleEditor({
         className="mt-3 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700"
         onClick={handleSave}
         type="button"
-        disabled={busy}
+        disabled={busy || !canSave}
       >
         {busy ? "Saving..." : "Save module"}
       </button>
