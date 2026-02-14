@@ -485,6 +485,9 @@ function ModuleEditor({
   const remaining = requiredCount - selectedIds.length;
   const isFull = remaining <= 0;
   const canSave = selectedIds.length === requiredCount;
+  const createQuestionUrl = topic
+    ? `/practice/questions/new/${module.subject}?topic=${encodeURIComponent(topic)}`
+    : `/practice/questions/new/${module.subject}`;
   const subtopics = useMemo(() => {
     const group = groups.find((g) => g.title === topic);
     return group?.subtopics ?? [];
@@ -916,6 +919,18 @@ function ModuleEditor({
 
       <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
         <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Question bank</div>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <button
+            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700"
+            type="button"
+            onClick={() => window.open(createQuestionUrl, "_blank")}
+          >
+            Create new {module.subject} question
+          </button>
+          <div className="text-[11px] text-slate-500">
+            After saving, copy the new question ID and add it here.
+          </div>
+        </div>
         <div className="mt-2 grid gap-2 sm:grid-cols-3">
           <select
             className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs"
