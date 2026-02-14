@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { mathGroups, verbalGroups } from "@/lib/questionBank/topics";
+import { typesetMath } from "@/lib/mathjax";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE;
 
@@ -44,6 +45,23 @@ type Question = {
   is_open_ended?: boolean | null;
   image_url?: string | null;
 };
+
+function MathContent({ html, className }: { html: string; className?: string }) {
+  const ref = useRef<HTMLSpanElement | null>(null);
+  useEffect(() => {
+    if (!ref.current) return;
+    ref.current.innerHTML = html || "";
+    typesetMath(ref.current);
+  }, [html]);
+  return <span ref={ref} className={className} />;
+}
+
+function wrapLatexIfNeeded(input: string) {
+  const trimmed = input.trim();
+  if (!trimmed) return "";
+  const hasDelims = trimmed.includes("\\(") || trimmed.includes("\\[") || trimmed.includes("$$");
+  return hasDelims ? trimmed : `\\(${trimmed}\\)`;
+}
 
 type Practice = {
   id: string;
@@ -459,6 +477,7 @@ function ModuleEditor({
   const [busy, setBusy] = useState(false);
   const [loadingResults, setLoadingResults] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [openPreview, setOpenPreview] = useState<Record<string, boolean>>({});
 
   const groups = module.subject === "math" ? mathGroups : verbalGroups;
   const subtopics = useMemo(() => {
@@ -513,6 +532,94 @@ function ModuleEditor({
       return q.id.toLowerCase().includes(term) || stem.includes(term);
     });
   }, [results, search]);
+
+  function togglePreview(id: string) {
+    setOpenPreview((prev) => ({ ...prev, [id]: !prev[id] }));
+  }
+
+  function QuestionPreview({ question }: { question: Question }) {
+    const isMath = module.subject === "math";
+    const imageUrl = question.image_url;
+    const resolvedImageUrl =
+      imageUrl && imageUrl.startsWith("/") ? `${API_BASE}${imageUrl}` : imageUrl;
+    const stemHtml = (isMath ? wrapLatexIfNeeded(question.stem || "") : question.stem || "").replace(/\n/g, "<br/>");
+    const passageHtml = (question.passage || "").replace(/\n/g, "<br/>");
+
+    if (isMath) {
+      return (
+        <div className="space-y-3">
+          {resolvedImageUrl ? (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 overflow-hidden">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={resolvedImageUrl} alt="question" className="w-full max-h-[220px] object-contain" />
+            </div>
+          ) : null}
+          <div className="text-sm font-semibold text-slate-900">
+            <MathContent html={stemHtml} />
+          </div>
+          {question.is_open_ended ? (
+            <div className="rounded-lg border border-dashed border-slate-200 px-3 py-2 text-xs text-slate-500">
+              Open-ended response
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {(question.choices || []).map((c) => (
+                <div key={c.label} className="rounded-lg border border-slate-200 px-3 py-2 text-xs">
+                  <span className="inline-flex items-center justify-center h-5 w-5 rounded-full border border-slate-300 text-[10px] font-semibold mr-2">
+                    {c.label}
+                  </span>
+                  <MathContent html={wrapLatexIfNeeded(c.content || "").replace(/\n/g, "<br/>")} />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    return (
+      <div className="grid gap-3 md:grid-cols-[1fr_1fr]">
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Reading passage</div>
+          <div className="mt-2 rounded-lg border border-slate-200 bg-white p-3 text-xs leading-5 text-slate-700">
+            {resolvedImageUrl ? (
+              <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 overflow-hidden">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={resolvedImageUrl} alt="question" className="w-full max-h-[200px] object-contain" />
+              </div>
+            ) : null}
+            {question.passage ? (
+              <span dangerouslySetInnerHTML={{ __html: passageHtml }} />
+            ) : (
+              <span className="text-slate-400">No passage.</span>
+            )}
+          </div>
+        </div>
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Question</div>
+          <div className="mt-2 text-xs font-semibold text-slate-900">
+            <span dangerouslySetInnerHTML={{ __html: stemHtml }} />
+          </div>
+          {question.is_open_ended ? (
+            <div className="mt-3 rounded-lg border border-dashed border-slate-200 px-3 py-2 text-xs text-slate-500">
+              Open-ended response
+            </div>
+          ) : (
+            <div className="mt-3 space-y-2">
+              {(question.choices || []).map((c) => (
+                <div key={c.label} className="rounded-lg border border-slate-200 px-3 py-2 text-xs">
+                  <span className="inline-flex items-center justify-center h-5 w-5 rounded-full border border-slate-300 text-[10px] font-semibold mr-2">
+                    {c.label}
+                  </span>
+                  <span dangerouslySetInnerHTML={{ __html: (c.content || "").replace(/\n/g, "<br/>") }} />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   function addQuestionById(id: string) {
     const clean = id.trim();
@@ -634,9 +741,19 @@ function ModuleEditor({
                     <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
                       {q ? `${q.topic}${q.subtopic ? ` · ${q.subtopic}` : ""}` : "Question"}
                     </div>
-                    <button className="text-[11px] font-semibold text-red-600" onClick={() => handleRemove(id)}>
-                      Remove
-                    </button>
+                    <div className="flex items-center gap-2">
+                      {q ? (
+                        <button
+                          className="text-[11px] font-semibold text-slate-600"
+                          onClick={() => togglePreview(id)}
+                        >
+                          {openPreview[id] ? "Hide" : "Preview"}
+                        </button>
+                      ) : null}
+                      <button className="text-[11px] font-semibold text-red-600" onClick={() => handleRemove(id)}>
+                        Remove
+                      </button>
+                    </div>
                   </div>
                   <div className="mt-1 text-xs text-slate-700 line-clamp-2">
                     {q ? (
@@ -646,6 +763,11 @@ function ModuleEditor({
                     )}
                   </div>
                   <div className="mt-1 text-[10px] text-slate-400">#{idx + 1}</div>
+                  {q && openPreview[id] ? (
+                    <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
+                      <QuestionPreview question={q} />
+                    </div>
+                  ) : null}
                 </div>
               );
             })
@@ -714,23 +836,36 @@ function ModuleEditor({
                 key={q.id}
                 className="rounded-xl border border-slate-200 bg-white px-3 py-3 shadow-sm flex flex-col gap-2"
               >
-                <div className="text-[10px] text-neutral-500 uppercase tracking-[0.12em]">
-                  {q.subject} · {q.topic}
-                  {q.subtopic ? ` · ${q.subtopic}` : ""}
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-[10px] text-neutral-500 uppercase tracking-[0.12em]">
+                    {q.subject} · {q.topic}
+                    {q.subtopic ? ` · ${q.subtopic}` : ""}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      className="text-[11px] font-semibold text-slate-600"
+                      onClick={() => togglePreview(q.id)}
+                    >
+                      {openPreview[q.id] ? "Hide" : "Preview"}
+                    </button>
+                    <button
+                      className={`rounded-lg border px-3 py-1.5 text-[11px] font-semibold ${
+                        added ? "border-slate-200 text-slate-400" : "border-slate-300 text-slate-700"
+                      }`}
+                      onClick={() => handleAddQuestion(q)}
+                      disabled={added}
+                    >
+                      {added ? "Added" : "Add"}
+                    </button>
+                  </div>
                 </div>
                 <div className="text-xs text-neutral-900 line-clamp-2" dangerouslySetInnerHTML={{ __html: q.stem }} />
-                <div className="flex items-center justify-between pt-1">
-                  <div className="text-[10px] text-slate-400">{q.id}</div>
-                  <button
-                    className={`rounded-lg border px-3 py-1.5 text-[11px] font-semibold ${
-                      added ? "border-slate-200 text-slate-400" : "border-slate-300 text-slate-700"
-                    }`}
-                    onClick={() => handleAddQuestion(q)}
-                    disabled={added}
-                  >
-                    {added ? "Added" : "Add"}
-                  </button>
-                </div>
+                <div className="text-[10px] text-slate-400">{q.id}</div>
+                {openPreview[q.id] ? (
+                  <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <QuestionPreview question={q} />
+                  </div>
+                ) : null}
               </div>
             );
           })}
