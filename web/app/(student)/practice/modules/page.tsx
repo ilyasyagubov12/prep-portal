@@ -197,6 +197,27 @@ export default function Page() {
     await loadPractices(accessToken);
   }
 
+  async function deletePractice(practiceId: string) {
+    if (!accessToken) return;
+    const ok = window.confirm("Delete this mock exam? This will remove modules, access, and attempts.");
+    if (!ok) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/module-practice/delete/`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ practice_id: practiceId }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Failed to delete");
+      await loadPractices(accessToken);
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to delete");
+    }
+  }
+
   async function grantAccess(practiceId: string) {
     if (!accessToken || !accessUser.trim()) return;
     setGrantBusy(true);
@@ -357,6 +378,13 @@ export default function Page() {
                       onClick={() => togglePractice(p.id, { is_active: !p.is_active })}
                     >
                       {p.is_active ? "Disable access" : "Enable access"}
+                    </button>
+                    <button
+                      className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700"
+                      type="button"
+                      onClick={() => deletePractice(p.id)}
+                    >
+                      Delete mock
                     </button>
                   </div>
 

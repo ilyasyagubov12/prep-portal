@@ -196,6 +196,26 @@ class ModulePracticeUpdateView(APIView):
         return Response({"ok": True})
 
 
+class ModulePracticeDeleteView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request):
+        if not _is_staff(request.user):
+            return Response({"error": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+
+        pid = request.data.get("practice_id")
+        if not pid:
+            return Response({"error": "practice_id required"}, status=400)
+        try:
+            practice = ModulePractice.objects.get(id=pid)
+        except ModulePractice.DoesNotExist:
+            return Response({"error": "Not found"}, status=404)
+
+        practice.delete()
+        return Response({"ok": True})
+
+
 class ModulePracticeModuleSetView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
