@@ -518,9 +518,9 @@ export default function Page() {
     if (btn) btn.style.display = "inline-flex";
   }
 
-  function handleHighlightClick(type: "passage" | "stem", target: HTMLElement) {
-    const el = target instanceof Element ? target : target.parentElement;
-    if (!el) return;
+  function handleHighlightClick(type: "passage" | "stem", target: EventTarget | null) {
+    if (!(target instanceof Element)) return;
+    const el = target;
     const removeTarget = el.closest("[data-hl-remove]") as HTMLElement | null;
     if (removeTarget) {
       removeHighlightFromTarget(removeTarget, type);
