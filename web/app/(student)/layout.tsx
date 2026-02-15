@@ -27,6 +27,10 @@ export default function StudentLayout({ children }: { children: ReactNode }) {
     if (typeof window === "undefined") return null;
     return localStorage.getItem("access_token");
   }, []);
+  const isMockExam =
+    typeof pathname === "string" &&
+    pathname.startsWith("/practice/modules/") &&
+    pathname.split("/").length >= 4;
 
   useEffect(() => {
     let cancelled = false;
@@ -135,18 +139,19 @@ export default function StudentLayout({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-screen md:flex">
-      <Sidebar mobileOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
-      {sidebarOpen ? (
+      {isMockExam ? null : <Sidebar mobileOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />}
+      {!isMockExam && sidebarOpen ? (
         <div
           className="fixed inset-0 bg-black/30 z-40 md:hidden"
           onClick={() => setSidebarOpen(false)}
         />
       ) : null}
-      <main className="flex-1 p-4 sm:p-6 pb-24 md:pb-6">
+      <main className={isMockExam ? "flex-1 p-0" : "flex-1 p-4 sm:p-6 pb-24 md:pb-6"}>
         {children}
       </main>
       {/* Mobile bottom navigation */}
-      <div className="fixed inset-x-0 bottom-0 z-40 md:hidden">
+      {isMockExam ? null : (
+        <div className="fixed inset-x-0 bottom-0 z-40 md:hidden">
         <div className="mx-3 mb-3 rounded-2xl border border-slate-200 bg-white/95 px-2 py-2 shadow-[0_10px_30px_rgba(15,23,42,0.18)] backdrop-blur">
           <div className="grid grid-cols-5 items-center gap-1">
             <button
@@ -212,6 +217,7 @@ export default function StudentLayout({ children }: { children: ReactNode }) {
           </div>
         </div>
       </div>
+      )}
       {requireOpen ? (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4">
           <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl">

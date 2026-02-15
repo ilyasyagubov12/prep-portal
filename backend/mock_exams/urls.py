@@ -1,0 +1,36 @@
+from django.urls import path
+from .views import (
+    MockExamListView,
+    MockExamCreateView,
+    MockExamUpdateView,
+    MockExamDeleteView,
+    MockExamQuestionSearchView,
+    MockExamQuestionLookupView,
+    MockExamTopicMapView,
+    MockExamStudentSearchView,
+    MockExamStudentLookupView,
+    MockExamAccessSetView,
+    MockExamQuestionsSetView,
+    MockExamQuestionsGenerateView,
+    MockExamStartView,
+    MockExamSaveView,
+    MockExamSubmitView,
+)
+
+urlpatterns = [
+    path("mock-exams/list/", MockExamListView.as_view(), name="mock_exams_list"),
+    path("mock-exams/create/", MockExamCreateView.as_view(), name="mock_exams_create"),
+    path("mock-exams/update/", MockExamUpdateView.as_view(), name="mock_exams_update"),
+    path("mock-exams/delete/", MockExamDeleteView.as_view(), name="mock_exams_delete"),
+    path("mock-exams/topics/", MockExamTopicMapView.as_view(), name="mock_exams_topics"),
+    path("mock-exams/students/search/", MockExamStudentSearchView.as_view(), name="mock_exams_students_search"),
+    path("mock-exams/students/lookup/", MockExamStudentLookupView.as_view(), name="mock_exams_students_lookup"),
+    path("mock-exams/access/set/", MockExamAccessSetView.as_view(), name="mock_exams_access_set"),
+    path("mock-exams/questions/search/", MockExamQuestionSearchView.as_view(), name="mock_exams_questions_search"),
+    path("mock-exams/questions/lookup/", MockExamQuestionLookupView.as_view(), name="mock_exams_questions_lookup"),
+    path("mock-exams/questions/set/", MockExamQuestionsSetView.as_view(), name="mock_exams_questions_set"),
+    path("mock-exams/questions/generate/", MockExamQuestionsGenerateView.as_view(), name="mock_exams_questions_generate"),
+    path("mock-exams/start/", MockExamStartView.as_view(), name="mock_exams_start"),
+    path("mock-exams/save/", MockExamSaveView.as_view(), name="mock_exams_save"),
+    path("mock-exams/submit/", MockExamSubmitView.as_view(), name="mock_exams_submit"),
+]

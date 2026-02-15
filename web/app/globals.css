@@ -18,6 +18,16 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
+/* Ensure Desmos expressions panel is visible inside the calculator window */
+.dcg-container .dcg-expressions {
+  display: block !important;
+  visibility: visible !important;
+  width: 220px !important;
+}
+.dcg-container .dcg-expressionlist {
+  width: 220px !important;
+}
+
 /* Scrollbar styling */
 * {
   scrollbar-width: thin;

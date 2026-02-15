@@ -1,18 +1,19 @@
 from django.utils import timezone
-from django.db import transaction
+from django.db import transaction, models
 from rest_framework import status, permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
+import csv
+import io
+import random
 
-from accounts.models import User
-from question_bank.models import Question
-from question_bank.serializers import QuestionSerializer
-
+from accounts.models import User, Profile
 from .models import (
     ModulePractice,
     ModulePracticeModule,
     ModulePracticeAccess,
     ModulePracticeAttempt,
+    ModulePracticeQuestion,
 )
 
 
@@ -23,12 +24,59 @@ def _is_staff(user: User) -> bool:
     return user.is_superuser or is_admin or role in ("admin", "teacher")
 
 
-def _serialize_question(q: Question):
-    data = QuestionSerializer(q).data
-    for c in data.get("choices") or []:
-        c.pop("is_correct", None)
-    data.pop("correct_answer", None)
-    return data
+def _serialize_question_for_student(q: ModulePracticeQuestion, choice_order: list | None = None):
+    choices = []
+    raw_choices = q.choices or []
+    if choice_order:
+        by_label = {c.get("label"): c for c in raw_choices if c.get("label")}
+        used = set()
+        for label in choice_order:
+            c = by_label.get(label)
+            if not c:
+                continue
+            choices.append({"label": c.get("label"), "content": c.get("content")})
+            used.add(label)
+        for c in raw_choices:
+            label = c.get("label")
+            if label and label in used:
+                continue
+            choices.append({"label": c.get("label"), "content": c.get("content")})
+    else:
+        for c in raw_choices:
+            choices.append({"label": c.get("label"), "content": c.get("content")})
+    return {
+        "id": str(q.id),
+        "subject": q.subject,
+        "module_index": q.module_index,
+        "topic": q.topic_tag,
+        "subtopic": None,
+        "stem": q.question_text,
+        "passage": q.passage,
+        "choices": choices,
+        "is_open_ended": q.is_open_ended,
+        "image_url": q.image_url,
+        "explanation": q.explanation,
+    }
+
+
+def _serialize_question_for_staff(q: ModulePracticeQuestion):
+    return {
+        "id": str(q.id),
+        "subject": q.subject,
+        "module_index": q.module_index,
+        "topic_tag": q.topic_tag,
+        "difficulty": q.difficulty,
+        "question_text": q.question_text,
+        "passage": q.passage,
+        "choices": q.choices or [],
+        "is_open_ended": q.is_open_ended,
+        "correct_answer": q.correct_answer,
+        "explanation": q.explanation,
+        "image_url": q.image_url,
+        "order": q.order,
+        "created_at": q.created_at,
+        "updated_at": q.updated_at,
+    }
 
 
 def _score_answers(question_map: dict, answers: dict) -> tuple[int, int]:
@@ -45,10 +93,18 @@ def _score_answers(question_map: dict, answers: dict) -> tuple[int, int]:
                 correct += 1
         else:
             pick = str(answers.get(qid) or "").strip()
-            correct_label = next((c.get("label") for c in q.choices if c.get("is_correct")), None)
+            correct_label = next((c.get("label") for c in (q.choices or []) if c.get("is_correct")), None)
             if pick and correct_label and pick == correct_label:
                 correct += 1
     return correct, total
+
+
+def _default_required_count(subject: str) -> int:
+    return 22 if subject == "math" else 27
+
+
+def _required_count_for_module(module: ModulePracticeModule) -> int:
+    return module.required_count or _default_required_count(module.subject)
 
 
 class ModulePracticeListView(APIView):
@@ -62,11 +118,17 @@ class ModulePracticeListView(APIView):
 
         data = []
         for p in practices:
-            modules = (
-                ModulePracticeModule.objects.filter(practice=p)
-                .order_by("subject", "module_index")
+            modules = ModulePracticeModule.objects.filter(practice=p).order_by(
+                models.Case(
+                    models.When(subject="verbal", then=0),
+                    models.When(subject="math", then=1),
+                    default=2,
+                    output_field=models.IntegerField(),
+                ),
+                "module_index",
             )
-            access = ModulePracticeAccess.objects.filter(practice=p, student=user, is_active=True).first()
+            access_qs = ModulePracticeAccess.objects.filter(practice=p, is_active=True)
+            access = access_qs.filter(student=user).first()
             locked = not staff
             expires_at = None
             if staff:
@@ -93,9 +155,7 @@ class ModulePracticeListView(APIView):
                 attempt_summary = {
                     "id": str(latest_attempt.id),
                     "status": latest_attempt.status,
-                    "score": latest_attempt.score,
-                    "correct": latest_attempt.correct,
-                    "total": latest_attempt.total,
+                    "module_scores": latest_attempt.module_scores,
                     "completed_at": latest_attempt.completed_at,
                 }
 
@@ -106,6 +166,9 @@ class ModulePracticeListView(APIView):
                     "description": p.description,
                     "is_active": p.is_active,
                     "results_published": p.results_published,
+                    "shuffle_questions": p.shuffle_questions,
+                    "shuffle_choices": p.shuffle_choices,
+                    "allow_retakes": p.allow_retakes,
                     "created_at": p.created_at,
                     "locked": locked,
                     "access_expires_at": expires_at,
@@ -115,12 +178,14 @@ class ModulePracticeListView(APIView):
                             "subject": m.subject,
                             "module_index": m.module_index,
                             "time_limit_minutes": m.time_limit_minutes,
-                            "question_count": m.question_count,
-                            "question_ids": m.question_ids if staff else None,
+                            "required_count": _required_count_for_module(m),
+                            "question_count": ModulePracticeQuestion.objects.filter(module=m).count(),
                         }
                         for m in modules
                     ],
                     "attempt": attempt_summary,
+                    "allowed_student_ids": list(access_qs.values_list("student_id", flat=True)) if staff else None,
+                    "allowed_student_count": access_qs.count() if staff else None,
                 }
             )
 
@@ -152,12 +217,14 @@ class ModulePracticeCreateView(APIView):
             ("math", 1, 22, 35),
             ("math", 2, 22, 35),
         ]
+
         for subject, idx, qcount, mins in defaults:
             ModulePracticeModule.objects.create(
                 practice=practice,
                 subject=subject,
                 module_index=idx,
-                question_count=qcount,
+                question_count=0,
+                required_count=qcount,
                 time_limit_minutes=mins,
                 question_ids=[],
             )
@@ -191,6 +258,12 @@ class ModulePracticeUpdateView(APIView):
             practice.results_published = bool(request.data.get("results_published"))
         if "is_active" in request.data:
             practice.is_active = bool(request.data.get("is_active"))
+        if "shuffle_questions" in request.data:
+            practice.shuffle_questions = bool(request.data.get("shuffle_questions"))
+        if "shuffle_choices" in request.data:
+            practice.shuffle_choices = bool(request.data.get("shuffle_choices"))
+        if "allow_retakes" in request.data:
+            practice.allow_retakes = bool(request.data.get("allow_retakes"))
         practice.save()
 
         return Response({"ok": True})
@@ -230,6 +303,7 @@ class ModulePracticeModuleSetView(APIView):
         question_ids = request.data.get("question_ids") or []
         time_limit = request.data.get("time_limit_minutes")
         question_count = request.data.get("question_count")
+        required_count = request.data.get("required_count")
 
         if not pid or subject not in ("math", "verbal") or not module_index:
             return Response({"error": "practice_id, subject, module_index required"}, status=400)
@@ -241,8 +315,18 @@ class ModulePracticeModuleSetView(APIView):
         if not isinstance(question_ids, list):
             return Response({"error": "question_ids must be a list"}, status=400)
 
-        required = 22 if subject == "math" else 27
-        if len(question_ids) != required:
+        if required_count is None:
+            required_count = question_count
+
+        try:
+            required = int(required_count) if required_count is not None else None
+        except Exception:
+            return Response({"error": "required_count must be int"}, status=400)
+
+        if required is not None and required <= 0:
+            return Response({"error": "required_count must be greater than 0"}, status=400)
+
+        if question_ids and required is not None and len(question_ids) != required:
             return Response(
                 {"error": f"{subject.title()} modules require exactly {required} questions"},
                 status=400,
@@ -257,16 +341,369 @@ class ModulePracticeModuleSetView(APIView):
             practice=practice,
             subject=subject,
             module_index=module_index,
-            defaults={"question_ids": [], "question_count": 0, "time_limit_minutes": 30},
+            defaults={
+                "question_ids": [],
+                "question_count": 0,
+                "required_count": _default_required_count(subject),
+                "time_limit_minutes": 30,
+            },
         )
 
         module.question_ids = question_ids
         if time_limit is not None:
             module.time_limit_minutes = int(time_limit)
-        module.question_count = required
+        if required is not None:
+            module.required_count = required
         module.save()
 
         return Response({"ok": True})
+
+
+class ModulePracticeQuestionListView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        if not _is_staff(request.user):
+            return Response({"error": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+
+        pid = request.query_params.get("practice_id")
+        subject = (request.query_params.get("subject") or "").lower()
+        module_index = request.query_params.get("module_index")
+        if not pid or subject not in ("math", "verbal") or not module_index:
+            return Response({"error": "practice_id, subject, module_index required"}, status=400)
+        try:
+            module_index = int(module_index)
+        except Exception:
+            return Response({"error": "module_index must be int"}, status=400)
+
+        module = ModulePracticeModule.objects.filter(
+            practice_id=pid, subject=subject, module_index=module_index
+        ).first()
+        if not module:
+            return Response({"error": "Module not found"}, status=404)
+
+        questions = ModulePracticeQuestion.objects.filter(module=module).order_by("order", "created_at")
+        return Response({"ok": True, "questions": [_serialize_question_for_staff(q) for q in questions]})
+
+
+class ModulePracticeQuestionCreateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request):
+        if not _is_staff(request.user):
+            return Response({"error": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+
+        pid = request.data.get("practice_id")
+        subject = (request.data.get("subject") or "").lower()
+        module_index = request.data.get("module_index")
+        question_text = request.data.get("question_text")
+        topic_tag = request.data.get("topic_tag")
+        difficulty = request.data.get("difficulty")
+        passage = request.data.get("passage")
+        choices = request.data.get("choices") or []
+        is_open_ended = bool(request.data.get("is_open_ended"))
+        correct_answer = request.data.get("correct_answer")
+        explanation = request.data.get("explanation")
+        image_url = request.data.get("image_url")
+
+        if not pid or subject not in ("math", "verbal") or not module_index:
+            return Response({"error": "practice_id, subject, module_index required"}, status=400)
+        if not question_text or not topic_tag:
+            return Response({"error": "question_text and topic_tag required"}, status=400)
+        try:
+            module_index = int(module_index)
+        except Exception:
+            return Response({"error": "module_index must be int"}, status=400)
+
+        module = ModulePracticeModule.objects.filter(
+            practice_id=pid, subject=subject, module_index=module_index
+        ).first()
+        if not module:
+            return Response({"error": "Module not found"}, status=404)
+
+        if not isinstance(choices, list):
+            return Response({"error": "choices must be a list"}, status=400)
+
+        required = _required_count_for_module(module)
+        current_count = ModulePracticeQuestion.objects.filter(module=module).count()
+        if current_count >= required:
+            return Response(
+                {"error": f"{subject.title()} Module {module_index} already has {required} questions"},
+                status=400,
+            )
+
+        next_order = (
+            ModulePracticeQuestion.objects.filter(module=module).aggregate(models.Max("order")).get("order__max") or 0
+        ) + 1
+
+        q = ModulePracticeQuestion.objects.create(
+            practice_id=pid,
+            module=module,
+            subject=subject,
+            module_index=module_index,
+            topic_tag=topic_tag,
+            question_text=question_text,
+            passage=passage or None,
+            choices=choices,
+            is_open_ended=is_open_ended,
+            correct_answer=correct_answer,
+            explanation=explanation,
+            image_url=image_url,
+            difficulty=difficulty,
+            order=next_order,
+        )
+
+        module.question_count = ModulePracticeQuestion.objects.filter(module=module).count()
+        module.save(update_fields=["question_count"])
+
+        return Response({"ok": True, "question_id": str(q.id)})
+
+
+class ModulePracticeQuestionUpdateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request):
+        if not _is_staff(request.user):
+            return Response({"error": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+
+        qid = request.data.get("question_id")
+        if not qid:
+            return Response({"error": "question_id required"}, status=400)
+        try:
+            q = ModulePracticeQuestion.objects.get(id=qid)
+        except ModulePracticeQuestion.DoesNotExist:
+            return Response({"error": "Not found"}, status=404)
+
+        fields = [
+            "topic_tag",
+            "difficulty",
+            "question_text",
+            "passage",
+            "choices",
+            "is_open_ended",
+            "correct_answer",
+            "explanation",
+            "image_url",
+        ]
+        for f in fields:
+            if f in request.data:
+                setattr(q, f, request.data.get(f))
+        q.save()
+
+        return Response({"ok": True})
+
+
+class ModulePracticeQuestionDeleteView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request):
+        if not _is_staff(request.user):
+            return Response({"error": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+
+        qid = request.data.get("question_id")
+        if not qid:
+            return Response({"error": "question_id required"}, status=400)
+        try:
+            q = ModulePracticeQuestion.objects.get(id=qid)
+        except ModulePracticeQuestion.DoesNotExist:
+            return Response({"error": "Not found"}, status=404)
+
+        module = q.module
+        q.delete()
+
+        remaining = list(ModulePracticeQuestion.objects.filter(module=module).order_by("order", "created_at"))
+        for idx, item in enumerate(remaining, start=1):
+            if item.order != idx:
+                item.order = idx
+                item.save(update_fields=["order"])
+        module.question_count = len(remaining)
+        module.save(update_fields=["question_count"])
+
+        return Response({"ok": True})
+
+
+class ModulePracticeQuestionImportView(APIView):
+    """
+    CSV import endpoint for module practice questions.
+    Expected columns:
+    subject, module, chapter (optional), stem, passage (optional), A, B, C, D, answer
+    Optional extra columns: difficulty, explanation, image_url
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request):
+        if not _is_staff(request.user):
+            return Response({"error": "Forbidden"}, status=403)
+
+        file = request.FILES.get("file")
+        if not file:
+            return Response({"error": "No file provided"}, status=400)
+
+        pid = request.data.get("practice_id")
+        req_subject = (request.data.get("subject") or "").lower()
+        req_module_index = request.data.get("module_index")
+
+        if not pid:
+            return Response({"error": "practice_id required"}, status=400)
+        if req_subject and req_subject not in ("math", "verbal"):
+            return Response({"error": "subject must be math or verbal"}, status=400)
+        if req_module_index:
+            try:
+                req_module_index = int(req_module_index)
+            except Exception:
+                return Response({"error": "module_index must be int"}, status=400)
+
+        raw = file.read()
+        if raw[:2] == b"PK":
+            return Response(
+                {
+                    "error": "It looks like you uploaded an Excel (.xlsx) file. "
+                             "Please export or save it as CSV (UTF-8) and try again."
+                },
+                status=400,
+            )
+
+        decoded = None
+        for enc in ("utf-8-sig", "utf-8", "iso-8859-1"):
+            try:
+                decoded = raw.decode(enc)
+                break
+            except UnicodeDecodeError:
+                continue
+        if decoded is None:
+            return Response({"error": "Could not decode file. Please upload UTF-8 CSV."}, status=400)
+
+        module_state: dict = {}
+
+        reader = csv.DictReader(io.StringIO(decoded))
+        created = 0
+        errors = []
+
+        for idx, row in enumerate(reader, start=1):
+            try:
+                row_subject = (row.get("subject") or "").strip().lower()
+                row_module = row.get("module") or row.get("module_index")
+
+                subject = row_subject or req_subject
+                if subject not in ("math", "verbal"):
+                    raise ValueError("Invalid or missing subject")
+                if row_subject and req_subject and row_subject != req_subject:
+                    raise ValueError("Subject does not match selected module")
+
+                if row_module is None or row_module == "":
+                    if req_module_index is None:
+                        raise ValueError("Missing module")
+                    module_index = req_module_index
+                else:
+                    try:
+                        module_index = int(str(row_module).strip())
+                    except Exception:
+                        raise ValueError("Module must be an integer")
+
+                if req_module_index and module_index != req_module_index:
+                    raise ValueError("Module does not match selected module")
+
+                module = ModulePracticeModule.objects.filter(
+                    practice_id=pid, subject=subject, module_index=module_index
+                ).first()
+                if not module:
+                    raise ValueError("Module not found")
+
+                required = _required_count_for_module(module)
+                state = module_state.get(module.id)
+                if not state:
+                    qs = ModulePracticeQuestion.objects.filter(module=module)
+                    state = {
+                        "count": qs.count(),
+                        "next_order": (qs.aggregate(models.Max("order")).get("order__max") or 0) + 1,
+                    }
+                    module_state[module.id] = state
+                if state["count"] >= required:
+                    raise ValueError(f"Module already full ({required} questions)")
+
+                chapter = (row.get("chapter") or row.get("topic_tag") or row.get("topic") or "").strip()
+                question_text = (row.get("stem") or row.get("question_text") or "").strip()
+                passage = (row.get("passage") or "").strip() or None
+                difficulty = (row.get("difficulty") or "").strip() or None
+                correct_answer = (row.get("correct_answer") or "").strip() or None
+                explanation = (row.get("explanation") or "").strip() or None
+                image_url = (row.get("image_url") or "").strip() or None
+                correct_letter = (row.get("answer") or row.get("correct") or "").strip().upper()
+
+                choices = []
+                for letter in ["A", "B", "C", "D"]:
+                    if letter in row and row[letter]:
+                        choices.append(
+                            {"label": letter, "content": row[letter], "is_correct": letter == correct_letter}
+                        )
+
+                if not question_text:
+                    raise ValueError("Missing stem")
+
+                is_open_ended = False
+                if len(choices) == 0:
+                    is_open_ended = True
+
+                if is_open_ended:
+                    if not correct_answer:
+                        correct_answer = (row.get("answer") or "").strip() or None
+                else:
+                    if len(choices) < 2:
+                        raise ValueError("At least two choices required")
+                    if correct_letter not in ("A", "B", "C", "D"):
+                        raise ValueError("Answer must be A, B, C, or D")
+                    if not any(c.get("is_correct") for c in choices):
+                        raise ValueError("No correct choice specified")
+
+                topic_tag = chapter or "General"
+                next_order = state["next_order"]
+
+                ModulePracticeQuestion.objects.create(
+                    practice_id=pid,
+                    module=module,
+                    subject=subject,
+                    module_index=module_index,
+                    topic_tag=topic_tag,
+                    question_text=question_text,
+                    passage=passage,
+                    choices=[] if is_open_ended else choices,
+                    is_open_ended=is_open_ended,
+                    correct_answer=correct_answer if is_open_ended else None,
+                    explanation=explanation,
+                    image_url=image_url,
+                    difficulty=difficulty,
+                    order=next_order,
+                )
+                created += 1
+                state["count"] += 1
+                state["next_order"] += 1
+            except Exception as e:
+                errors.append(f"Row {idx}: {e}")
+
+        for module_id, state in module_state.items():
+            ModulePracticeModule.objects.filter(id=module_id).update(question_count=state["count"])
+
+        return Response({"ok": True, "created": created, "errors": errors})
+
+
+class ModulePracticeQuestionDetailView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, question_id):
+        if not _is_staff(request.user):
+            return Response({"error": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            q = ModulePracticeQuestion.objects.get(id=question_id)
+        except ModulePracticeQuestion.DoesNotExist:
+            return Response({"error": "Not found"}, status=404)
+
+        return Response({"ok": True, "question": _serialize_question_for_staff(q)})
 
 
 class ModulePracticeAccessGrantView(APIView):
@@ -333,6 +770,108 @@ class ModulePracticeAccessRevokeView(APIView):
         return Response({"ok": True})
 
 
+class ModulePracticeStudentSearchView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        if not _is_staff(request.user):
+            return Response({"error": "Forbidden"}, status=403)
+
+        q = (request.data.get("q") or "").strip().lower()
+        limit = int(request.data.get("limit") or 50)
+
+        qs = Profile.objects.select_related("user").filter(role="student")
+        if q:
+            qs = qs.filter(
+                models.Q(nickname__icontains=q)
+                | models.Q(user__username__icontains=q)
+                | models.Q(user__first_name__icontains=q)
+                | models.Q(user__last_name__icontains=q)
+                | models.Q(student_id__icontains=q)
+            )
+
+        qs = qs.order_by("nickname")[: max(1, min(limit, 200))]
+        data = []
+        for p in qs:
+            data.append(
+                {
+                    "user_id": str(p.user.id),
+                    "username": p.user.username,
+                    "first_name": p.user.first_name,
+                    "last_name": p.user.last_name,
+                    "nickname": p.nickname,
+                    "student_id": p.student_id,
+                    "avatar": p.avatar,
+                }
+            )
+        return Response({"ok": True, "students": data})
+
+
+class ModulePracticeStudentLookupView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        if not _is_staff(request.user):
+            return Response({"error": "Forbidden"}, status=403)
+
+        student_ids = request.data.get("student_ids") or []
+        if not isinstance(student_ids, list):
+            return Response({"error": "student_ids must be list"}, status=400)
+
+        qs = Profile.objects.select_related("user").filter(user_id__in=student_ids)
+        data = []
+        for p in qs:
+            data.append(
+                {
+                    "user_id": str(p.user.id),
+                    "username": p.user.username,
+                    "first_name": p.user.first_name,
+                    "last_name": p.user.last_name,
+                    "nickname": p.nickname,
+                    "student_id": p.student_id,
+                    "avatar": p.avatar,
+                }
+            )
+        return Response({"ok": True, "students": data})
+
+
+class ModulePracticeAccessSetView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request):
+        if not _is_staff(request.user):
+            return Response({"error": "Forbidden"}, status=403)
+
+        pid = request.data.get("practice_id")
+        student_ids = request.data.get("student_ids") or []
+        if not pid:
+            return Response({"error": "practice_id required"}, status=400)
+
+        try:
+            practice = ModulePractice.objects.get(id=pid)
+        except ModulePractice.DoesNotExist:
+            return Response({"error": "Not found"}, status=404)
+
+        if not isinstance(student_ids, list):
+            return Response({"error": "student_ids must be list"}, status=400)
+
+        ModulePracticeAccess.objects.filter(practice=practice).delete()
+        students = User.objects.filter(id__in=student_ids)
+        ModulePracticeAccess.objects.bulk_create(
+            [
+                ModulePracticeAccess(
+                    practice=practice,
+                    student=student,
+                    granted_by=request.user,
+                    is_active=True,
+                )
+                for student in students
+            ]
+        )
+        return Response({"ok": True, "allowed_student_count": students.count()})
+
+
 class ModulePracticeStartView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -349,36 +888,102 @@ class ModulePracticeStartView(APIView):
         user = request.user
         staff = _is_staff(user)
         if not staff:
+            if not practice.is_active:
+                return Response({"error": "Locked"}, status=403)
             access = ModulePracticeAccess.objects.filter(practice=practice, student=user, is_active=True).first()
             if not access:
                 return Response({"error": "Locked"}, status=403)
             if access.expires_at and access.expires_at < timezone.now():
                 return Response({"error": "Access expired"}, status=403)
-            if not practice.is_active:
-                return Response({"error": "Locked"}, status=403)
 
-        attempt = ModulePracticeAttempt.objects.create(
-            practice=practice,
-            student=user,
-            status="in_progress",
+        if not practice.allow_retakes:
+            submitted = ModulePracticeAttempt.objects.filter(
+                practice=practice, student=user, status="submitted"
+            ).first()
+            if submitted:
+                return Response({"error": "Retakes disabled"}, status=403)
+
+        attempt = (
+            ModulePracticeAttempt.objects.filter(
+                practice=practice,
+                student=user,
+                status="in_progress",
+            )
+            .order_by("-started_at")
+            .first()
         )
+        if not attempt:
+            attempt = ModulePracticeAttempt.objects.create(
+                practice=practice,
+                student=user,
+                status="in_progress",
+            )
 
-        modules = ModulePracticeModule.objects.filter(practice=practice).order_by("subject", "module_index")
+        modules = ModulePracticeModule.objects.filter(practice=practice).order_by(
+            models.Case(
+                models.When(subject="verbal", then=0),
+                models.When(subject="math", then=1),
+                default=2,
+                output_field=models.IntegerField(),
+            ),
+            "module_index",
+        )
+        for m in modules:
+            required = _required_count_for_module(m)
+            count = ModulePracticeQuestion.objects.filter(module=m).count()
+            if count != required:
+                return Response(
+                    {"error": f"{m.subject.title()} Module {m.module_index} requires {required} questions"},
+                    status=400,
+                )
+        question_order = attempt.question_order or {}
+        choice_order = attempt.choice_order or {}
+        updated = False
+
         modules_payload = []
         for m in modules:
-            ids = [str(x) for x in (m.question_ids or [])]
-            questions = list(Question.objects.filter(id__in=ids))
-            by_id = {str(q.id): q for q in questions}
-            ordered = [by_id[qid] for qid in ids if qid in by_id]
+            questions = list(ModulePracticeQuestion.objects.filter(module=m).order_by("order", "created_at"))
+            module_key = str(m.id)
+            order = question_order.get(module_key)
+            if not order:
+                order = [str(q.id) for q in questions]
+                if practice.shuffle_questions:
+                    random.shuffle(order)
+                question_order[module_key] = order
+                updated = True
+
+            qmap = {str(q.id): q for q in questions}
+            payload_questions = []
+            for qid in order:
+                q = qmap.get(str(qid))
+                if not q:
+                    continue
+                if practice.shuffle_choices:
+                    if str(q.id) not in choice_order:
+                        labels = [c.get("label") for c in (q.choices or []) if c.get("label")]
+                        random.shuffle(labels)
+                        choice_order[str(q.id)] = labels
+                        updated = True
+                    payload_questions.append(
+                        _serialize_question_for_student(q, choice_order.get(str(q.id)))
+                    )
+                else:
+                    payload_questions.append(_serialize_question_for_student(q))
+
             modules_payload.append(
                 {
                     "id": str(m.id),
                     "subject": m.subject,
                     "module_index": m.module_index,
                     "time_limit_minutes": m.time_limit_minutes,
-                    "questions": [_serialize_question(q) for q in ordered],
+                    "questions": payload_questions,
                 }
             )
+
+        if updated:
+            attempt.question_order = question_order
+            attempt.choice_order = choice_order
+            attempt.save(update_fields=["question_order", "choice_order"])
 
         return Response(
             {
@@ -431,8 +1036,8 @@ class ModulePracticeSubmitView(APIView):
         total_count = 0
 
         for m in modules:
-            ids = [str(x) for x in (m.question_ids or [])]
-            questions = Question.objects.filter(id__in=ids)
+            questions = list(ModulePracticeQuestion.objects.filter(module=m))
+            ids = [str(q.id) for q in questions]
             qmap = {str(q.id): q for q in questions}
             module_answers = {qid: answers.get(qid) for qid in ids if qid in answers}
             correct, count = _score_answers(qmap, module_answers)
@@ -442,7 +1047,6 @@ class ModulePracticeSubmitView(APIView):
             module_scores[key] = {
                 "correct": correct,
                 "total": count,
-                "score": (correct / count) if count else 0,
             }
 
         attempt.answers = answers
@@ -459,9 +1063,6 @@ class ModulePracticeSubmitView(APIView):
                 {
                     "ok": True,
                     "results_released": True,
-                    "correct": attempt.correct,
-                    "total": attempt.total,
-                    "score": attempt.score,
                     "module_scores": attempt.module_scores,
                 }
             )

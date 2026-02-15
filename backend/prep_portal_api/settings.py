@@ -64,9 +64,10 @@ INSTALLED_APPS = [
     "exam_dates",
     "events",
     "offline_grades",
-    "mediafiles",
-    "module_practice",
-]
+      "mediafiles",
+      "module_practice",
+      "mock_exams",
+  ]
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
@@ -123,8 +124,16 @@ else:
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
             "NAME": BASE_DIR / "db.sqlite3",
+            # Give SQLite more time to wait on busy locks.
+            "OPTIONS": {"timeout": 30},
         }
     }
+
+    # Enable WAL + busy timeout for SQLite to reduce "database is locked" errors.
+    try:
+        import prep_portal_api.sqlite  # noqa: F401
+    except Exception:
+        pass
 
 
 # Password validation

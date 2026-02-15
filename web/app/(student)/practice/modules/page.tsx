@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { mathGroups, verbalGroups } from "@/lib/questionBank/topics";
 import { typesetMath } from "@/lib/mathjax";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE;
@@ -22,26 +21,23 @@ type PracticeModule = {
   module_index: number;
   time_limit_minutes: number;
   question_count: number;
-  question_ids?: string[] | null;
+  required_count: number;
 };
 
 type PracticeAttempt = {
   id: string;
   status: string;
-  score: number;
-  correct: number;
-  total: number;
+  module_scores?: Record<string, { correct: number; total: number }>;
   completed_at: string | null;
 };
 
-type Question = {
+type ModuleQuestion = {
   id: string;
   subject: "math" | "verbal";
-  topic: string;
-  subtopic?: string | null;
-  stem: string;
+  topic_tag: string;
+  question_text: string;
   passage?: string | null;
-  choices?: { label: string; content: string }[];
+  choices?: { label: string; content: string; is_correct?: boolean }[];
   is_open_ended?: boolean | null;
   image_url?: string | null;
   difficulty?: string | null;
@@ -70,10 +66,25 @@ type Practice = {
   description: string | null;
   is_active: boolean;
   results_published: boolean;
+  shuffle_questions?: boolean;
+  shuffle_choices?: boolean;
+  allow_retakes?: boolean;
   locked: boolean;
   access_expires_at: string | null;
+  allowed_student_ids?: string[] | null;
+  allowed_student_count?: number | null;
   modules: PracticeModule[];
   attempt?: PracticeAttempt | null;
+};
+
+type Student = {
+  user_id: string;
+  username: string;
+  first_name?: string | null;
+  last_name?: string | null;
+  nickname?: string | null;
+  student_id?: string | null;
+  avatar?: string | null;
 };
 
 function isTeacherOrAdmin(p: Profile | null) {
@@ -85,6 +96,10 @@ function isTeacherOrAdmin(p: Profile | null) {
 function formatModuleLabel(m: PracticeModule) {
   const label = m.subject === "math" ? "Math" : "Verbal";
   return `${label} Module ${m.module_index}`;
+}
+
+function getRequiredCount(m: PracticeModule) {
+  return m.required_count || (m.subject === "math" ? 22 : 27);
 }
 
 export default function Page() {
@@ -100,9 +115,6 @@ export default function Page() {
   const [creating, setCreating] = useState(false);
 
   const [manageId, setManageId] = useState<string | null>(null);
-  const [accessUser, setAccessUser] = useState("");
-  const [accessExpiry, setAccessExpiry] = useState("");
-  const [grantBusy, setGrantBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -180,27 +192,6 @@ export default function Page() {
     }
   }
 
-  async function saveModuleQuestions(practiceId: string, module: PracticeModule, ids: string[]) {
-    if (!accessToken) return;
-    const res = await fetch(`${API_BASE}/api/module-practice/modules/set/`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        practice_id: practiceId,
-        subject: module.subject,
-        module_index: module.module_index,
-        question_ids: ids,
-        question_count: ids.length,
-      }),
-    });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json?.error || "Failed to save module");
-    await loadPractices(accessToken);
-  }
-
   async function togglePractice(practiceId: string, payload: Record<string, any>) {
     if (!accessToken) return;
     const res = await fetch(`${API_BASE}/api/module-practice/update/`, {
@@ -237,38 +228,9 @@ export default function Page() {
     }
   }
 
-  async function grantAccess(practiceId: string) {
-    if (!accessToken || !accessUser.trim()) return;
-    setGrantBusy(true);
-    try {
-      const payload: any = { practice_id: practiceId };
-      if (accessUser.includes("@")) payload.email = accessUser.trim();
-      else payload.username = accessUser.trim();
-      if (accessExpiry) payload.expires_at = new Date(accessExpiry).toISOString();
-
-      const res = await fetch(`${API_BASE}/api/module-practice/access/grant/`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json?.error || "Failed to grant access");
-      setAccessUser("");
-      setAccessExpiry("");
-      await loadPractices(accessToken);
-    } catch (e: any) {
-      setError(e?.message ?? "Failed to grant access");
-    } finally {
-      setGrantBusy(false);
-    }
-  }
-
   function startPractice(practiceId: string, locked: boolean) {
     if (locked) return;
-    router.push(`/practice/modules/${practiceId}`);
+    router.push(`/practice/modules/${practiceId}?exam=sat`);
   }
 
   if (loading) {
@@ -281,7 +243,7 @@ export default function Page() {
         <header className="rounded-3xl bg-gradient-to-r from-slate-900 via-blue-900 to-blue-600 text-white p-6 shadow-xl">
           <div className="text-xs uppercase tracking-[0.3em] text-blue-200">Module Practice</div>
           <div className="mt-3 text-3xl font-semibold">SAT Mock Exams</div>
-          <div className="mt-2 text-sm text-blue-100">Practice full-length modules with timed sections.</div>
+          <div className="mt-2 text-sm text-blue-100">Practice full-length SAT modules with timed sections.</div>
         </header>
 
         {error ? <div className="text-sm text-red-600">{error}</div> : null}
@@ -320,7 +282,67 @@ export default function Page() {
           </section>
         ) : null}
 
-        <section className="grid gap-5 lg:grid-cols-2">
+        <section className="space-y-6">
+          <ExamSection
+            title="SAT Mock Exams"
+            subtitle="Digital SAT-style full length modules."
+            practices={practices}
+            canManage={canManage}
+            manageId={manageId}
+            setManageId={setManageId}
+            startPractice={startPractice}
+            togglePractice={togglePractice}
+            deletePractice={deletePractice}
+            accessToken={accessToken}
+            refresh={() => accessToken && loadPractices(accessToken)}
+          />
+        </section>
+        
+      </div>
+    </div>
+  );
+}
+
+function ExamSection({
+  title,
+  subtitle,
+  practices,
+  canManage,
+  manageId,
+  setManageId,
+  startPractice,
+  togglePractice,
+  deletePractice,
+  accessToken,
+  refresh,
+}: {
+  title: string;
+  subtitle: string;
+  practices: Practice[];
+  canManage: boolean;
+  manageId: string | null;
+  setManageId: (id: string | null) => void;
+  startPractice: (practiceId: string, locked: boolean) => void;
+  togglePractice: (practiceId: string, payload: Record<string, any>) => Promise<void>;
+  deletePractice: (practiceId: string) => Promise<void>;
+  accessToken: string | null;
+  refresh: () => void;
+}) {
+  return (
+    <div className="space-y-4">
+      <div className="flex items-end justify-between">
+        <div>
+          <div className="text-xs uppercase tracking-[0.3em] text-slate-400">{title}</div>
+          <div className="mt-2 text-sm text-slate-600">{subtitle}</div>
+        </div>
+      </div>
+
+      {practices.length === 0 ? (
+        <div className="rounded-2xl border border-dashed bg-white px-5 py-6 text-sm text-slate-500">
+          No mock exams yet.
+        </div>
+      ) : (
+        <div className="grid gap-5 lg:grid-cols-2">
           {practices.map((p) => (
             <div key={p.id} className="rounded-2xl border bg-white p-5 shadow-sm">
               <div className="flex items-start justify-between gap-4">
@@ -348,16 +370,29 @@ export default function Page() {
                   <div key={m.id} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-sm">
                     <div className="font-medium">{formatModuleLabel(m)}</div>
                     <div className="text-slate-500">
-                      {m.question_count || 0} Q - {m.time_limit_minutes} min
+                      {m.question_count || 0}/{getRequiredCount(m)} Q - {m.time_limit_minutes} min
                     </div>
                   </div>
                 ))}
               </div>
 
-              {p.attempt ? (
+              {p.attempt?.module_scores ? (
                 <div className="mt-4 rounded-xl bg-slate-100 p-3 text-sm text-slate-600">
-                  Latest attempt: {Math.round((p.attempt.score ?? 0) * 100)}% ({p.attempt.correct}/
-                  {p.attempt.total})
+                  <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Latest attempt</div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {Object.entries(p.attempt.module_scores).map(([key, val]) => {
+                      const [subject, idx] = key.split("-");
+                      const label = subject ? `${subject.toUpperCase()} M${idx}` : key;
+                      return (
+                        <span
+                          key={key}
+                          className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700"
+                        >
+                          {label}: {val.correct}/{val.total}
+                        </span>
+                      );
+                    })}
+                  </div>
                 </div>
               ) : null}
 
@@ -407,50 +442,262 @@ export default function Page() {
                     </button>
                   </div>
 
+                  <div className="rounded-xl border bg-slate-50 p-3">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Settings</div>
+                    <div className="mt-2 grid gap-2 text-xs text-slate-600">
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={p.shuffle_questions ?? true}
+                          onChange={() =>
+                            togglePractice(p.id, { shuffle_questions: !(p.shuffle_questions ?? true) })
+                          }
+                        />
+                        Shuffle questions
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={p.shuffle_choices ?? false}
+                          onChange={() =>
+                            togglePractice(p.id, { shuffle_choices: !(p.shuffle_choices ?? false) })
+                          }
+                        />
+                        Shuffle answer choices
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={p.allow_retakes ?? true}
+                          onChange={() => togglePractice(p.id, { allow_retakes: !(p.allow_retakes ?? true) })}
+                        />
+                        Allow retakes
+                      </label>
+                    </div>
+                  </div>
+
                   <div className="space-y-3">
                     {p.modules.map((m) => (
-                      <ModuleEditor
-                        key={m.id}
-                        practiceId={p.id}
-                        module={m}
-                        onSave={saveModuleQuestions}
-                        token={accessToken}
-                      />
+                      <ModuleEditor key={m.id} practiceId={p.id} module={m} token={accessToken} />
                     ))}
                   </div>
 
-                  <div className="rounded-xl border bg-slate-50 p-3">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      Grant access
-                    </div>
-                    <div className="mt-2 grid gap-2 md:grid-cols-[1.2fr_1fr_auto]">
-                      <input
-                        className="rounded-lg border px-3 py-2 text-sm"
-                        value={accessUser}
-                        onChange={(e) => setAccessUser(e.target.value)}
-                        placeholder="Student email or username"
-                      />
-                      <input
-                        type="date"
-                        className="rounded-lg border px-3 py-2 text-sm"
-                        value={accessExpiry}
-                        onChange={(e) => setAccessExpiry(e.target.value)}
-                      />
-                      <button
-                        className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
-                        onClick={() => grantAccess(p.id)}
-                        disabled={grantBusy}
-                        type="button"
-                      >
-                        {grantBusy ? "Granting..." : "Grant"}
-                      </button>
-                    </div>
-                  </div>
+                  <PracticeAccessManager practice={p} token={accessToken} refresh={refresh} />
                 </div>
               ) : null}
             </div>
           ))}
-        </section>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PracticeAccessManager({
+  practice,
+  token,
+  refresh,
+}: {
+  practice: Practice;
+  token: string | null;
+  refresh: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<Student[]>([]);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [selectedDetails, setSelectedDetails] = useState<Student[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setSelectedIds(practice.allowed_student_ids ?? []);
+  }, [practice.allowed_student_ids]);
+
+  useEffect(() => {
+    if (!token) return;
+    if (!selectedIds.length) {
+      setSelectedDetails([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/module-practice/students/lookup/`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ student_ids: selectedIds }),
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json?.error || "Failed to load students");
+        if (!cancelled) setSelectedDetails(json.students ?? []);
+      } catch {
+        if (!cancelled) setSelectedDetails([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedIds, token]);
+
+  async function searchStudents(showAll = false) {
+    if (!token) return;
+    setLoading(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/module-practice/students/search/`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          q: showAll ? "" : query.trim(),
+          limit: 100,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Failed to load students");
+      setResults(json.students ?? []);
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to load students");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
+
+  async function saveAccess() {
+    if (!token) return;
+    setLoading(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/module-practice/access/set/`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ practice_id: practice.id, student_ids: selectedIds }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Failed to save access");
+      setMessage("Access saved.");
+      refresh();
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to save access");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-4">
+      <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Access control</div>
+      <div className="mt-2 text-xs text-slate-500">
+        Choose which students can take this practice test. If none are selected, all students can access it.
+      </div>
+
+      {error ? <div className="mt-2 text-xs text-red-600">{error}</div> : null}
+      {message ? <div className="mt-2 text-xs text-emerald-600">{message}</div> : null}
+
+      <div className="mt-3 flex flex-wrap gap-2 items-center">
+        <input
+          className="min-w-[220px] flex-1 rounded-lg border px-3 py-2 text-xs"
+          placeholder="Search by name, username, or student ID"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        <button
+          className="rounded-lg border px-3 py-2 text-xs font-semibold"
+          type="button"
+          onClick={() => searchStudents(false)}
+          disabled={loading}
+        >
+          Search
+        </button>
+        <button
+          className="rounded-lg border px-3 py-2 text-xs font-semibold"
+          type="button"
+          onClick={() => searchStudents(true)}
+          disabled={loading}
+        >
+          Show all
+        </button>
+        <button
+          className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white"
+          type="button"
+          onClick={saveAccess}
+          disabled={loading}
+        >
+          Save access
+        </button>
+      </div>
+
+      <div className="mt-3 grid gap-3 lg:grid-cols-2">
+        <div className="rounded-lg border bg-slate-50 p-3">
+          <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Search results</div>
+          <div className="mt-2 grid gap-2 max-h-[220px] overflow-y-auto">
+            {results.length === 0 ? (
+              <div className="text-xs text-slate-500">No students loaded.</div>
+            ) : (
+              results.map((s) => {
+                const picked = selectedIds.includes(s.user_id);
+                const name = s.nickname || `${s.first_name ?? ""} ${s.last_name ?? ""}`.trim() || s.username;
+                return (
+                  <button
+                    key={s.user_id}
+                    className={`rounded-lg border px-3 py-2 text-left text-xs ${
+                      picked ? "border-blue-500 bg-blue-50" : "border-slate-200"
+                    }`}
+                    onClick={() => toggleSelect(s.user_id)}
+                    type="button"
+                  >
+                    <div className="font-semibold text-slate-700">{name}</div>
+                    <div className="text-[10px] text-slate-400">
+                      {s.username} {s.student_id ? `· ${s.student_id}` : ""}
+                    </div>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-lg border bg-slate-50 p-3">
+          <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Selected</div>
+          <div className="mt-2 grid gap-2 max-h-[220px] overflow-y-auto">
+            {selectedIds.length === 0 ? (
+              <div className="text-xs text-slate-500">No students selected.</div>
+            ) : (
+              selectedIds.map((id) => {
+                const s = selectedDetails.find((r) => r.user_id === id) || results.find((r) => r.user_id === id);
+                return (
+                  <div key={id} className="rounded-lg border border-slate-200 px-3 py-2 text-xs">
+                    <div className="font-semibold text-slate-700">
+                      {s?.nickname || `${s?.first_name ?? ""} ${s?.last_name ?? ""}`.trim() || s?.username || id}
+                    </div>
+                    <button
+                      className="mt-1 text-[10px] text-red-600"
+                      type="button"
+                      onClick={() => toggleSelect(id)}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -459,104 +706,130 @@ export default function Page() {
 function ModuleEditor({
   practiceId,
   module,
-  onSave,
   token,
 }: {
   practiceId: string;
   module: PracticeModule;
-  onSave: (practiceId: string, module: PracticeModule, ids: string[]) => Promise<void>;
   token: string | null;
 }) {
-  const idsKey = (module.question_ids || []).join("|");
-  const [selectedIds, setSelectedIds] = useState<string[]>(module.question_ids || []);
-  const [selectedMap, setSelectedMap] = useState<Record<string, Question>>({});
-  const [newId, setNewId] = useState("");
-  const [topic, setTopic] = useState("");
-  const [subtopic, setSubtopic] = useState("");
-  const [search, setSearch] = useState("");
-  const [results, setResults] = useState<Question[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [loadingResults, setLoadingResults] = useState(false);
+  const [moduleQuestions, setModuleQuestions] = useState<ModuleQuestion[]>([]);
+  const [loadingQuestions, setLoadingQuestions] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [activePreviewId, setActivePreviewId] = useState<string | null>(null);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importMessage, setImportMessage] = useState<string | null>(null);
 
-  const groups = module.subject === "math" ? mathGroups : verbalGroups;
-  const requiredCount = module.subject === "math" ? 22 : 27;
-  const remaining = requiredCount - selectedIds.length;
-  const isFull = remaining <= 0;
-  const canSave = selectedIds.length === requiredCount;
-  const createQuestionUrl = topic
-    ? `/practice/questions/new/${module.subject}?topic=${encodeURIComponent(topic)}`
-    : `/practice/questions/new/${module.subject}`;
-  const subtopics = useMemo(() => {
-    const group = groups.find((g) => g.title === topic);
-    return group?.subtopics ?? [];
-  }, [groups, topic]);
+  const requiredCount = getRequiredCount(module);
+  const remaining = Math.max(requiredCount - moduleQuestions.length, 0);
+  const canStart = remaining === 0;
+  const createQuestionUrl = `/practice/modules/${practiceId}/questions/new/${module.subject}?module=${module.module_index}`;
+  const subjectLabel = formatModuleLabel(module);
 
-  useEffect(() => {
-    setSelectedIds(module.question_ids || []);
-  }, [module.id, idsKey]);
+  async function fetchQuestions(activeToken: string) {
+    setLoadingQuestions(true);
+    setErr(null);
+    try {
+      const params = new URLSearchParams();
+      params.set("practice_id", practiceId);
+      params.set("subject", module.subject);
+      params.set("module_index", String(module.module_index));
+      const res = await fetch(`${API_BASE}/api/module-practice/questions/list/?${params}`, {
+        headers: { Authorization: `Bearer ${activeToken}` },
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Failed to load questions");
+      setModuleQuestions(json.questions ?? []);
+    } catch (e: any) {
+      setErr(e?.message ?? "Failed to load questions");
+    } finally {
+      setLoadingQuestions(false);
+    }
+  }
 
   useEffect(() => {
     if (!token) return;
-    const ids = module.question_ids || [];
-    if (!ids.length) {
-      setSelectedMap({});
-      return;
-    }
     let cancelled = false;
     (async () => {
       try {
-        const fetched = await Promise.all(
-          ids.map(async (id) => {
-            const res = await fetch(`${API_BASE}/api/questions/${id}/`, {
-              headers: { Authorization: `Bearer ${token}` },
-            });
-            if (!res.ok) return null;
-            const json = await res.json();
-            return json?.question ?? null;
-          })
-        );
-        if (cancelled) return;
-        const map: Record<string, Question> = {};
-        for (const q of fetched) {
-          if (q?.id) map[q.id] = q;
-        }
-        setSelectedMap(map);
-      } catch {
-        if (!cancelled) setSelectedMap({});
+        if (!cancelled) await fetchQuestions(token);
+      } catch (e: any) {
+        if (!cancelled) setErr(e?.message ?? "Failed to load questions");
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [module.id, token, idsKey]);
-
-  const filteredResults = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    if (!term) return results;
-    return results.filter((q) => {
-      const stem = (q.stem || "").toLowerCase();
-      return q.id.toLowerCase().includes(term) || stem.includes(term);
-    });
-  }, [results, search]);
+  }, [practiceId, module.subject, module.module_index, token]);
 
   const previewQuestion = useMemo(() => {
     if (!activePreviewId) return null;
-    if (selectedMap[activePreviewId]) return selectedMap[activePreviewId];
-    return results.find((q) => q.id === activePreviewId) ?? null;
-  }, [activePreviewId, selectedMap, results]);
+    return moduleQuestions.find((q) => q.id === activePreviewId) ?? null;
+  }, [activePreviewId, moduleQuestions]);
 
   function togglePreview(id: string) {
     setActivePreviewId((prev) => (prev === id ? null : id));
   }
 
-  function QuestionPreview({ question }: { question: Question }) {
+  async function importCsv() {
+    if (!token || !importFile) return;
+    setImporting(true);
+    setImportMessage(null);
+    setErr(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", importFile);
+      fd.append("practice_id", practiceId);
+      fd.append("subject", module.subject);
+      fd.append("module_index", String(module.module_index));
+
+      const res = await fetch(`${API_BASE}/api/module-practice/questions/import/`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: fd,
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Import failed");
+      const created = json.created ?? 0;
+      const errorCount = (json.errors || []).length;
+      setImportMessage(`Imported ${created} question(s). ${errorCount ? `${errorCount} error(s).` : ""}`);
+      setImportFile(null);
+      await fetchQuestions(token);
+    } catch (e: any) {
+      setErr(e?.message ?? "Import failed");
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  async function deleteQuestion(questionId: string) {
+    if (!token) return;
+    const ok = window.confirm("Delete this question from the mock?");
+    if (!ok) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/module-practice/questions/delete/`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ question_id: questionId }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Failed to delete");
+      setModuleQuestions((prev) => prev.filter((q) => q.id !== questionId));
+      if (activePreviewId === questionId) setActivePreviewId(null);
+    } catch (e: any) {
+      setErr(e?.message ?? "Failed to delete");
+    }
+  }
+
+  function QuestionPreview({ question }: { question: ModuleQuestion }) {
     const isMath = module.subject === "math";
     const imageUrl = question.image_url;
     const resolvedImageUrl =
       imageUrl && imageUrl.startsWith("/") ? `${API_BASE}${imageUrl}` : imageUrl;
-    const stemHtml = (isMath ? wrapLatexIfNeeded(question.stem || "") : question.stem || "").replace(/\n/g, "<br/>");
+    const stemHtml = (isMath ? wrapLatexIfNeeded(question.question_text || "") : question.question_text || "").replace(/\n/g, "<br/>");
     const passageHtml = (question.passage || "").replace(/\n/g, "<br/>");
 
     if (isMath) {
@@ -599,21 +872,17 @@ function ModuleEditor({
                 <div>
                   <div className="text-xs font-semibold text-slate-600">Topic</div>
                   <div className="mt-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
-                    {question.topic || "—"}
+                    {question.topic_tag || "-"}
                   </div>
                 </div>
-                <div>
-                  <div className="text-xs font-semibold text-slate-600">Subtopic</div>
-                  <div className="mt-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
-                    {question.subtopic || "—"}
+                {question.difficulty ? (
+                  <div>
+                    <div className="text-xs font-semibold text-slate-600">Difficulty</div>
+                    <div className="mt-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs capitalize">
+                      {question.difficulty}
+                    </div>
                   </div>
-                </div>
-                <div>
-                  <div className="text-xs font-semibold text-slate-600">Difficulty</div>
-                  <div className="mt-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
-                    {question.difficulty || "—"}
-                  </div>
-                </div>
+                ) : null}
               </div>
             </section>
             <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -692,25 +961,21 @@ function ModuleEditor({
             <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Question setup</div>
             <div className="mt-3 grid gap-2 text-sm text-slate-700">
               <div>
-                <div className="text-xs font-semibold text-slate-600">Topic</div>
-                <div className="mt-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
-                  {question.topic || "—"}
-                </div>
-              </div>
-              <div>
-                <div className="text-xs font-semibold text-slate-600">Subtopic</div>
-                <div className="mt-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
-                  {question.subtopic || "—"}
-                </div>
-              </div>
-              <div>
-                <div className="text-xs font-semibold text-slate-600">Difficulty</div>
-                <div className="mt-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
-                  {question.difficulty || "—"}
-                </div>
+              <div className="text-xs font-semibold text-slate-600">Topic</div>
+              <div className="mt-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
+                {question.topic_tag || "-"}
               </div>
             </div>
-          </section>
+            {question.difficulty ? (
+              <div>
+                <div className="text-xs font-semibold text-slate-600">Difficulty</div>
+                <div className="mt-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs capitalize">
+                  {question.difficulty}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </section>
           <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="text-sm font-semibold text-slate-900">Image (optional)</div>
             <div className="text-xs text-slate-500 mt-1">Used for diagrams or graphs.</div>
@@ -732,175 +997,97 @@ function ModuleEditor({
     );
   }
 
-  function addQuestionById(id: string) {
-    const clean = id.trim();
-    if (!clean) return;
-    if (isFull) {
-      setErr(`This module must have exactly ${requiredCount} questions.`);
-      return;
-    }
-    setSelectedIds((prev) => (prev.includes(clean) ? prev : [...prev, clean]));
-  }
-
-  async function handleAddId() {
-    const clean = newId.trim();
-    if (!clean) return;
-    if (isFull) {
-      setErr(`This module must have exactly ${requiredCount} questions.`);
-      return;
-    }
-    if (selectedIds.includes(clean)) {
-      setNewId("");
-      return;
-    }
-    addQuestionById(clean);
-    setNewId("");
-    if (!token) return;
-    const res = await fetch(`${API_BASE}/api/questions/${clean}/`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) return;
-    const json = await res.json();
-    if (json?.question?.id) {
-      setSelectedMap((prev) => ({ ...prev, [json.question.id]: json.question }));
-    }
-  }
-
-  function handleAddQuestion(q: Question) {
-    if (isFull) {
-      setErr(`This module must have exactly ${requiredCount} questions.`);
-      return;
-    }
-    if (selectedIds.includes(q.id)) return;
-    setSelectedIds((prev) => [...prev, q.id]);
-    setSelectedMap((prev) => ({ ...prev, [q.id]: q }));
-  }
-
-  function handleRemove(id: string) {
-    setSelectedIds((prev) => prev.filter((x) => x !== id));
-  }
-
-  async function handleSearch() {
-    if (!token) return;
-    setLoadingResults(true);
-    setErr(null);
-    try {
-      const params = new URLSearchParams();
-      params.set("subject", module.subject);
-      if (topic) params.set("topic", topic);
-      if (subtopic) params.set("subtopic", subtopic);
-      params.set("limit", "50");
-      const res = await fetch(`${API_BASE}/api/questions/?${params}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json?.error || "Failed to load questions");
-      setResults(json.questions ?? []);
-    } catch (e: any) {
-      setErr(e?.message ?? "Failed to load questions");
-    } finally {
-      setLoadingResults(false);
-    }
-  }
-
-  async function handleSave() {
-    if (!canSave) {
-      setErr(`This module must have exactly ${requiredCount} questions before saving.`);
-      return;
-    }
-    setBusy(true);
-    try {
-      await onSave(practiceId, module, selectedIds);
-    } finally {
-      setBusy(false);
-    }
-  }
+  const countLabel = canStart ? "Ready" : `${remaining} remaining`;
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
       <div className="flex items-center justify-between gap-2">
         <div>
           <div className="text-xs uppercase tracking-[0.18em] text-slate-400">Module</div>
-          <div className="text-sm font-semibold text-slate-900">
-            {module.subject.toUpperCase()} module {module.module_index}
-          </div>
+          <div className="text-sm font-semibold text-slate-900">{subjectLabel}</div>
         </div>
-      <div className="text-xs text-slate-500 text-right">
-        {selectedIds.length}/{requiredCount} questions · {module.time_limit_minutes} min
-        <div className={canSave ? "text-emerald-600" : "text-amber-600"}>
-          {canSave ? "Ready to save" : `${remaining} remaining`}
+        <div className="text-xs text-slate-500 text-right">
+          {moduleQuestions.length}/{requiredCount} questions - {module.time_limit_minutes} min
+          <div className={canStart ? "text-emerald-600" : "text-amber-600"}>{countLabel}</div>
         </div>
-      </div>
       </div>
 
-      <div className="mt-3 grid gap-2">
-        <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Add by ID</div>
-        <div className="flex flex-wrap items-center gap-2">
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button
+          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700"
+          type="button"
+          onClick={() => window.open(createQuestionUrl, "_blank")}
+        >
+          Create new {subjectLabel.toLowerCase()} question
+        </button>
+        <label className="rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2 text-[11px] font-semibold text-slate-600 cursor-pointer">
+          Import CSV
           <input
-            className="flex-1 min-w-[220px] rounded-lg border border-slate-200 px-3 py-2 text-xs"
-            placeholder="Paste question ID"
-            value={newId}
-            onChange={(e) => setNewId(e.target.value)}
+            type="file"
+            accept=".csv"
+            className="hidden"
+            onChange={(e) => setImportFile(e.target.files?.[0] ?? null)}
           />
-          <button
-            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700"
-            type="button"
-            onClick={handleAddId}
-            disabled={isFull}
-          >
-            Add
-          </button>
-          <button
-            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700"
-            type="button"
-            onClick={() => setSelectedIds([])}
-          >
-            Clear list
-          </button>
+        </label>
+        <button
+          className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-60"
+          type="button"
+          onClick={importCsv}
+          disabled={!importFile || importing}
+        >
+          {importing ? "Importing..." : "Upload CSV"}
+        </button>
+        <div className="text-[11px] text-slate-500">
+          CSV columns: subject, module, chapter, stem, passage, A, B, C, D, answer.
         </div>
       </div>
+      {importFile ? (
+        <div className="mt-2 text-[11px] text-slate-500">Selected file: {importFile.name}</div>
+      ) : null}
+      {importMessage ? <div className="mt-2 text-[11px] text-emerald-600">{importMessage}</div> : null}
+
+      {err ? <div className="mt-3 text-xs text-red-600">{err}</div> : null}
 
       <div className="mt-4">
-        <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Selected questions</div>
-        {err ? <div className="mt-2 text-xs text-red-600">{err}</div> : null}
+        <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Module questions</div>
         <div className="mt-2 grid gap-2">
-          {selectedIds.length ? (
-            selectedIds.map((id, idx) => {
-              const q = selectedMap[id];
-              return (
-                <div key={id} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
-                      {q ? `${q.topic}${q.subtopic ? ` · ${q.subtopic}` : ""}` : "Question"}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {q ? (
-                        <button
-                          className="text-[11px] font-semibold text-slate-600"
-                          onClick={() => togglePreview(id)}
-                        >
-                          {activePreviewId === id ? "Hide" : "Preview"}
-                        </button>
-                      ) : null}
-                      <button className="text-[11px] font-semibold text-red-600" onClick={() => handleRemove(id)}>
-                        Remove
-                      </button>
-                    </div>
+          {loadingQuestions ? (
+            <div className="rounded-lg border border-dashed border-slate-200 px-3 py-3 text-xs text-slate-500">
+              Loading questions...
+            </div>
+          ) : moduleQuestions.length ? (
+            moduleQuestions.map((q, idx) => (
+              <div key={q.id} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">{q.topic_tag}</div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      className="text-[11px] font-semibold text-slate-600"
+                      onClick={() => togglePreview(q.id)}
+                    >
+                      {activePreviewId === q.id ? "Hide" : "Preview"}
+                    </button>
+                    <button
+                      className="text-[11px] font-semibold text-slate-600"
+                      onClick={() => window.open(`/practice/modules/${practiceId}/questions/${q.id}/edit`, "_blank")}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      className="text-[11px] font-semibold text-red-600"
+                      onClick={() => deleteQuestion(q.id)}
+                    >
+                      Delete
+                    </button>
                   </div>
-                  <div className="mt-1 text-xs text-slate-700 line-clamp-2">
-                    {q ? (
-                      <span dangerouslySetInnerHTML={{ __html: q.stem }} />
-                    ) : (
-                      <span>{id}</span>
-                    )}
-                  </div>
-                  <div className="mt-1 text-[10px] text-slate-400">#{idx + 1}</div>
                 </div>
-              );
-            })
+                <div className="mt-1 text-xs text-slate-700 line-clamp-2">{q.question_text}</div>
+                <div className="mt-1 text-[10px] text-slate-400">#{idx + 1}</div>
+              </div>
+            ))
           ) : (
             <div className="rounded-lg border border-dashed border-slate-200 px-3 py-3 text-xs text-slate-500">
-              No questions selected yet.
+              No questions added yet.
             </div>
           )}
         </div>
@@ -912,124 +1099,10 @@ function ModuleEditor({
           {previewQuestion ? (
             <QuestionPreview question={previewQuestion} />
           ) : (
-            <div className="text-xs text-slate-500">Select “Preview” on a question to view it here.</div>
+            <div className="text-xs text-slate-500">Select "Preview" on a question to view it here.</div>
           )}
         </div>
       </div>
-
-      <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
-        <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Question bank</div>
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <button
-            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700"
-            type="button"
-            onClick={() => window.open(createQuestionUrl, "_blank")}
-          >
-            Create new {module.subject} question
-          </button>
-          <div className="text-[11px] text-slate-500">
-            After saving, copy the new question ID and add it here.
-          </div>
-        </div>
-        <div className="mt-2 grid gap-2 sm:grid-cols-3">
-          <select
-            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs"
-            value={topic}
-            onChange={(e) => {
-              setTopic(e.target.value);
-              setSubtopic("");
-            }}
-          >
-            <option value="">All topics</option>
-            {groups.map((g) => (
-              <option key={g.title} value={g.title}>
-                {g.title}
-              </option>
-            ))}
-          </select>
-          <select
-            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs"
-            value={subtopic}
-            onChange={(e) => setSubtopic(e.target.value)}
-            disabled={!topic}
-          >
-            <option value="">All subtopics</option>
-            {subtopics.map((s) => (
-              <option key={s.title} value={s.title}>
-                {s.title}
-              </option>
-            ))}
-          </select>
-          <input
-            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs"
-            placeholder="Search stem or ID"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </div>
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <button
-            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700"
-            type="button"
-            onClick={handleSearch}
-            disabled={loadingResults}
-          >
-            {loadingResults ? "Loading..." : "Load questions"}
-          </button>
-          {err ? <div className="text-xs text-red-600">{err}</div> : null}
-        </div>
-        <div className="mt-3 grid gap-2">
-          {filteredResults.map((q) => {
-            const added = selectedIds.includes(q.id);
-            return (
-              <div
-                key={q.id}
-                className="rounded-xl border border-slate-200 bg-white px-3 py-3 shadow-sm flex flex-col gap-2"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <div className="text-[10px] text-neutral-500 uppercase tracking-[0.12em]">
-                    {q.subject} · {q.topic}
-                    {q.subtopic ? ` · ${q.subtopic}` : ""}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      className="text-[11px] font-semibold text-slate-600"
-                      onClick={() => togglePreview(q.id)}
-                    >
-                      {activePreviewId === q.id ? "Hide" : "Preview"}
-                    </button>
-                    <button
-                      className={`rounded-lg border px-3 py-1.5 text-[11px] font-semibold ${
-                        added ? "border-slate-200 text-slate-400" : "border-slate-300 text-slate-700"
-                      }`}
-                      onClick={() => handleAddQuestion(q)}
-                      disabled={added}
-                    >
-                      {added ? "Added" : "Add"}
-                    </button>
-                  </div>
-                </div>
-                <div className="text-xs text-neutral-900 line-clamp-2" dangerouslySetInnerHTML={{ __html: q.stem }} />
-                <div className="text-[10px] text-slate-400">{q.id}</div>
-              </div>
-            );
-          })}
-          {!filteredResults.length && !loadingResults ? (
-            <div className="rounded-lg border border-dashed border-slate-200 px-3 py-3 text-xs text-slate-500">
-              No questions loaded.
-            </div>
-          ) : null}
-        </div>
-      </div>
-
-      <button
-        className="mt-3 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700"
-        onClick={handleSave}
-        type="button"
-        disabled={busy || !canSave}
-      >
-        {busy ? "Saving..." : "Save module"}
-      </button>
     </div>
   );
 }

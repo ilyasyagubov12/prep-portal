@@ -8,7 +8,9 @@ import {
   Home,
   BookOpen,
   ClipboardList,
+  ClipboardCheck,
   Layers,
+  Medal,
   SpellCheck,
   Calculator,
   Settings,
@@ -25,7 +27,8 @@ const items: NavItem[] = [
 
   { section: "Practice" },
   { label: "Question Bank", href: "/practice/questions", icon: ClipboardList },
-  { label: "Module Practice", href: "/practice/modules", icon: Layers },
+  { label: "Practice Test", href: "/practice/modules", icon: ClipboardCheck },
+  { label: "Mock Exams", href: "/practice/mock-exams", icon: Medal },
 
   { label: "Vocab", href: "/vocab", icon: SpellCheck },
   { label: "Score Calculator", href: "/score-calculator", icon: Calculator },
