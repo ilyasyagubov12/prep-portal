@@ -304,10 +304,8 @@ export default function Page() {
 
   useEffect(() => {
     const handleDocClick = (event: MouseEvent) => {
-      const rawTarget = event.target as HTMLElement | null;
-      if (!rawTarget) return;
-      const target = rawTarget instanceof Element ? rawTarget : rawTarget.parentElement;
-      if (!target) return;
+      const target = event.target;
+      if (!(target instanceof Element)) return;
       if (target.closest("mark[data-hl]") || target.closest("[data-hl-remove]")) return;
       clearActiveHighlights(passageBoxRef.current);
       clearActiveHighlights(stemBoxRef.current);
