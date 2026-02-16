@@ -13,6 +13,7 @@ class MockExam(models.Model):
     shuffle_questions = models.BooleanField(default=True)
     shuffle_choices = models.BooleanField(default=False)
     allow_retakes = models.BooleanField(default=True)
+    retake_limit = models.IntegerField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
     results_published = models.BooleanField(default=False)
     question_ids = models.JSONField(default=list)
@@ -33,6 +34,28 @@ class MockExam(models.Model):
 
     def __str__(self):
         return self.title
+
+
+class MockExamAccess(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    mock_exam = models.ForeignKey(MockExam, on_delete=models.CASCADE, related_name="access_list")
+    student = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="mock_exam_access")
+    attempt_limit = models.IntegerField(null=True, blank=True)
+    granted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="mock_exam_grants",
+    )
+    granted_at = models.DateTimeField(auto_now_add=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        unique_together = ("mock_exam", "student")
+        indexes = [
+            models.Index(fields=["mock_exam", "student"]),
+        ]
 
 
 class MockExamAttempt(models.Model):

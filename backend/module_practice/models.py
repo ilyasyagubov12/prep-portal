@@ -18,6 +18,7 @@ class ModulePractice(models.Model):
     shuffle_questions = models.BooleanField(default=True)
     shuffle_choices = models.BooleanField(default=False)
     allow_retakes = models.BooleanField(default=True)
+    retake_limit = models.IntegerField(null=True, blank=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -91,6 +92,7 @@ class ModulePracticeAccess(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     practice = models.ForeignKey(ModulePractice, on_delete=models.CASCADE, related_name="access_list")
     student = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="module_practice_access")
+    attempt_limit = models.IntegerField(null=True, blank=True)
     granted_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,

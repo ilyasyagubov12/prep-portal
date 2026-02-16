@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useEffect, useState } from "react";
@@ -21,8 +20,10 @@ type MockExam = {
   shuffle_questions: boolean;
   shuffle_choices: boolean;
   allow_retakes: boolean;
+  retake_limit?: number | null;
   is_active: boolean;
   results_published: boolean;
+  locked?: boolean;
   question_count: number;
   question_ids?: string[] | null;
   allowed_student_ids?: string[] | null;
@@ -45,6 +46,8 @@ type Student = {
   nickname?: string | null;
   student_id?: string | null;
   avatar?: string | null;
+  attempts_count?: number | null;
+  access_limit?: number | null;
 };
 
 function isTeacherOrAdmin(p: Profile | null) {
@@ -66,9 +69,6 @@ export default function Page() {
   const [verbalCount, setVerbalCount] = useState(40);
   const [mathCount, setMathCount] = useState(30);
   const [totalMinutes, setTotalMinutes] = useState(120);
-  const [shuffleQuestions, setShuffleQuestions] = useState(true);
-  const [shuffleChoices, setShuffleChoices] = useState(false);
-  const [allowRetakes, setAllowRetakes] = useState(true);
   const [creating, setCreating] = useState(false);
 
   const [manageId, setManageId] = useState<string | null>(null);
@@ -134,9 +134,9 @@ export default function Page() {
           verbal_question_count: verbalCount,
           math_question_count: mathCount,
           total_time_minutes: totalMinutes,
-          shuffle_questions: shuffleQuestions,
-          shuffle_choices: shuffleChoices,
-          allow_retakes: allowRetakes,
+          shuffle_questions: true,
+          shuffle_choices: false,
+          allow_retakes: true,
         }),
       });
       const json = await res.json();
@@ -203,7 +203,7 @@ export default function Page() {
               </button>
             </div>
 
-            <div className="mt-4 grid gap-4 lg:grid-cols-3">
+            <div className="mt-4 grid gap-4 lg:grid-cols-2">
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                 <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Question counts</div>
                 <div className="mt-3 flex flex-wrap gap-3">
@@ -244,35 +244,6 @@ export default function Page() {
                 <div className="mt-2 text-[11px] text-slate-500">Single timer for entire mock.</div>
               </div>
 
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Settings</div>
-                <div className="mt-3 grid gap-2 text-xs text-slate-600">
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={shuffleQuestions}
-                      onChange={(e) => setShuffleQuestions(e.target.checked)}
-                    />
-                    Shuffle questions
-                  </label>
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={shuffleChoices}
-                      onChange={(e) => setShuffleChoices(e.target.checked)}
-                    />
-                    Shuffle answer choices
-                  </label>
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={allowRetakes}
-                      onChange={(e) => setAllowRetakes(e.target.checked)}
-                    />
-                    Allow retakes
-                  </label>
-                </div>
-              </div>
             </div>
           </section>
         ) : null}
@@ -322,6 +293,12 @@ function MockExamCard({
   refresh: () => void;
 }) {
   const active = manageId === exam.id;
+  const isLocked = !!exam.locked && !canManage;
+  const [retakeDraft, setRetakeDraft] = useState<string>("");
+
+  useEffect(() => {
+    setRetakeDraft(exam.retake_limit != null ? String(exam.retake_limit) : "");
+  }, [exam.retake_limit, exam.id]);
 
   async function updateExam(payload: Record<string, any>) {
     if (!token) return;
@@ -368,7 +345,9 @@ function MockExamCard({
           <div className="mt-1 text-sm text-slate-600">{exam.description || "No description"}</div>
         </div>
         <div className="flex flex-col items-end gap-2">
-          {exam.is_active ? (
+          {isLocked ? (
+            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500">Locked</span>
+          ) : exam.is_active ? (
             <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">Active</span>
           ) : (
             <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500">Disabled</span>
@@ -406,11 +385,17 @@ function MockExamCard({
 
       <div className="mt-4 flex flex-wrap gap-2">
         <button
-          className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
-          onClick={() => startExam(exam.id)}
+          className={`rounded-xl px-4 py-2 text-sm font-semibold text-white ${
+            isLocked ? "cursor-not-allowed bg-slate-300" : "bg-slate-900 hover:bg-slate-800"
+          }`}
+          onClick={() => {
+            if (isLocked) return;
+            startExam(exam.id);
+          }}
           type="button"
+          disabled={isLocked}
         >
-          Start mock exam
+          {isLocked ? "Locked" : "Start mock exam"}
         </button>
         {canManage ? (
           <button
@@ -476,6 +461,29 @@ function MockExamCard({
                 />
                 Allow retakes
               </label>
+              <label className="flex flex-wrap items-center gap-2">
+                <span className="text-[11px] text-slate-500">Retake limit</span>
+                <input
+                  type="number"
+                  min={1}
+                  placeholder="Unlimited"
+                  className="w-28 rounded-md border px-2 py-1 text-xs"
+                  value={retakeDraft}
+                  onChange={(e) => setRetakeDraft(e.target.value)}
+                  onBlur={async () => {
+                    if (!retakeDraft) {
+                      await updateExam({ retake_limit: null });
+                      return;
+                    }
+                    const nextVal = Number(retakeDraft);
+                    if (!Number.isNaN(nextVal)) {
+                      await updateExam({ retake_limit: Math.max(1, nextVal) });
+                    }
+                  }}
+                  disabled={exam.allow_retakes === false}
+                />
+                <span className="text-[10px] text-slate-400">Total attempts allowed</span>
+              </label>
             </div>
           </div>
 
@@ -501,6 +509,7 @@ function MockExamAccessManager({
   const [results, setResults] = useState<Student[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [selectedDetails, setSelectedDetails] = useState<Student[]>([]);
+  const [limitOverrides, setLimitOverrides] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -524,7 +533,7 @@ function MockExamAccessManager({
             Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ student_ids: selectedIds }),
+          body: JSON.stringify({ student_ids: selectedIds, mock_exam_id: exam.id }),
         });
         const json = await res.json();
         if (!res.ok) throw new Error(json?.error || "Failed to load students");
@@ -537,6 +546,25 @@ function MockExamAccessManager({
       cancelled = true;
     };
   }, [selectedIds, token]);
+
+  useEffect(() => {
+    setLimitOverrides((prev) => {
+      const next: Record<string, string> = { ...prev };
+      Object.keys(next).forEach((id) => {
+        if (!selectedIds.includes(id)) delete next[id];
+      });
+      for (const id of selectedIds) {
+        if (next[id] !== undefined) continue;
+        const s = selectedDetails.find((r) => r.user_id === id) || results.find((r) => r.user_id === id);
+        if (s?.access_limit != null) {
+          next[id] = String(s.access_limit);
+        } else {
+          next[id] = "";
+        }
+      }
+      return next;
+    });
+  }, [selectedIds, selectedDetails, results]);
 
   async function searchStudents(showAll = false) {
     if (!token) return;
@@ -553,6 +581,7 @@ function MockExamAccessManager({
         body: JSON.stringify({
           q: showAll ? "" : query.trim(),
           limit: 100,
+          mock_exam_id: exam.id,
         }),
       });
       const json = await res.json();
@@ -575,13 +604,23 @@ function MockExamAccessManager({
     setError(null);
     setMessage(null);
     try {
+      const student_limits: Record<string, number | null> = {};
+      selectedIds.forEach((id) => {
+        const raw = limitOverrides[id];
+        if (!raw) {
+          student_limits[id] = null;
+          return;
+        }
+        const num = Number(raw);
+        student_limits[id] = Number.isNaN(num) ? null : Math.max(1, num);
+      });
       const res = await fetch(`${API_BASE}/api/mock-exams/access/set/`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ mock_exam_id: exam.id, student_ids: selectedIds }),
+        body: JSON.stringify({ mock_exam_id: exam.id, student_ids: selectedIds, student_limits }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || "Failed to save access");
@@ -647,6 +686,8 @@ function MockExamAccessManager({
               results.map((s) => {
                 const picked = selectedIds.includes(s.user_id);
                 const name = s.nickname || `${s.first_name ?? ""} ${s.last_name ?? ""}`.trim() || s.username;
+                const attempts = s.attempts_count ?? 0;
+                const accessLimit = s.access_limit;
                 return (
                   <button
                     key={s.user_id}
@@ -660,6 +701,8 @@ function MockExamAccessManager({
                     <div className="text-[10px] text-slate-400">
                       {s.username} {s.student_id ? `· ${s.student_id}` : ""}
                     </div>
+                    <div className="text-[10px] text-slate-500">Attempts: {attempts}</div>
+                    <div className="text-[10px] text-slate-500">Limit: {accessLimit != null ? accessLimit : "Default"}</div>
                   </button>
                 );
               })
@@ -675,10 +718,24 @@ function MockExamAccessManager({
             ) : (
               selectedIds.map((id) => {
                 const s = selectedDetails.find((r) => r.user_id === id) || results.find((r) => r.user_id === id);
+                const attempts = s?.attempts_count ?? 0;
                 return (
                   <div key={id} className="rounded-lg border border-slate-200 px-3 py-2 text-xs">
                     <div className="font-semibold text-slate-700">
                       {s?.nickname || `${s?.first_name ?? ""} ${s?.last_name ?? ""}`.trim() || s?.username || id}
+                    </div>
+                    <div className="text-[10px] text-slate-500">Attempts: {attempts}</div>
+                    <div className="mt-2 flex items-center gap-2 text-[10px] text-slate-500">
+                      <span>Limit</span>
+                      <input
+                        type="number"
+                        min={1}
+                        placeholder="Default"
+                        className="w-20 rounded border px-2 py-1 text-[10px]"
+                        value={limitOverrides[id] ?? ""}
+                        onChange={(e) => setLimitOverrides((prev) => ({ ...prev, [id]: e.target.value }))}
+                      />
+                      <span className="text-slate-400">blank = default</span>
                     </div>
                     <button
                       className="mt-1 text-[10px] text-red-600"

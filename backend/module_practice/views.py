@@ -169,6 +169,7 @@ class ModulePracticeListView(APIView):
                     "shuffle_questions": p.shuffle_questions,
                     "shuffle_choices": p.shuffle_choices,
                     "allow_retakes": p.allow_retakes,
+                    "retake_limit": p.retake_limit,
                     "created_at": p.created_at,
                     "locked": locked,
                     "access_expires_at": expires_at,
@@ -264,6 +265,12 @@ class ModulePracticeUpdateView(APIView):
             practice.shuffle_choices = bool(request.data.get("shuffle_choices"))
         if "allow_retakes" in request.data:
             practice.allow_retakes = bool(request.data.get("allow_retakes"))
+        if "retake_limit" in request.data:
+            limit = request.data.get("retake_limit")
+            if limit in (None, "", "null"):
+                practice.retake_limit = None
+            else:
+                practice.retake_limit = int(limit)
         practice.save()
 
         return Response({"ok": True})
@@ -779,6 +786,20 @@ class ModulePracticeStudentSearchView(APIView):
 
         q = (request.data.get("q") or "").strip().lower()
         limit = int(request.data.get("limit") or 50)
+        practice_id = request.data.get("practice_id")
+        attempt_counts: dict[str, int] = {}
+        access_limits: dict[str, int | None] = {}
+        if practice_id:
+            rows = (
+                ModulePracticeAttempt.objects.filter(practice_id=practice_id, status="submitted")
+                .values("student_id")
+                .annotate(count=models.Count("id"))
+            )
+            attempt_counts = {str(r["student_id"]): r["count"] for r in rows}
+            access_rows = ModulePracticeAccess.objects.filter(practice_id=practice_id, is_active=True).values(
+                "student_id", "attempt_limit"
+            )
+            access_limits = {str(r["student_id"]): r["attempt_limit"] for r in access_rows}
 
         qs = Profile.objects.select_related("user").filter(role="student")
         if q:
@@ -802,6 +823,8 @@ class ModulePracticeStudentSearchView(APIView):
                     "nickname": p.nickname,
                     "student_id": p.student_id,
                     "avatar": p.avatar,
+                    "attempts_count": attempt_counts.get(str(p.user.id), 0),
+                    "access_limit": access_limits.get(str(p.user.id)),
                 }
             )
         return Response({"ok": True, "students": data})
@@ -815,8 +838,25 @@ class ModulePracticeStudentLookupView(APIView):
             return Response({"error": "Forbidden"}, status=403)
 
         student_ids = request.data.get("student_ids") or []
+        practice_id = request.data.get("practice_id")
         if not isinstance(student_ids, list):
             return Response({"error": "student_ids must be list"}, status=400)
+
+        attempt_counts: dict[str, int] = {}
+        access_limits: dict[str, int | None] = {}
+        if practice_id:
+            rows = (
+                ModulePracticeAttempt.objects.filter(
+                    practice_id=practice_id, status="submitted", student_id__in=student_ids
+                )
+                .values("student_id")
+                .annotate(count=models.Count("id"))
+            )
+            attempt_counts = {str(r["student_id"]): r["count"] for r in rows}
+            access_rows = ModulePracticeAccess.objects.filter(
+                practice_id=practice_id, is_active=True, student_id__in=student_ids
+            ).values("student_id", "attempt_limit")
+            access_limits = {str(r["student_id"]): r["attempt_limit"] for r in access_rows}
 
         qs = Profile.objects.select_related("user").filter(user_id__in=student_ids)
         data = []
@@ -830,6 +870,8 @@ class ModulePracticeStudentLookupView(APIView):
                     "nickname": p.nickname,
                     "student_id": p.student_id,
                     "avatar": p.avatar,
+                    "attempts_count": attempt_counts.get(str(p.user.id), 0),
+                    "access_limit": access_limits.get(str(p.user.id)),
                 }
             )
         return Response({"ok": True, "students": data})
@@ -845,6 +887,7 @@ class ModulePracticeAccessSetView(APIView):
 
         pid = request.data.get("practice_id")
         student_ids = request.data.get("student_ids") or []
+        student_limits = request.data.get("student_limits") or {}
         if not pid:
             return Response({"error": "practice_id required"}, status=400)
 
@@ -855,19 +898,37 @@ class ModulePracticeAccessSetView(APIView):
 
         if not isinstance(student_ids, list):
             return Response({"error": "student_ids must be list"}, status=400)
+        if not isinstance(student_limits, dict):
+            return Response({"error": "student_limits must be dict"}, status=400)
 
         ModulePracticeAccess.objects.filter(practice=practice).delete()
         students = User.objects.filter(id__in=student_ids)
-        ModulePracticeAccess.objects.bulk_create(
-            [
+
+        access_rows = []
+        for student in students:
+            limit = student_limits.get(str(student.id))
+            if limit in (None, "", "null"):
+                parsed_limit = None
+            else:
+                try:
+                    parsed_limit = int(limit)
+                except Exception:
+                    return Response({"error": "student_limits must contain integers"}, status=400)
+                if parsed_limit < 1:
+                    return Response({"error": "student_limits must be >= 1"}, status=400)
+
+            access_rows.append(
                 ModulePracticeAccess(
                     practice=practice,
                     student=student,
                     granted_by=request.user,
                     is_active=True,
+                    attempt_limit=parsed_limit,
                 )
-                for student in students
-            ]
+            )
+
+        ModulePracticeAccess.objects.bulk_create(
+            access_rows
         )
         return Response({"ok": True, "allowed_student_count": students.count()})
 
@@ -896,12 +957,22 @@ class ModulePracticeStartView(APIView):
             if access.expires_at and access.expires_at < timezone.now():
                 return Response({"error": "Access expired"}, status=403)
 
-        if not practice.allow_retakes:
-            submitted = ModulePracticeAttempt.objects.filter(
-                practice=practice, student=user, status="submitted"
-            ).first()
-            if submitted:
-                return Response({"error": "Retakes disabled"}, status=403)
+        if not staff:
+            if not practice.allow_retakes:
+                submitted = ModulePracticeAttempt.objects.filter(
+                    practice=practice, student=user, status="submitted"
+                ).first()
+                if submitted:
+                    return Response({"error": "Retakes disabled"}, status=403)
+            else:
+                access_limit = access.attempt_limit if access else None
+                effective_limit = access_limit if access_limit is not None else practice.retake_limit
+                if effective_limit is not None:
+                    submitted_count = ModulePracticeAttempt.objects.filter(
+                        practice=practice, student=user, status="submitted"
+                    ).count()
+                    if submitted_count >= effective_limit:
+                        return Response({"error": "Retake limit reached"}, status=403)
 
         attempt = (
             ModulePracticeAttempt.objects.filter(

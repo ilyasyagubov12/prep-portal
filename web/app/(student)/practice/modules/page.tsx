@@ -69,6 +69,7 @@ type Practice = {
   shuffle_questions?: boolean;
   shuffle_choices?: boolean;
   allow_retakes?: boolean;
+  retake_limit?: number | null;
   locked: boolean;
   access_expires_at: string | null;
   allowed_student_ids?: string[] | null;
@@ -85,6 +86,8 @@ type Student = {
   nickname?: string | null;
   student_id?: string | null;
   avatar?: string | null;
+  attempts_count?: number | null;
+  access_limit?: number | null;
 };
 
 function isTeacherOrAdmin(p: Profile | null) {
@@ -328,6 +331,12 @@ function ExamSection({
   accessToken: string | null;
   refresh: () => void;
 }) {
+  const [retakeDraft, setRetakeDraft] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    setRetakeDraft({});
+  }, [practices]);
+
   return (
     <div className="space-y-4">
       <div className="flex items-end justify-between">
@@ -344,7 +353,12 @@ function ExamSection({
       ) : (
         <div className="grid gap-5 lg:grid-cols-2">
           {practices.map((p) => (
-            <div key={p.id} className="rounded-2xl border bg-white p-5 shadow-sm">
+            <div
+              key={p.id}
+              className={`rounded-2xl border bg-white p-5 shadow-sm transition-all ${
+                manageId === p.id ? "lg:col-span-2" : ""
+              }`}
+            >
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <div className="text-xs uppercase tracking-[0.3em] text-slate-400">Mock exam</div>
@@ -473,6 +487,43 @@ function ExamSection({
                         />
                         Allow retakes
                       </label>
+                      <label className="flex flex-wrap items-center gap-2">
+                        <span className="text-[11px] text-slate-500">Retake limit</span>
+                        <input
+                          type="number"
+                          min={1}
+                          placeholder="Unlimited"
+                          className="w-28 rounded-md border px-2 py-1 text-xs"
+                          value={retakeDraft[p.id] ?? (p.retake_limit ?? "").toString()}
+                          onChange={(e) =>
+                            setRetakeDraft((prev) => ({ ...prev, [p.id]: e.target.value }))
+                          }
+                          onBlur={async () => {
+                            const raw = retakeDraft[p.id];
+                            if (raw === undefined) return;
+                            if (!raw) {
+                              await togglePractice(p.id, { retake_limit: null });
+                              setRetakeDraft((prev) => {
+                                const next = { ...prev };
+                                delete next[p.id];
+                                return next;
+                              });
+                              return;
+                            }
+                            const nextVal = Number(raw);
+                            if (!Number.isNaN(nextVal)) {
+                              await togglePractice(p.id, { retake_limit: Math.max(1, nextVal) });
+                              setRetakeDraft((prev) => {
+                                const next = { ...prev };
+                                delete next[p.id];
+                                return next;
+                              });
+                            }
+                          }}
+                          disabled={p.allow_retakes === false}
+                        />
+                        <span className="text-[10px] text-slate-400">Total attempts allowed</span>
+                      </label>
                     </div>
                   </div>
 
@@ -506,6 +557,7 @@ function PracticeAccessManager({
   const [results, setResults] = useState<Student[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [selectedDetails, setSelectedDetails] = useState<Student[]>([]);
+  const [limitOverrides, setLimitOverrides] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -529,7 +581,7 @@ function PracticeAccessManager({
             Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ student_ids: selectedIds }),
+          body: JSON.stringify({ student_ids: selectedIds, practice_id: practice.id }),
         });
         const json = await res.json();
         if (!res.ok) throw new Error(json?.error || "Failed to load students");
@@ -542,6 +594,27 @@ function PracticeAccessManager({
       cancelled = true;
     };
   }, [selectedIds, token]);
+
+  useEffect(() => {
+    setLimitOverrides((prev) => {
+      const next: Record<string, string> = { ...prev };
+      // remove unselected
+      Object.keys(next).forEach((id) => {
+        if (!selectedIds.includes(id)) delete next[id];
+      });
+      // add defaults for newly selected
+      for (const id of selectedIds) {
+        if (next[id] !== undefined) continue;
+        const s = selectedDetails.find((r) => r.user_id === id) || results.find((r) => r.user_id === id);
+        if (s?.access_limit != null) {
+          next[id] = String(s.access_limit);
+        } else {
+          next[id] = "";
+        }
+      }
+      return next;
+    });
+  }, [selectedIds, selectedDetails, results]);
 
   async function searchStudents(showAll = false) {
     if (!token) return;
@@ -558,6 +631,7 @@ function PracticeAccessManager({
         body: JSON.stringify({
           q: showAll ? "" : query.trim(),
           limit: 100,
+          practice_id: practice.id,
         }),
       });
       const json = await res.json();
@@ -580,13 +654,23 @@ function PracticeAccessManager({
     setError(null);
     setMessage(null);
     try {
+      const student_limits: Record<string, number | null> = {};
+      selectedIds.forEach((id) => {
+        const raw = limitOverrides[id];
+        if (!raw) {
+          student_limits[id] = null;
+          return;
+        }
+        const num = Number(raw);
+        student_limits[id] = Number.isNaN(num) ? null : Math.max(1, num);
+      });
       const res = await fetch(`${API_BASE}/api/module-practice/access/set/`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ practice_id: practice.id, student_ids: selectedIds }),
+        body: JSON.stringify({ practice_id: practice.id, student_ids: selectedIds, student_limits }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || "Failed to save access");
@@ -652,6 +736,8 @@ function PracticeAccessManager({
               results.map((s) => {
                 const picked = selectedIds.includes(s.user_id);
                 const name = s.nickname || `${s.first_name ?? ""} ${s.last_name ?? ""}`.trim() || s.username;
+                const attempts = s.attempts_count ?? 0;
+                const accessLimit = s.access_limit;
                 return (
                   <button
                     key={s.user_id}
@@ -664,6 +750,10 @@ function PracticeAccessManager({
                     <div className="font-semibold text-slate-700">{name}</div>
                     <div className="text-[10px] text-slate-400">
                       {s.username} {s.student_id ? `· ${s.student_id}` : ""}
+                    </div>
+                    <div className="text-[10px] text-slate-500">Attempts: {attempts}</div>
+                    <div className="text-[10px] text-slate-500">
+                      Limit: {accessLimit != null ? accessLimit : "Default"}
                     </div>
                   </button>
                 );
@@ -680,10 +770,26 @@ function PracticeAccessManager({
             ) : (
               selectedIds.map((id) => {
                 const s = selectedDetails.find((r) => r.user_id === id) || results.find((r) => r.user_id === id);
+                const attempts = s?.attempts_count ?? 0;
                 return (
                   <div key={id} className="rounded-lg border border-slate-200 px-3 py-2 text-xs">
                     <div className="font-semibold text-slate-700">
                       {s?.nickname || `${s?.first_name ?? ""} ${s?.last_name ?? ""}`.trim() || s?.username || id}
+                    </div>
+                    <div className="text-[10px] text-slate-500">Attempts: {attempts}</div>
+                    <div className="mt-2 flex items-center gap-2 text-[10px] text-slate-500">
+                      <span>Limit</span>
+                      <input
+                        type="number"
+                        min={1}
+                        placeholder="Default"
+                        className="w-20 rounded border px-2 py-1 text-[10px]"
+                        value={limitOverrides[id] ?? ""}
+                        onChange={(e) =>
+                          setLimitOverrides((prev) => ({ ...prev, [id]: e.target.value }))
+                        }
+                      />
+                      <span className="text-slate-400">blank = default</span>
                     </div>
                     <button
                       className="mt-1 text-[10px] text-red-600"

@@ -9,7 +9,7 @@ from rest_framework.views import APIView
 
 from accounts.models import User, Profile
 from question_bank.models import Question
-from .models import MockExam, MockExamAttempt
+from .models import MockExam, MockExamAttempt, MockExamAccess
 
 
 def _is_staff(user: User) -> bool:
@@ -227,11 +227,22 @@ class MockExamListView(APIView):
         exams = MockExam.objects.order_by("-created_at")
         data = []
         for exam in exams:
-            if not exam.is_active and not staff:
-                continue
+            access_qs = MockExamAccess.objects.filter(mock_exam=exam, is_active=True)
+            locked = False
+            has_access = True
             if not staff:
-                if exam.allowed_students.exists() and not exam.allowed_students.filter(id=user.id).exists():
+                if access_qs.exists():
+                    has_access = access_qs.filter(student=user).exists()
+                elif exam.allowed_students.exists():
+                    has_access = exam.allowed_students.filter(id=user.id).exists()
+                else:
+                    has_access = True
+                if not has_access:
                     continue
+                if not exam.is_active:
+                    locked = True
+            else:
+                locked = False
 
             latest_attempt = (
                 MockExamAttempt.objects.filter(mock_exam=exam, student=user)
@@ -249,6 +260,16 @@ class MockExamListView(APIView):
                     "submitted_at": latest_attempt.submitted_at,
                 }
 
+            allowed_ids = None
+            allowed_count = None
+            if staff:
+                if access_qs.exists():
+                    allowed_ids = list(access_qs.values_list("student_id", flat=True))
+                    allowed_count = access_qs.count()
+                else:
+                    allowed_ids = list(exam.allowed_students.values_list("id", flat=True))
+                    allowed_count = exam.allowed_students.count()
+
             data.append(
                 {
                     "id": str(exam.id),
@@ -260,13 +281,13 @@ class MockExamListView(APIView):
                     "shuffle_questions": exam.shuffle_questions,
                     "shuffle_choices": exam.shuffle_choices,
                     "allow_retakes": exam.allow_retakes,
+                    "retake_limit": exam.retake_limit,
                     "is_active": exam.is_active,
                     "results_published": exam.results_published,
+                    "locked": locked,
                     "question_count": len(exam.question_ids or []),
-                    "allowed_student_ids": list(exam.allowed_students.values_list("id", flat=True))
-                    if staff
-                    else None,
-                    "allowed_student_count": exam.allowed_students.count() if staff else None,
+                    "allowed_student_ids": allowed_ids,
+                    "allowed_student_count": allowed_count,
                     "question_ids": exam.question_ids if staff else None,
                     "attempt": attempt_summary,
                 }
@@ -407,6 +428,20 @@ class MockExamStudentSearchView(APIView):
 
         q = (request.data.get("q") or "").strip().lower()
         limit = int(request.data.get("limit") or 50)
+        exam_id = request.data.get("mock_exam_id")
+        attempt_counts: dict[str, int] = {}
+        access_limits: dict[str, int | None] = {}
+        if exam_id:
+            rows = (
+                MockExamAttempt.objects.filter(mock_exam_id=exam_id, status="submitted")
+                .values("student_id")
+                .annotate(count=Count("id"))
+            )
+            attempt_counts = {str(r["student_id"]): r["count"] for r in rows}
+            access_rows = MockExamAccess.objects.filter(mock_exam_id=exam_id, is_active=True).values(
+                "student_id", "attempt_limit"
+            )
+            access_limits = {str(r["student_id"]): r["attempt_limit"] for r in access_rows}
 
         qs = Profile.objects.select_related("user").filter(role="student")
         if q:
@@ -430,6 +465,8 @@ class MockExamStudentSearchView(APIView):
                     "nickname": p.nickname,
                     "student_id": p.student_id,
                     "avatar": p.avatar,
+                    "attempts_count": attempt_counts.get(str(p.user.id), 0),
+                    "access_limit": access_limits.get(str(p.user.id)),
                 }
             )
         return Response({"ok": True, "students": data})
@@ -443,8 +480,23 @@ class MockExamStudentLookupView(APIView):
             return Response({"error": "Forbidden"}, status=403)
 
         student_ids = request.data.get("student_ids") or []
+        exam_id = request.data.get("mock_exam_id")
         if not isinstance(student_ids, list):
             return Response({"error": "student_ids must be list"}, status=400)
+
+        attempt_counts: dict[str, int] = {}
+        access_limits: dict[str, int | None] = {}
+        if exam_id:
+            rows = (
+                MockExamAttempt.objects.filter(mock_exam_id=exam_id, status="submitted", student_id__in=student_ids)
+                .values("student_id")
+                .annotate(count=Count("id"))
+            )
+            attempt_counts = {str(r["student_id"]): r["count"] for r in rows}
+            access_rows = MockExamAccess.objects.filter(
+                mock_exam_id=exam_id, is_active=True, student_id__in=student_ids
+            ).values("student_id", "attempt_limit")
+            access_limits = {str(r["student_id"]): r["attempt_limit"] for r in access_rows}
 
         qs = Profile.objects.select_related("user").filter(user_id__in=student_ids)
         data = []
@@ -458,6 +510,8 @@ class MockExamStudentLookupView(APIView):
                     "nickname": p.nickname,
                     "student_id": p.student_id,
                     "avatar": p.avatar,
+                    "attempts_count": attempt_counts.get(str(p.user.id), 0),
+                    "access_limit": access_limits.get(str(p.user.id)),
                 }
             )
         return Response({"ok": True, "students": data})
@@ -472,6 +526,7 @@ class MockExamAccessSetView(APIView):
 
         exam_id = request.data.get("mock_exam_id")
         student_ids = request.data.get("student_ids") or []
+        student_limits = request.data.get("student_limits") or {}
         if not exam_id:
             return Response({"error": "mock_exam_id required"}, status=400)
 
@@ -482,9 +537,39 @@ class MockExamAccessSetView(APIView):
 
         if not isinstance(student_ids, list):
             return Response({"error": "student_ids must be list"}, status=400)
+        if not isinstance(student_limits, dict):
+            return Response({"error": "student_limits must be dict"}, status=400)
 
         students = User.objects.filter(id__in=student_ids)
         exam.allowed_students.set(students)
+        MockExamAccess.objects.filter(mock_exam=exam).delete()
+
+        access_rows = []
+        for student in students:
+            limit = student_limits.get(str(student.id))
+            if limit in (None, "", "null"):
+                parsed_limit = None
+            else:
+                try:
+                    parsed_limit = int(limit)
+                except Exception:
+                    return Response({"error": "student_limits must contain integers"}, status=400)
+                if parsed_limit < 1:
+                    return Response({"error": "student_limits must be >= 1"}, status=400)
+
+            access_rows.append(
+                MockExamAccess(
+                    mock_exam=exam,
+                    student=student,
+                    granted_by=request.user,
+                    is_active=True,
+                    attempt_limit=parsed_limit,
+                )
+            )
+
+        if access_rows:
+            MockExamAccess.objects.bulk_create(access_rows)
+
         return Response({"ok": True, "allowed_student_count": students.count()})
 
 
@@ -504,6 +589,16 @@ class MockExamCreateView(APIView):
         shuffle_questions = bool(request.data.get("shuffle_questions", True))
         shuffle_choices = bool(request.data.get("shuffle_choices", False))
         allow_retakes = bool(request.data.get("allow_retakes", True))
+        retake_limit = None
+        if "retake_limit" in request.data:
+            limit = request.data.get("retake_limit")
+            if limit not in (None, "", "null"):
+                try:
+                    retake_limit = int(limit)
+                except Exception:
+                    return Response({"error": "retake_limit must be an integer"}, status=400)
+                if retake_limit < 1:
+                    return Response({"error": "retake_limit must be at least 1"}, status=400)
 
         if not title:
             return Response({"error": "title required"}, status=400)
@@ -551,6 +646,7 @@ class MockExamCreateView(APIView):
             shuffle_questions=shuffle_questions,
             shuffle_choices=shuffle_choices,
             allow_retakes=allow_retakes,
+            retake_limit=retake_limit,
             question_ids=question_ids,
             created_by=request.user,
         )
@@ -590,6 +686,17 @@ class MockExamUpdateView(APIView):
         for f in fields:
             if f in request.data:
                 setattr(exam, f, request.data.get(f))
+        if "retake_limit" in request.data:
+            limit = request.data.get("retake_limit")
+            if limit in (None, "", "null"):
+                exam.retake_limit = None
+            else:
+                try:
+                    exam.retake_limit = int(limit)
+                except Exception:
+                    return Response({"error": "retake_limit must be an integer"}, status=400)
+                if exam.retake_limit < 1:
+                    return Response({"error": "retake_limit must be at least 1"}, status=400)
         exam.save()
 
         return Response({"ok": True})
@@ -699,19 +806,44 @@ class MockExamStartView(APIView):
         except MockExam.DoesNotExist:
             return Response({"error": "Not found"}, status=404)
 
-        if not exam.is_active and not _is_staff(request.user):
+        staff = _is_staff(request.user)
+
+        if not exam.is_active and not staff:
             return Response({"error": "Locked"}, status=403)
-        if exam.allowed_students.exists() and not _is_staff(request.user):
-            if not exam.allowed_students.filter(id=request.user.id).exists():
-                return Response({"error": "No access"}, status=403)
+        access = None
+        access_qs = MockExamAccess.objects.filter(mock_exam=exam, is_active=True)
+        if not staff:
+            if access_qs.exists():
+                access = access_qs.filter(student=request.user).first()
+                if not access:
+                    return Response({"error": "No access"}, status=403)
+            elif exam.allowed_students.exists():
+                if not exam.allowed_students.filter(id=request.user.id).exists():
+                    return Response({"error": "No access"}, status=403)
 
         user = request.user
-        if not exam.allow_retakes:
-            existing = MockExamAttempt.objects.filter(
+        if not staff:
+            if not exam.allow_retakes:
+                existing = MockExamAttempt.objects.filter(
+                    mock_exam=exam, student=user, status="submitted"
+                ).first()
+                if existing:
+                    return Response({"error": "Retakes disabled"}, status=403)
+            else:
+                access_limit = access.attempt_limit if access else None
+                effective_limit = access_limit if access_limit is not None else exam.retake_limit
+                if effective_limit is not None:
+                    submitted_count = MockExamAttempt.objects.filter(
+                        mock_exam=exam, student=user, status="submitted"
+                    ).count()
+                    if submitted_count >= effective_limit:
+                        return Response({"error": "Retake limit reached"}, status=403)
+        elif exam.retake_limit is not None:
+            submitted_count = MockExamAttempt.objects.filter(
                 mock_exam=exam, student=user, status="submitted"
-            ).first()
-            if existing:
-                return Response({"error": "Retakes disabled"}, status=403)
+            ).count()
+            if submitted_count >= exam.retake_limit:
+                return Response({"error": "Retake limit reached"}, status=403)
 
         attempt = (
             MockExamAttempt.objects.filter(mock_exam=exam, student=user, status="in_progress")
