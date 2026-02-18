@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE;
 
@@ -14,6 +14,9 @@ type MockExam = {
   id: string;
   title: string;
   description: string | null;
+  course_id?: string | null;
+  course_title?: string | null;
+  course_slug?: string | null;
   verbal_question_count: number;
   math_question_count: number;
   total_time_minutes: number;
@@ -50,6 +53,47 @@ type Student = {
   access_limit?: number | null;
 };
 
+type AttemptReport = {
+  attempt_id: string;
+  student_profile: {
+    user_id: string;
+    username?: string | null;
+    first_name?: string | null;
+    last_name?: string | null;
+    nickname?: string | null;
+    student_id?: string | null;
+  };
+  attempts_count: number;
+  score_verbal: number;
+  score_math: number;
+  total_score: number;
+  submitted_at: string | null;
+  time_spent: number;
+  mistakes: {
+    index: number;
+    question_id: string;
+    subject: string;
+    topic?: string | null;
+    subtopic?: string | null;
+    stem: string;
+    status: "incorrect" | "unanswered";
+    correct?: string | null;
+    correct_label?: string | null;
+    correct_text?: string | null;
+    answer?: string | null;
+    answer_text?: string | null;
+    is_open_ended?: boolean | null;
+  }[];
+  unanswered: number;
+};
+
+function formatStamp(value?: string | null) {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toLocaleString();
+}
+
 function isTeacherOrAdmin(p: Profile | null) {
   if (!p) return false;
   const role = (p.role ?? "").toLowerCase();
@@ -58,7 +102,9 @@ function isTeacherOrAdmin(p: Profile | null) {
 
 export default function Page() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [profileLoaded, setProfileLoaded] = useState(false);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -66,8 +112,6 @@ export default function Page() {
 
   const [newTitle, setNewTitle] = useState("");
   const [newDesc, setNewDesc] = useState("");
-  const [verbalCount, setVerbalCount] = useState(40);
-  const [mathCount, setMathCount] = useState(30);
   const [totalMinutes, setTotalMinutes] = useState(120);
   const [creating, setCreating] = useState(false);
 
@@ -77,21 +121,37 @@ export default function Page() {
     let cancelled = false;
     (async () => {
       const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
-      if (!token) return;
+      if (!token) {
+        setProfileLoaded(true);
+        return;
+      }
       setAccessToken(token);
 
       const meRes = await fetch(`${API_BASE}/api/auth/me/`, {
         headers: { Authorization: `Bearer ${token}` },
       }).catch(() => null);
-      if (!meRes || !meRes.ok) return;
+      if (!meRes || !meRes.ok) {
+        if (!cancelled) setProfileLoaded(true);
+        return;
+      }
       const me = await meRes.json().catch(() => null);
       if (cancelled || !me) return;
       setProfile({ role: me.role ?? null, is_admin: me.is_admin ?? false });
+      setProfileLoaded(true);
     })();
     return () => {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    const nextManage = searchParams?.get("manage") || null;
+    if (nextManage) {
+      setManageId(nextManage);
+      return;
+    }
+    setManageId(null);
+  }, [searchParams]);
 
   async function loadExams(token: string) {
     setLoading(true);
@@ -117,6 +177,13 @@ export default function Page() {
 
   const canManage = isTeacherOrAdmin(profile);
 
+  useEffect(() => {
+    if (!profileLoaded) return;
+    if (!canManage) {
+      router.replace("/home");
+    }
+  }, [profileLoaded, canManage, router]);
+
   async function createExam() {
     if (!accessToken || !newTitle.trim()) return;
     setCreating(true);
@@ -131,8 +198,6 @@ export default function Page() {
         body: JSON.stringify({
           title: newTitle.trim(),
           description: newDesc || null,
-          verbal_question_count: verbalCount,
-          math_question_count: mathCount,
           total_time_minutes: totalMinutes,
           shuffle_questions: true,
           shuffle_choices: false,
@@ -144,7 +209,11 @@ export default function Page() {
       setNewTitle("");
       setNewDesc("");
       await loadExams(accessToken);
-      setManageId(json.mock_exam_id ?? null);
+      const nextId = json.mock_exam_id ?? null;
+      if (nextId) {
+        setManageId(nextId);
+        router.push(`/practice/mock-exams?manage=${nextId}`);
+      }
     } catch (e: any) {
       setError(e?.message ?? "Failed to create mock exam");
     } finally {
@@ -152,8 +221,22 @@ export default function Page() {
     }
   }
 
+  function openManage(examId: string) {
+    setManageId(examId);
+    router.push(`/practice/mock-exams?manage=${examId}`);
+  }
+
+  function closeManage() {
+    setManageId(null);
+    router.push("/practice/mock-exams");
+  }
+
   function startExam(examId: string) {
     router.push(`/practice/mock-exams/${examId}`);
+  }
+
+  if (!canManage && profileLoaded) {
+    return <div className="p-6 text-sm text-slate-500">Redirecting…</div>;
   }
 
   if (loading) {
@@ -205,32 +288,6 @@ export default function Page() {
 
             <div className="mt-4 grid gap-4 lg:grid-cols-2">
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Question counts</div>
-                <div className="mt-3 flex flex-wrap gap-3">
-                  <label className="grid gap-1 text-xs">
-                    <span className="text-[10px] uppercase tracking-wide text-slate-400">Verbal</span>
-                    <input
-                      type="number"
-                      min={0}
-                      className="w-24 rounded-lg border px-3 py-2 text-sm"
-                      value={verbalCount}
-                      onChange={(e) => setVerbalCount(Math.max(0, Number(e.target.value) || 0))}
-                    />
-                  </label>
-                  <label className="grid gap-1 text-xs">
-                    <span className="text-[10px] uppercase tracking-wide text-slate-400">Math</span>
-                    <input
-                      type="number"
-                      min={0}
-                      className="w-24 rounded-lg border px-3 py-2 text-sm"
-                      value={mathCount}
-                      onChange={(e) => setMathCount(Math.max(0, Number(e.target.value) || 0))}
-                    />
-                  </label>
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                 <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Total time</div>
                 <div className="mt-3">
                   <input
@@ -244,6 +301,12 @@ export default function Page() {
                 <div className="mt-2 text-[11px] text-slate-500">Single timer for entire mock.</div>
               </div>
 
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Question counts</div>
+                <div className="mt-3 text-sm text-slate-600">
+                  Counts are calculated automatically from the questions you add later.
+                </div>
+              </div>
             </div>
           </section>
         ) : null}
@@ -261,7 +324,8 @@ export default function Page() {
                   exam={exam}
                   canManage={canManage}
                   manageId={manageId}
-                  setManageId={setManageId}
+                  openManage={openManage}
+                  closeManage={closeManage}
                   startExam={startExam}
                   token={accessToken}
                   refresh={() => accessToken && loadExams(accessToken)}
@@ -279,7 +343,8 @@ function MockExamCard({
   exam,
   canManage,
   manageId,
-  setManageId,
+  openManage,
+  closeManage,
   startExam,
   token,
   refresh,
@@ -287,7 +352,8 @@ function MockExamCard({
   exam: MockExam;
   canManage: boolean;
   manageId: string | null;
-  setManageId: (id: string | null) => void;
+  openManage: (examId: string) => void;
+  closeManage: () => void;
   startExam: (examId: string) => void;
   token: string | null;
   refresh: () => void;
@@ -295,10 +361,40 @@ function MockExamCard({
   const active = manageId === exam.id;
   const isLocked = !!exam.locked && !canManage;
   const [retakeDraft, setRetakeDraft] = useState<string>("");
+  const [timeDraft, setTimeDraft] = useState<string>("");
+  const [resultsOpen, setResultsOpen] = useState(false);
+  const [resultsLoading, setResultsLoading] = useState(false);
+  const [resultsError, setResultsError] = useState<string | null>(null);
+  const [resultsData, setResultsData] = useState<AttemptReport[]>([]);
 
   useEffect(() => {
     setRetakeDraft(exam.retake_limit != null ? String(exam.retake_limit) : "");
-  }, [exam.retake_limit, exam.id]);
+    setTimeDraft(String(exam.total_time_minutes ?? 0));
+  }, [exam.retake_limit, exam.total_time_minutes, exam.id]);
+
+  async function loadResults() {
+    if (!token) return;
+    setResultsLoading(true);
+    setResultsError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/mock-exams/attempts/report/?mock_exam_id=${exam.id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Failed to load results");
+      setResultsData(json.attempts ?? []);
+    } catch (e: any) {
+      setResultsError(e?.message ?? "Failed to load results");
+    } finally {
+      setResultsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!resultsOpen) return;
+    void loadResults();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resultsOpen]);
 
   async function updateExam(payload: Record<string, any>) {
     if (!token) return;
@@ -343,6 +439,11 @@ function MockExamCard({
           <div className="text-xs uppercase tracking-[0.3em] text-slate-400">Mock exam</div>
           <div className="mt-2 text-xl font-semibold text-slate-900">{exam.title}</div>
           <div className="mt-1 text-sm text-slate-600">{exam.description || "No description"}</div>
+          {exam.course_title ? (
+            <div className="mt-2 text-xs font-semibold uppercase tracking-wide text-indigo-500">
+              Course: {exam.course_title}
+            </div>
+          ) : null}
         </div>
         <div className="flex flex-col items-end gap-2">
           {isLocked ? (
@@ -363,6 +464,7 @@ function MockExamCard({
       <div className="mt-4 grid gap-2 text-sm text-slate-600">
         <div className="rounded-xl bg-slate-50 px-3 py-2">Verbal: {exam.verbal_question_count} questions</div>
         <div className="rounded-xl bg-slate-50 px-3 py-2">Math: {exam.math_question_count} questions</div>
+        <div className="rounded-xl bg-slate-50 px-3 py-2">Total: {exam.question_count} questions</div>
         <div className="rounded-xl bg-slate-50 px-3 py-2">Total time: {exam.total_time_minutes} minutes</div>
       </div>
 
@@ -400,16 +502,57 @@ function MockExamCard({
         {canManage ? (
           <button
             className="rounded-xl border px-3 py-2 text-sm"
-            onClick={() => setManageId(active ? null : exam.id)}
+            onClick={() => (active ? closeManage() : openManage(exam.id))}
             type="button"
           >
             {active ? "Close" : "Manage"}
+          </button>
+        ) : null}
+        {canManage ? (
+          <button
+            className={`rounded-xl border px-3 py-2 text-sm ${resultsOpen ? "bg-slate-100" : ""}`}
+            onClick={() => setResultsOpen((prev) => !prev)}
+            type="button"
+          >
+            {resultsOpen ? "Hide results" : "Results"}
           </button>
         ) : null}
       </div>
 
       {canManage && active ? (
         <div className="mt-5 space-y-4 border-t pt-4">
+          <div className="rounded-xl border bg-white p-3">
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Exam setup</div>
+            <div className="mt-3 grid gap-3 md:grid-cols-3">
+              <div className="rounded-md border bg-slate-50 px-3 py-2 text-sm">
+                <div className="text-[10px] uppercase tracking-wide text-slate-400">Verbal questions</div>
+                <div className="text-sm font-semibold text-slate-800">{exam.verbal_question_count}</div>
+              </div>
+              <div className="rounded-md border bg-slate-50 px-3 py-2 text-sm">
+                <div className="text-[10px] uppercase tracking-wide text-slate-400">Math questions</div>
+                <div className="text-sm font-semibold text-slate-800">{exam.math_question_count}</div>
+              </div>
+              <label className="grid gap-1 text-xs">
+                <span className="text-[10px] uppercase tracking-wide text-slate-400">Total minutes</span>
+                <input
+                  type="number"
+                  min={1}
+                  className="rounded-md border px-2 py-1 text-sm"
+                  value={timeDraft}
+                  onChange={(e) => setTimeDraft(e.target.value)}
+                  onBlur={async () => {
+                    const nextVal = Math.max(1, Number(timeDraft) || 1);
+                    setTimeDraft(String(nextVal));
+                    await updateExam({ total_time_minutes: nextVal });
+                  }}
+                />
+              </label>
+            </div>
+            <div className="mt-2 text-[11px] text-slate-400">
+              Counts update automatically as you add or remove questions.
+            </div>
+          </div>
+
           <div className="flex flex-wrap gap-3">
             <button
               className="rounded-lg border px-3 py-2 text-xs font-semibold"
@@ -490,6 +633,78 @@ function MockExamCard({
           <MockExamAccessManager exam={exam} token={token} refresh={refresh} />
 
           <MockExamBuilder exam={exam} token={token} refresh={refresh} />
+        </div>
+      ) : null}
+
+      {canManage && resultsOpen ? (
+        <div className="mt-5 space-y-3 border-t pt-4">
+          <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Results overview</div>
+          {resultsLoading ? <div className="text-sm text-slate-500">Loading results…</div> : null}
+          {resultsError ? <div className="text-sm text-red-600">{resultsError}</div> : null}
+          {!resultsLoading && resultsData.length === 0 ? (
+            <div className="text-sm text-slate-500">No submitted attempts yet.</div>
+          ) : null}
+          <div className="space-y-3">
+            {resultsData.map((attempt) => {
+              const profile = attempt.student_profile || {};
+              const name =
+                profile.nickname ||
+                `${profile.first_name ?? ""} ${profile.last_name ?? ""}`.trim() ||
+                profile.username ||
+                profile.student_id ||
+                "Student";
+              return (
+                <div key={attempt.attempt_id} className="rounded-xl border bg-white p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-semibold text-slate-800">{name}</div>
+                      <div className="text-xs text-slate-500">{profile.username || profile.student_id}</div>
+                    </div>
+                    <div className="flex flex-wrap gap-2 text-xs text-slate-600">
+                      <span className="rounded-full bg-slate-100 px-3 py-1">Attempts: {attempt.attempts_count}</span>
+                      <span className="rounded-full bg-slate-100 px-3 py-1">Verbal: {attempt.score_verbal}</span>
+                      <span className="rounded-full bg-slate-100 px-3 py-1">Math: {attempt.score_math}</span>
+                      <span className="rounded-full bg-slate-100 px-3 py-1">Total: {attempt.total_score}</span>
+                    </div>
+                  </div>
+                  <div className="mt-2 text-xs text-slate-500">
+                    Submitted: {formatStamp(attempt.submitted_at)} · Time spent: {Math.round(attempt.time_spent / 60)}m
+                  </div>
+
+                  <details className="mt-3 rounded-lg border bg-slate-50 p-3">
+                    <summary className="cursor-pointer text-xs font-semibold text-slate-700">
+                      Mistakes ({attempt.mistakes.length}) · Unanswered {attempt.unanswered}
+                    </summary>
+                    <div className="mt-3 space-y-3 text-xs text-slate-600">
+                      {attempt.mistakes.length === 0 ? (
+                        <div>No mistakes recorded.</div>
+                      ) : (
+                        attempt.mistakes.map((m) => (
+                          <div key={`${attempt.attempt_id}-${m.question_id}`} className="rounded-lg bg-white p-3">
+                            <div className="text-[11px] uppercase tracking-wide text-slate-400">
+                              Q{m.index} · {m.subject} · {m.topic || "Topic"}
+                            </div>
+                            <div className="mt-1 text-sm text-slate-800">{m.stem}</div>
+                            <div className="mt-2 grid gap-1">
+                              <div className="text-[11px] text-slate-500">
+                                Status: {m.status === "unanswered" ? "Unanswered" : "Incorrect"}
+                              </div>
+                              <div className="text-[11px] text-slate-500">
+                                Your answer: {m.answer_text || m.answer || "—"}
+                              </div>
+                              <div className="text-[11px] text-slate-500">
+                                Correct: {m.correct_text || m.correct || "—"}
+                              </div>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </details>
+                </div>
+              );
+            })}
+          </div>
         </div>
       ) : null}
     </div>
@@ -764,16 +979,28 @@ function MockExamBuilder({
   token: string | null;
   refresh: () => void;
 }) {
-  const [mode] = useState<"command">("command");
+  const [mode, setMode] = useState<"generate" | "manual">("generate");
   const [builderError, setBuilderError] = useState<string | null>(null);
   const [builderMessage, setBuilderMessage] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
   const [topicMap, setTopicMap] = useState<{ verbal: any[]; math: any[] } | null>(null);
   const [loadingTopics, setLoadingTopics] = useState(false);
   const [topicPicks, setTopicPicks] = useState<Record<string, { count: number; difficulty: string }>>({});
+  const [questionList, setQuestionList] = useState<any[]>([]);
+  const [loadingQuestions, setLoadingQuestions] = useState(false);
+  const [previewId, setPreviewId] = useState<string | null>(null);
+  const [selectedQuestionIds, setSelectedQuestionIds] = useState<string[]>([]);
+  const [replaceTarget, setReplaceTarget] = useState<string | null>(null);
+  const [searchSubject, setSearchSubject] = useState<"verbal" | "math">("verbal");
+  const [searchTopic, setSearchTopic] = useState("");
+  const [searchSubtopic, setSearchSubtopic] = useState("");
+  const [searchDifficulty, setSearchDifficulty] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [searching, setSearching] = useState(false);
 
   useEffect(() => {
-    if (mode !== "command" || !token || topicMap) return;
+    if (!token || topicMap) return;
     let cancelled = false;
     (async () => {
       setLoadingTopics(true);
@@ -793,7 +1020,44 @@ function MockExamBuilder({
     return () => {
       cancelled = true;
     };
-  }, [mode, token, topicMap]);
+  }, [token, topicMap]);
+
+  async function loadQuestionList() {
+    if (!token) return;
+    const ids = exam.question_ids ?? [];
+    if (!ids.length) {
+      setQuestionList([]);
+      setPreviewId(null);
+      return;
+    }
+    setLoadingQuestions(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/mock-exams/questions/lookup/`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ mock_exam_id: exam.id, question_ids: ids, full: true }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Failed to load questions");
+      setQuestionList(json.questions ?? []);
+      if (json.questions?.length && !previewId) setPreviewId(json.questions[0].id);
+      const validIds = new Set((json.questions ?? []).map((q: any) => q.id));
+      setSelectedQuestionIds((prev) => prev.filter((id) => validIds.has(id)));
+    } catch (e: any) {
+      setBuilderError(e?.message ?? "Failed to load questions");
+    } finally {
+      setLoadingQuestions(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!token) return;
+    void loadQuestionList();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, exam.question_ids?.join("|")]);
 
   function updateTopicPick(key: string, patch: Partial<{ count: number; difficulty: string }>) {
     setTopicPicks((prev) => {
@@ -842,12 +1106,13 @@ function MockExamBuilder({
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ mock_exam_id: exam.id, rules }),
+        body: JSON.stringify({ mock_exam_id: exam.id, rules, append: true }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || "Generation failed");
       setBuilderMessage("Questions generated from topic builder.");
       refresh();
+      await loadQuestionList();
     } catch (e: any) {
       setBuilderError(e?.message ?? "Generation failed");
     } finally {
@@ -855,15 +1120,172 @@ function MockExamBuilder({
     }
   }
 
+  async function searchBank() {
+    if (!token) return;
+    setSearching(true);
+    setBuilderError(null);
+    try {
+      const params = new URLSearchParams();
+      params.set("subject", searchSubject);
+      if (searchTopic) params.set("topic", searchTopic);
+      if (searchSubtopic) params.set("subtopic", searchSubtopic);
+      if (searchDifficulty) params.set("difficulty", searchDifficulty);
+      if (searchQuery) params.set("q", searchQuery);
+      const res = await fetch(`${API_BASE}/api/mock-exams/questions/search/?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Search failed");
+      setSearchResults(json.questions ?? []);
+    } catch (e: any) {
+      setBuilderError(e?.message ?? "Search failed");
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  async function addQuestionToMock(questionId: string) {
+    if (!token) return;
+    setBuilderError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/mock-exams/questions/add/`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ mock_exam_id: exam.id, question_id: questionId }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Failed to add");
+      refresh();
+      await loadQuestionList();
+    } catch (e: any) {
+      setBuilderError(e?.message ?? "Failed to add");
+    }
+  }
+
+  async function removeQuestionFromMock(questionId: string) {
+    if (!token) return;
+    setBuilderError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/mock-exams/questions/remove/`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ mock_exam_id: exam.id, question_id: questionId }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Failed to remove");
+      refresh();
+      await loadQuestionList();
+    } catch (e: any) {
+      setBuilderError(e?.message ?? "Failed to remove");
+    }
+  }
+
+  async function removeSelectedQuestions() {
+    if (!token || selectedQuestionIds.length === 0) return;
+    const ok = window.confirm(`Remove ${selectedQuestionIds.length} question(s) from this mock?`);
+    if (!ok) return;
+    setBuilderError(null);
+    try {
+      await Promise.all(
+        selectedQuestionIds.map((qid) =>
+          fetch(`${API_BASE}/api/mock-exams/questions/remove/`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ mock_exam_id: exam.id, question_id: qid }),
+          }).then(async (res) => {
+            const json = await res.json();
+            if (!res.ok) throw new Error(json?.error || "Failed to remove");
+          })
+        )
+      );
+      setSelectedQuestionIds([]);
+      refresh();
+      await loadQuestionList();
+    } catch (e: any) {
+      setBuilderError(e?.message ?? "Failed to remove selected questions");
+    }
+  }
+
+  function toggleSelectQuestion(id: string) {
+    setSelectedQuestionIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
+
+  function selectAllQuestions() {
+    setSelectedQuestionIds(questionList.map((q: any) => q.id));
+  }
+
+  function clearSelectedQuestions() {
+    setSelectedQuestionIds([]);
+  }
+
+  async function replaceQuestionInMock(newQuestionId: string) {
+    if (!token || !replaceTarget) return;
+    setBuilderError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/mock-exams/questions/replace/`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          mock_exam_id: exam.id,
+          old_question_id: replaceTarget,
+          new_question_id: newQuestionId,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Failed to replace");
+      setReplaceTarget(null);
+      refresh();
+      await loadQuestionList();
+    } catch (e: any) {
+      setBuilderError(e?.message ?? "Failed to replace");
+    }
+  }
+
+  const subjectTopics = topicMap?.[searchSubject] || [];
+  const subjectTopicOptions = subjectTopics.map((t: any) => t.topic);
+  const subjectSubtopicOptions =
+    subjectTopics.find((t: any) => t.topic === searchTopic)?.subtopics?.map((s: any) => s.subtopic) ?? [];
+
   return (
     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-6">
       <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Question builder</div>
-      <div className="mt-2 text-xs text-slate-500">Command mode (topic builder)</div>
+      <div className="mt-2 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => setMode("generate")}
+          className={`rounded-full px-3 py-1 text-xs font-semibold ${
+            mode === "generate" ? "bg-slate-900 text-white" : "border bg-white text-slate-600"
+          }`}
+        >
+          Generate from selection
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode("manual")}
+          className={`rounded-full px-3 py-1 text-xs font-semibold ${
+            mode === "manual" ? "bg-slate-900 text-white" : "border bg-white text-slate-600"
+          }`}
+        >
+          Create yourself
+        </button>
+      </div>
 
       {builderError ? <div className="mt-3 text-xs text-red-600">{builderError}</div> : null}
       {builderMessage ? <div className="mt-3 text-xs text-emerald-600">{builderMessage}</div> : null}
 
-      {mode === "command" ? (
+      {mode === "generate" ? (
         <div className="mt-4 space-y-4">
           <div className="text-xs text-slate-500">
             Choose topics/subtopics and enter how many questions you want from each.
@@ -977,7 +1399,289 @@ function MockExamBuilder({
             </div>
           )}
         </div>
-      ) : null}
+      ) : (
+        <div className="mt-4 space-y-4">
+          <div className="flex flex-wrap gap-2">
+            <button
+              className="rounded-lg border bg-white px-3 py-2 text-xs font-semibold"
+              type="button"
+              onClick={() => window.open(`/practice/mock-exams/${exam.id}/questions/new/verbal`, "_blank")}
+            >
+              Add verbal question
+            </button>
+            <button
+              className="rounded-lg border bg-white px-3 py-2 text-xs font-semibold"
+              type="button"
+              onClick={() => window.open(`/practice/mock-exams/${exam.id}/questions/new/math`, "_blank")}
+            >
+              Add math question
+            </button>
+            <span className="text-[10px] text-slate-500 self-center">
+              Custom questions are saved to the question bank and added to this mock.
+            </span>
+          </div>
+
+          <div className="rounded-xl border bg-white p-4">
+            <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Add from question bank</div>
+            <div className="mt-3 grid gap-3 md:grid-cols-4">
+              <label className="grid gap-1 text-xs">
+                <span className="text-[10px] uppercase tracking-wide text-slate-400">Subject</span>
+                <select
+                  className="rounded-md border px-2 py-1 text-xs"
+                  value={searchSubject}
+                  onChange={(e) => {
+                    setSearchSubject(e.target.value as "verbal" | "math");
+                    setSearchTopic("");
+                    setSearchSubtopic("");
+                  }}
+                >
+                  <option value="verbal">Verbal</option>
+                  <option value="math">Math</option>
+                </select>
+              </label>
+              <label className="grid gap-1 text-xs">
+                <span className="text-[10px] uppercase tracking-wide text-slate-400">Topic</span>
+                <select
+                  className="rounded-md border px-2 py-1 text-xs"
+                  value={searchTopic}
+                  onChange={(e) => {
+                    setSearchTopic(e.target.value);
+                    setSearchSubtopic("");
+                  }}
+                >
+                  <option value="">All topics</option>
+                  {subjectTopicOptions.map((t: string) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="grid gap-1 text-xs">
+                <span className="text-[10px] uppercase tracking-wide text-slate-400">Subtopic</span>
+                <select
+                  className="rounded-md border px-2 py-1 text-xs"
+                  value={searchSubtopic}
+                  onChange={(e) => setSearchSubtopic(e.target.value)}
+                >
+                  <option value="">All subtopics</option>
+                  {subjectSubtopicOptions.map((s: string) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="grid gap-1 text-xs">
+                <span className="text-[10px] uppercase tracking-wide text-slate-400">Difficulty</span>
+                <select
+                  className="rounded-md border px-2 py-1 text-xs"
+                  value={searchDifficulty}
+                  onChange={(e) => setSearchDifficulty(e.target.value)}
+                >
+                  <option value="">Any</option>
+                  <option value="easy">Easy</option>
+                  <option value="medium">Medium</option>
+                  <option value="hard">Hard</option>
+                </select>
+              </label>
+              <label className="grid gap-1 text-xs md:col-span-3">
+                <span className="text-[10px] uppercase tracking-wide text-slate-400">Search</span>
+                <input
+                  className="rounded-md border px-2 py-1 text-xs"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Stem, passage, etc."
+                />
+              </label>
+              <div className="flex items-end gap-2">
+                <button
+                  className="rounded-md bg-slate-900 px-3 py-2 text-xs font-semibold text-white"
+                  type="button"
+                  onClick={searchBank}
+                  disabled={searching}
+                >
+                  {searching ? "Searching..." : "Search"}
+                </button>
+                {replaceTarget ? (
+                  <button
+                    className="rounded-md border px-3 py-2 text-xs font-semibold text-slate-600"
+                    type="button"
+                    onClick={() => setReplaceTarget(null)}
+                  >
+                    Cancel replace
+                  </button>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="mt-3 max-h-56 overflow-auto rounded-lg border">
+              {searchResults.length === 0 ? (
+                <div className="p-3 text-xs text-slate-500">No search results yet.</div>
+              ) : (
+                <div className="divide-y">
+                  {searchResults.map((q) => (
+                    <div key={q.id} className="flex items-start justify-between gap-3 p-3 text-xs">
+                      <div>
+                        <div className="font-semibold text-slate-800">
+                          {q.topic} {q.subtopic ? `• ${q.subtopic}` : ""}
+                        </div>
+                        <div className="mt-1 text-slate-500 line-clamp-2">{q.stem}</div>
+                        <div className="mt-1 text-[10px] text-slate-400">{q.difficulty || "unknown"}</div>
+                      </div>
+                      <button
+                        className="rounded-md border px-3 py-1 text-[11px] font-semibold"
+                        type="button"
+                        onClick={() =>
+                          replaceTarget ? replaceQuestionInMock(q.id) : addQuestionToMock(q.id)
+                        }
+                      >
+                        {replaceTarget ? "Replace" : "Add"}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="mt-6 rounded-xl border bg-white p-4">
+        <div className="flex items-center justify-between">
+          <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Questions in this mock</div>
+          {replaceTarget ? (
+            <div className="text-xs text-amber-600">Replacing question… pick a new one below.</div>
+          ) : null}
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+          <button
+            className="rounded-md border px-2 py-1 text-[11px] font-semibold"
+            type="button"
+            onClick={selectAllQuestions}
+            disabled={questionList.length === 0}
+          >
+            Select all
+          </button>
+          <button
+            className="rounded-md border px-2 py-1 text-[11px] font-semibold"
+            type="button"
+            onClick={clearSelectedQuestions}
+            disabled={selectedQuestionIds.length === 0}
+          >
+            Clear
+          </button>
+          <button
+            className="rounded-md border border-red-300 bg-red-50 px-2 py-1 text-[11px] font-semibold text-red-700"
+            type="button"
+            onClick={removeSelectedQuestions}
+            disabled={selectedQuestionIds.length === 0}
+          >
+            Delete selected ({selectedQuestionIds.length})
+          </button>
+        </div>
+        {loadingQuestions ? (
+          <div className="mt-3 text-xs text-slate-500">Loading questions...</div>
+        ) : questionList.length === 0 ? (
+          <div className="mt-3 text-xs text-slate-500">No questions selected yet.</div>
+        ) : (
+          <div className="mt-3 grid gap-4 lg:grid-cols-[1.1fr_1fr]">
+            <div className="space-y-2">
+              {questionList.map((q: any, idx: number) => (
+                <div
+                  key={q.id}
+                  className={`rounded-lg border px-3 py-2 text-xs ${
+                    previewId === q.id ? "border-indigo-400 bg-indigo-50" : "border-slate-200"
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <label className="flex items-center gap-2 text-[11px] text-slate-500">
+                        <input
+                          type="checkbox"
+                          checked={selectedQuestionIds.includes(q.id)}
+                          onChange={() => toggleSelectQuestion(q.id)}
+                        />
+                        Select
+                      </label>
+                      <div className="font-semibold text-slate-800">
+                        {idx + 1}. {q.topic} {q.subtopic ? `• ${q.subtopic}` : ""}
+                      </div>
+                      <div className="mt-1 text-slate-500 line-clamp-2">{q.stem}</div>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <button
+                        className="text-[10px] text-slate-600 underline"
+                        type="button"
+                        onClick={() => setPreviewId(q.id)}
+                      >
+                        Preview
+                      </button>
+                      <button
+                        className="text-[10px] text-indigo-600 underline"
+                        type="button"
+                        onClick={() =>
+                          window.open(`/practice/mock-exams/${exam.id}/questions/${q.id}/edit`, "_blank")
+                        }
+                      >
+                        Edit (override)
+                      </button>
+                      <button
+                        className="text-[10px] text-amber-600 underline"
+                        type="button"
+                        onClick={() => setReplaceTarget(q.id)}
+                      >
+                        Replace
+                      </button>
+                      <button
+                        className="text-[10px] text-red-600 underline"
+                        type="button"
+                        onClick={() => removeQuestionFromMock(q.id)}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="rounded-lg border bg-slate-50 p-3 text-xs text-slate-600">
+              {previewId ? (
+                (() => {
+                  const q = questionList.find((item: any) => item.id === previewId);
+                  if (!q) return <div>Select a question to preview.</div>;
+                  return (
+                    <div className="space-y-2">
+                      <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">
+                        {q.subject} question
+                      </div>
+                      {q.passage ? (
+                        <div className="rounded-md border bg-white p-2 text-[11px] text-slate-600">
+                          {q.passage}
+                        </div>
+                      ) : null}
+                      <div className="font-semibold text-slate-800">{q.stem}</div>
+                      {q.is_open_ended ? (
+                        <div className="text-[11px] text-slate-500">Open ended</div>
+                      ) : (
+                        <div className="space-y-1">
+                          {(q.choices || []).map((c: any) => (
+                            <div key={c.label} className="rounded border bg-white px-2 py-1">
+                              <span className="font-semibold">{c.label}.</span> {c.content}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()
+              ) : (
+                <div>Select a question to preview.</div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

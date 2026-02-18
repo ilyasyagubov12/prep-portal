@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from django.utils import timezone
 from courses.models import Course, CourseTeacher, Enrollment
 from assignments.models import Assignment, Submission, Grade, OfflineUnit, OfflineGrade
+from mock_exams.models import MockExam, MockExamAttempt
 
 
 def _is_teacher_or_admin(user, course):
@@ -65,6 +66,41 @@ def grades_me(request):
                     "graded_at": g.graded_at.isoformat(),
                 }
                 row["submission"]["grade"] = grade
+        result.append(row)
+
+    # Course quizzes (mock exams)
+    quizzes = MockExam.objects.filter(course=course).order_by("-created_at")
+    for exam in quizzes:
+        total_questions = (exam.verbal_question_count or 0) + (exam.math_question_count or 0)
+        if total_questions <= 0:
+            total_questions = len(exam.question_ids or [])
+
+        row = {
+            "id": str(exam.id),
+            "title": exam.title,
+            "status": "quiz" if exam.is_active else "disabled",
+            "due_at": None,
+            "max_score": total_questions,
+            "kind": "quiz",
+            "results_published": exam.results_published,
+            "is_active": exam.is_active,
+        }
+
+        latest_attempt = MockExamAttempt.objects.filter(
+            mock_exam=exam, student=user, status="submitted"
+        ).order_by("-submitted_at").first()
+
+        if latest_attempt:
+            row["submission"] = {
+                "id": str(latest_attempt.id),
+                "created_at": latest_attempt.submitted_at.isoformat() if latest_attempt.submitted_at else None,
+            }
+            if exam.results_published or is_teacher or is_admin:
+                row["submission"]["grade"] = {
+                    "score": latest_attempt.total_score,
+                    "feedback": None,
+                    "graded_at": latest_attempt.submitted_at.isoformat() if latest_attempt.submitted_at else None,
+                }
         result.append(row)
 
     # offline units + this user's grade (if any), respect publish_at for students

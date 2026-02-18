@@ -147,6 +147,7 @@ export default function TopicQuestionsPage() {
             headers: {
               "Content-Type": "application/json",
               Authorization: `Bearer ${access}`,
+              "X-TZ-Offset": String(new Date().getTimezoneOffset()),
             },
             body: JSON.stringify({ question_ids: qs.map((q: Question) => q.id) }),
           })
@@ -237,6 +238,7 @@ export default function TopicQuestionsPage() {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${access}`,
+          "X-TZ-Offset": String(new Date().getTimezoneOffset()),
         },
         body: JSON.stringify({
           question_id: qid,

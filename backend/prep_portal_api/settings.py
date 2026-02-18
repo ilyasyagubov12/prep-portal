@@ -15,6 +15,7 @@ import os
 from urllib.parse import urlparse
 from dotenv import load_dotenv
 from datetime import timedelta
+from corsheaders.defaults import default_headers
 
 load_dotenv()
 
@@ -227,4 +228,9 @@ CSRF_TRUSTED_ORIGINS = [
         "http://localhost:3000,https://prepto.vercel.app,https://prep-portal.onrender.com,https://prep-portal-nine.vercel.app,https://prep-portal-git-main-ilyas-projects-1a041d8f.vercel.app,https://prep-portal-1mphmxheg-ilyas-projects-1a041d8f.vercel.app,https://prep-portal-henna.vercel.app",
     ).split(",")
     if o.strip()
+]
+
+# Allow custom timezone header for streak tracking
+CORS_ALLOW_HEADERS = list(default_headers) + [
+    "x-tz-offset",
 ]

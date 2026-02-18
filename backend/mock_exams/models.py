@@ -5,6 +5,13 @@ import uuid
 
 class MockExam(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    course = models.ForeignKey(
+        "courses.Course",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="mock_exams",
+    )
     title = models.CharField(max_length=200)
     description = models.TextField(blank=True, null=True)
     verbal_question_count = models.IntegerField(default=0)
@@ -17,6 +24,7 @@ class MockExam(models.Model):
     is_active = models.BooleanField(default=True)
     results_published = models.BooleanField(default=False)
     question_ids = models.JSONField(default=list)
+    question_overrides = models.JSONField(default=dict, blank=True)
     allowed_students = models.ManyToManyField(
         settings.AUTH_USER_MODEL,
         blank=True,

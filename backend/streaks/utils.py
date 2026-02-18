@@ -10,8 +10,9 @@ def _baku_date():
     return timezone.localtime(timezone.now(), BAKU_TZ).date()
 
 
-def get_streak_base(user):
-    today = _baku_date()
+def get_streak_base(user, today=None):
+    if today is None:
+        today = _baku_date()
     today_progress = DailyStreakProgress.objects.filter(user=user, date=today).first()
     completed_today = bool(today_progress and today_progress.completed_at)
     start_date = today if completed_today else today - timedelta(days=1)

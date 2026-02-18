@@ -335,7 +335,34 @@ class CourseNodesListView(APIView):
                     "max_score": getattr(a, "max_score", None),
                 }
 
-        data = CourseNodeSerializer(qs, many=True, context={"assignments_map": assignments_map}).data
+        # Preload quizzes for quiz nodes
+        quiz_ids = list(qs.filter(kind="quiz").values_list("quiz_id", flat=True))
+        quizzes_map = {}
+        if quiz_ids:
+            from mock_exams.models import MockExam
+
+            quizzes = {q.id: q for q in MockExam.objects.filter(id__in=quiz_ids)}
+            for q in quizzes.values():
+                quizzes_map[q.id] = {
+                    "id": str(q.id),
+                    "title": q.title,
+                    "description": q.description,
+                    "verbal_question_count": q.verbal_question_count,
+                    "math_question_count": q.math_question_count,
+                    "total_time_minutes": q.total_time_minutes,
+                    "shuffle_questions": q.shuffle_questions,
+                    "shuffle_choices": q.shuffle_choices,
+                    "allow_retakes": q.allow_retakes,
+                    "retake_limit": q.retake_limit,
+                    "is_active": q.is_active,
+                    "results_published": q.results_published,
+                }
+
+        data = CourseNodeSerializer(
+            qs,
+            many=True,
+            context={"assignments_map": assignments_map, "quizzes_map": quizzes_map},
+        ).data
         return Response({"ok": True, "nodes": data})
 
 
@@ -490,11 +517,118 @@ class CourseNodeDeleteView(APIView):
             current = to_visit.pop()
             if current.kind == "file" and current.storage_path:
                 _delete_cloudinary_asset(current.storage_path, current.mime_type)
+            if current.kind == "quiz" and current.quiz_id:
+                try:
+                    from mock_exams.models import MockExam
+
+                    MockExam.objects.filter(id=current.quiz_id).delete()
+                except Exception:
+                    pass
             children = CourseNode.objects.filter(parent=current)
             to_visit.extend(list(children))
 
         node.delete()
         return Response({"ok": True})
+
+
+class CourseQuizCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request):
+        course_id = request.data.get("course_id")
+        parent_id = request.data.get("parent_id")
+        title = (request.data.get("title") or "").strip()
+        description = request.data.get("description") or None
+        verbal_count = 0
+        math_count = 0
+        total_time = int(request.data.get("total_time_minutes") or 0)
+        shuffle_questions = bool(request.data.get("shuffle_questions", True))
+        shuffle_choices = bool(request.data.get("shuffle_choices", False))
+        allow_retakes = bool(request.data.get("allow_retakes", True))
+        retake_limit = request.data.get("retake_limit")
+
+        if not course_id or not title:
+            return Response({"error": "course_id and title required"}, status=400)
+        if total_time <= 0:
+            return Response({"error": "total_time_minutes must be greater than 0"}, status=400)
+
+        try:
+            course = Course.objects.get(id=course_id)
+        except Course.DoesNotExist:
+            return Response({"error": "Course not found"}, status=404)
+
+        user = request.user
+        if not (_require_admin(user) or CourseTeacher.objects.filter(course=course, teacher=user).exists()):
+            return Response({"error": "Forbidden"}, status=403)
+
+        parent = None
+        if parent_id:
+            try:
+                parent = CourseNode.objects.get(id=parent_id, course=course)
+            except CourseNode.DoesNotExist:
+                return Response({"error": "Parent not found"}, status=404)
+
+        parsed_limit = None
+        if retake_limit not in (None, "", "null"):
+            try:
+                parsed_limit = int(retake_limit)
+            except Exception:
+                return Response({"error": "retake_limit must be an integer"}, status=400)
+            if parsed_limit < 1:
+                return Response({"error": "retake_limit must be at least 1"}, status=400)
+
+        from mock_exams.models import MockExam, MockExamAccess
+
+        exam = MockExam.objects.create(
+            course=course,
+            title=title,
+            description=description,
+            verbal_question_count=verbal_count,
+            math_question_count=math_count,
+            total_time_minutes=total_time,
+            shuffle_questions=shuffle_questions,
+            shuffle_choices=shuffle_choices,
+            allow_retakes=allow_retakes,
+            retake_limit=parsed_limit,
+            created_by=user,
+        )
+
+        # Auto-assign all enrolled students to this quiz
+        enrolled_ids = list(Enrollment.objects.filter(course=course).values_list("user_id", flat=True))
+        if enrolled_ids:
+            students = User.objects.filter(id__in=enrolled_ids)
+            exam.allowed_students.set(students)
+            access_rows = [
+                MockExamAccess(
+                    mock_exam=exam,
+                    student=student,
+                    granted_by=user,
+                    is_active=True,
+                    attempt_limit=None,
+                )
+                for student in students
+            ]
+            MockExamAccess.objects.bulk_create(access_rows)
+
+        node = CourseNode.objects.create(
+            course=course,
+            parent=parent,
+            kind="quiz",
+            name=title,
+            description=description,
+            quiz_id=exam.id,
+            created_by=user,
+            published=True,
+        )
+
+        return Response(
+            {
+                "ok": True,
+                "node": CourseNodeSerializer(node).data,
+                "mock_exam_id": str(exam.id),
+            }
+        )
 
 
 class CourseNodeUploadView(APIView):

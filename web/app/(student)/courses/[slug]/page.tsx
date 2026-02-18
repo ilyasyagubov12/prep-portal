@@ -20,7 +20,7 @@ type Profile = {
   nickname?: string | null;
 };
 
-type NodeKind = "folder" | "file" | "assignment";
+type NodeKind = "folder" | "file" | "assignment" | "quiz";
 
 type CourseEvent = {
   id: string;
@@ -54,6 +54,17 @@ type CourseNode = {
 
   assignment_id?: string | null;
   assignment?: { id: string; status: "draft" | "published"; title: string } | null;
+  quiz_id?: string | null;
+  quiz?: {
+    id: string;
+    title: string;
+    description?: string | null;
+    verbal_question_count?: number;
+    math_question_count?: number;
+    total_time_minutes?: number;
+    is_active?: boolean;
+    results_published?: boolean;
+  } | null;
 };
 
 type Tab = "overview" | "content" | "calendar" | "gradebook";
@@ -71,6 +82,9 @@ function isTeacherOrAdmin(p: Profile | null) {
 function isVisible(node: CourseNode) {
   if (node.kind === "assignment") {
     return node.assignment?.status === "published";
+  }
+  if (node.kind === "quiz") {
+    if (node.quiz && node.quiz.is_active === false) return false;
   }
   if (node.published) return true;
   if (!node.publish_at) return false;
@@ -295,6 +309,15 @@ export default function CourseDetailPage() {
   // Create assignment
   const [newAssignmentTitle, setNewAssignmentTitle] = useState("");
   const [assignmentBusy, setAssignmentBusy] = useState(false);
+  // Create quiz (mock exam inside course)
+  const [newQuizTitle, setNewQuizTitle] = useState("");
+  const [newQuizDesc, setNewQuizDesc] = useState("");
+  const [quizTotalTime, setQuizTotalTime] = useState("120");
+  const [quizShuffleQuestions, setQuizShuffleQuestions] = useState(true);
+  const [quizShuffleChoices, setQuizShuffleChoices] = useState(false);
+  const [quizAllowRetakes, setQuizAllowRetakes] = useState(true);
+  const [quizRetakeLimit, setQuizRetakeLimit] = useState<string>("");
+  const [quizBusy, setQuizBusy] = useState(false);
 
   // Upload file
   const [uploadName, setUploadName] = useState("");
@@ -305,6 +328,7 @@ export default function CourseDetailPage() {
   // Toggles for actions
   const [showCreateFolder, setShowCreateFolder] = useState(false);
   const [showCreateAssignment, setShowCreateAssignment] = useState(false);
+  const [showCreateQuiz, setShowCreateQuiz] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
 
   // Schedule drafts (publish_at only)
@@ -318,10 +342,13 @@ export default function CourseDetailPage() {
       status: string;
       due_at: string | null;
       max_score: number | null;
+      kind?: "assignment" | "quiz";
+      results_published?: boolean;
+      is_active?: boolean;
       submission?: {
         id: string;
         created_at: string;
-        file_name: string | null;
+        file_name?: string | null;
         grade?: { score: number | null; feedback: string | null } | null;
       };
     }>
@@ -376,7 +403,7 @@ export default function CourseDetailPage() {
     const copy = [...nodes];
     copy.sort((a, b) => {
       if (a.kind !== b.kind) {
-        const order: Record<NodeKind, number> = { folder: 0, assignment: 1, file: 2 };
+        const order: Record<NodeKind, number> = { folder: 0, quiz: 1, assignment: 2, file: 3 };
         return order[a.kind] - order[b.kind];
       }
       return a.name.localeCompare(b.name);
@@ -844,6 +871,20 @@ async function getSignedUrl(storage_path: string, storage_url?: string | null) {
     router.push(`/course/${course.id}/assignment/${node.assignment_id}`);
   }
 
+  function openQuiz(node: CourseNode, mode: "open" | "manage" = "open") {
+    if (node.kind !== "quiz") return;
+    const quizId = node.quiz_id || node.quiz?.id;
+    if (!quizId) {
+      alert("Quiz ID missing. Refresh the page and try again.");
+      return;
+    }
+    if (mode === "manage") {
+      router.push(`/practice/mock-exams?manage=${quizId}`);
+      return;
+    }
+    router.push(`/practice/mock-exams/${quizId}`);
+  }
+
   function goToCrumb(idx: number) {
     const crumb = breadcrumbs[idx];
     setCurrentFolderId(crumb.id);
@@ -905,6 +946,43 @@ async function getSignedUrl(storage_path: string, storage_url?: string | null) {
       setContentError(e?.message ?? "Failed to create assignment");
     } finally {
       setAssignmentBusy(false);
+    }
+  }
+
+  async function createQuizNode() {
+    if (!course?.id || !accessToken) return;
+    const title = newQuizTitle.trim();
+    if (!title) return alert("Quiz title required");
+
+    const totalTime = Math.max(1, parseInt(quizTotalTime || "0", 10) || 0);
+
+    setQuizBusy(true);
+    setContentError(null);
+    try {
+      const res = await apiPOST<{ ok: boolean; node: CourseNode; mock_exam_id: string }>(
+        `${process.env.NEXT_PUBLIC_API_BASE}/api/course-quizzes/create/`,
+        accessToken,
+        {
+          course_id: course.id,
+          parent_id: currentFolderId,
+          title,
+          description: newQuizDesc.trim() || null,
+          total_time_minutes: totalTime,
+          shuffle_questions: quizShuffleQuestions,
+          shuffle_choices: quizShuffleChoices,
+          allow_retakes: quizAllowRetakes,
+          retake_limit: quizRetakeLimit.trim(),
+        }
+      );
+
+      setNewQuizTitle("");
+      setNewQuizDesc("");
+      await loadNodes(course.id, currentFolderId);
+      // Stay on content; quiz can be managed via the new node in the list.
+    } catch (e: any) {
+      setContentError(e?.message ?? "Failed to create quiz");
+    } finally {
+      setQuizBusy(false);
     }
   }
 
@@ -1417,6 +1495,12 @@ async function getSignedUrl(storage_path: string, storage_url?: string | null) {
                   active={showCreateAssignment}
                 />
                 <ActionIcon
+                  label="New quiz"
+                  emoji="🧪"
+                  onClick={() => setShowCreateQuiz((v) => !v)}
+                  active={showCreateQuiz}
+                />
+                <ActionIcon
                   label="Upload file"
                   emoji="📤"
                   onClick={() => setShowUpload((v) => !v)}
@@ -1462,6 +1546,90 @@ async function getSignedUrl(storage_path: string, storage_url?: string | null) {
                     type="button"
                   >
                     {assignmentBusy ? "Creating..." : "Create & open"}
+                  </button>
+                </div>
+              ) : null}
+
+              {showCreateQuiz ? (
+                <div className="rounded-xl border p-4 bg-white shadow-sm space-y-3 max-w-2xl">
+                  <div className="font-semibold">Create quiz (mock exam)</div>
+                  <input
+                    className="border rounded px-3 py-2 text-sm w-full"
+                    placeholder="Quiz title"
+                    value={newQuizTitle}
+                    onChange={(e) => setNewQuizTitle(e.target.value)}
+                    disabled={quizBusy}
+                  />
+                  <input
+                    className="border rounded px-3 py-2 text-sm w-full"
+                    placeholder="Description (optional)"
+                    value={newQuizDesc}
+                    onChange={(e) => setNewQuizDesc(e.target.value)}
+                    disabled={quizBusy}
+                  />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div className="grid gap-1">
+                      <span className="text-xs text-slate-500">Total time (min)</span>
+                      <input
+                        type="number"
+                        min={1}
+                        className="border rounded px-3 py-2 text-sm w-full"
+                        value={quizTotalTime}
+                        onChange={(e) => setQuizTotalTime(e.target.value)}
+                        disabled={quizBusy}
+                      />
+                    </div>
+                    <div className="rounded-xl border bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                      Question counts are calculated after you add questions to the quiz.
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={quizShuffleQuestions}
+                        onChange={(e) => setQuizShuffleQuestions(e.target.checked)}
+                        disabled={quizBusy}
+                      />
+                      Shuffle questions
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={quizShuffleChoices}
+                        onChange={(e) => setQuizShuffleChoices(e.target.checked)}
+                        disabled={quizBusy}
+                      />
+                      Shuffle answer choices
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={quizAllowRetakes}
+                        onChange={(e) => setQuizAllowRetakes(e.target.checked)}
+                        disabled={quizBusy}
+                      />
+                      Allow retakes
+                    </label>
+                    <div className="grid gap-1">
+                      <span className="text-xs text-slate-500">Retake limit (optional)</span>
+                      <input
+                        type="number"
+                        min={1}
+                        className="border rounded px-3 py-2 text-sm w-full"
+                        value={quizRetakeLimit}
+                        onChange={(e) => setQuizRetakeLimit(e.target.value)}
+                        disabled={quizBusy || !quizAllowRetakes}
+                      />
+                    </div>
+                  </div>
+                  <button
+                    className="px-3 py-2 text-sm rounded bg-indigo-600 text-white w-full hover:bg-indigo-700 disabled:opacity-60"
+                    onClick={createQuizNode}
+                    disabled={quizBusy || assignmentBusy || uploadBusy || folderBusy}
+                    type="button"
+                  >
+                    {quizBusy ? "Creating..." : "Create & open"}
                   </button>
                 </div>
               ) : null}
@@ -1528,7 +1696,15 @@ async function getSignedUrl(storage_path: string, storage_url?: string | null) {
                   return (
                     <div key={n.id} id={`node-${n.id}`} className="rounded-xl border p-4 flex flex-col gap-3 bg-slate-50">
                       <div className="flex items-start gap-3">
-                        <div className="text-xl">{n.kind === "folder" ? "📁" : n.kind === "assignment" ? "📝" : "📄"}</div>
+                        <div className="text-xl">
+                          {n.kind === "folder"
+                            ? "📁"
+                            : n.kind === "assignment"
+                              ? "📝"
+                              : n.kind === "quiz"
+                                ? "🧪"
+                                : "📄"}
+                        </div>
                         <div className="flex-1">
                           <div className="font-semibold leading-tight flex items-center gap-2">
                             <span>{n.name}</span>
@@ -1582,6 +1758,33 @@ async function getSignedUrl(storage_path: string, storage_url?: string | null) {
                                 </button>
                                 <button className="px-3 py-2 text-sm rounded border bg-white text-red-600" onClick={() => deleteNode(n)} type="button">
                                   Remove
+                                </button>
+                              </>
+                            ) : null}
+                          </>
+                        ) : n.kind === "quiz" ? (
+                          <>
+                            <button
+                              className="px-3 py-2 text-sm rounded border bg-white"
+                              onClick={() => openQuiz(n, canManage ? "manage" : "open")}
+                              type="button"
+                              disabled={!canManage && !visible}
+                            >
+                              {canManage ? "Manage" : "Open"}
+                            </button>
+                            {canManage ? (
+                              <>
+                                <button className="px-3 py-2 text-sm rounded border bg-white" onClick={() => togglePublished(n)} type="button">
+                                  {n.published ? "Unpublish" : "Publish"}
+                                </button>
+                                <button className="px-3 py-2 text-sm rounded border bg-white" onClick={() => renameNode(n)} type="button">
+                                  Rename
+                                </button>
+                                <button className="px-3 py-2 text-sm rounded border bg-white" onClick={() => moveNode(n)} type="button">
+                                  Move
+                                </button>
+                                <button className="px-3 py-2 text-sm rounded border bg-white text-red-600" onClick={() => deleteNode(n)} type="button">
+                                  Delete
                                 </button>
                               </>
                             ) : null}
@@ -1986,6 +2189,12 @@ async function getSignedUrl(storage_path: string, storage_url?: string | null) {
             <>
               {gradeRows.map((a) => {
                 const grade = a.submission?.grade;
+                const isQuiz = a.kind === "quiz";
+                const openHref = isQuiz
+                  ? canManage
+                    ? `/practice/mock-exams?manage=${a.id}`
+                    : `/practice/mock-exams/${a.id}`
+                  : `/course/${course?.id}/assignment/${a.id}`;
                 return (
                   <div
                     key={a.id}
@@ -1997,22 +2206,22 @@ async function getSignedUrl(storage_path: string, storage_url?: string | null) {
                       <button
                         className="inline-flex items-center gap-1 text-xs font-semibold text-neutral-600 hover:text-neutral-900 underline underline-offset-2 transition"
                         type="button"
-                        onClick={() => router.push(`/course/${course?.id}/assignment/${a.id}`)}
+                        onClick={() => router.push(openHref)}
                       >
-                        Open <span aria-hidden>↗</span>
+                        {isQuiz ? "Open quiz" : "Open"} <span aria-hidden>↗</span>
                       </button>
                     </div>
 
                     {/* Status */}
                     <div className="text-neutral-600 capitalize">
                       <span className="inline-flex items-center px-2 py-1 rounded-full border border-neutral-200 bg-white text-xs font-semibold">
-                        {a.status}
+                        {isQuiz ? (a.is_active === false ? "disabled" : "quiz") : a.status}
                       </span>
                     </div>
 
                     {/* Due */}
                     <div className="text-neutral-600">
-                      {a.due_at ? (
+                      {a.due_at && !isQuiz ? (
                         <span className="text-xs sm:text-sm">
                           {new Date(a.due_at).toLocaleString()}
                         </span>
@@ -2028,21 +2237,32 @@ async function getSignedUrl(storage_path: string, storage_url?: string | null) {
                           {gradeBadge(grade.score as any, a.max_score as any)}
                         </div>
                       ) : a.submission ? (
-                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
-                          Pending
-                        </span>
+                        isQuiz && a.results_published === false ? (
+                          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+                            Results hidden
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                            Pending
+                          </span>
+                        )
                       ) : (
                         <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold bg-neutral-100 text-neutral-700 border border-neutral-200">
                           No submission
                         </span>
                       )}
 
-                      {a.submission ? (
+                      {a.submission && !isQuiz ? (
                         <div className="text-xs text-neutral-500 mt-2 text-right">
                           {a.submission.file_name ? a.submission.file_name : "Unnamed file"}
-                          {a.submission.created_at ? ` • ${new Date(a.submission.created_at).toLocaleString()}` : ""}
+                          {a.submission.created_at ? ` ? ${new Date(a.submission.created_at).toLocaleString()}` : ""}
+                        </div>
+                      ) : a.submission && isQuiz && a.submission.created_at ? (
+                        <div className="text-xs text-neutral-500 mt-2 text-right">
+                          Submitted {new Date(a.submission.created_at).toLocaleString()}
                         </div>
                       ) : null}
+
 
                       {grade?.feedback ? (
                         <div className="text-xs text-neutral-500 mt-2">

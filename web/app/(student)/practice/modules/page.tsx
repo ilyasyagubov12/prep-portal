@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { typesetMath } from "@/lib/mathjax";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE;
@@ -107,6 +107,7 @@ function getRequiredCount(m: PracticeModule) {
 
 export default function Page() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -145,6 +146,15 @@ export default function Page() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    const nextManage = searchParams?.get("manage") || null;
+    if (nextManage) {
+      setManageId(nextManage);
+      return;
+    }
+    setManageId(null);
+  }, [searchParams]);
 
   async function loadPractices(token: string) {
     setLoading(true);
@@ -187,12 +197,26 @@ export default function Page() {
       setNewTitle("");
       setNewDesc("");
       await loadPractices(accessToken);
-      setManageId(json.practice_id ?? null);
+      const nextId = json.practice_id ?? null;
+      if (nextId) {
+        setManageId(nextId);
+        router.push(`/practice/modules?manage=${nextId}`);
+      }
     } catch (e: any) {
       setError(e?.message ?? "Failed to create practice");
     } finally {
       setCreating(false);
     }
+  }
+
+  function openManage(practiceId: string) {
+    setManageId(practiceId);
+    router.push(`/practice/modules?manage=${practiceId}`);
+  }
+
+  function closeManage() {
+    setManageId(null);
+    router.push("/practice/modules");
   }
 
   async function togglePractice(practiceId: string, payload: Record<string, any>) {
@@ -422,7 +446,7 @@ function ExamSection({
                 {canManage ? (
                   <button
                     className="rounded-xl border px-3 py-2 text-sm"
-                    onClick={() => setManageId(manageId === p.id ? null : p.id)}
+                    onClick={() => (manageId === p.id ? closeManage() : openManage(p.id))}
                     type="button"
                   >
                     {manageId === p.id ? "Close" : "Manage"}

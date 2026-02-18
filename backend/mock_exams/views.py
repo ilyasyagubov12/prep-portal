@@ -1,6 +1,7 @@
 import random
 import re
 from django.db import models, transaction
+from types import SimpleNamespace
 from django.db.models import Count
 from django.utils import timezone
 from rest_framework import permissions, status
@@ -47,6 +48,70 @@ def _serialize_question_for_student(q: Question, choice_order: list[str] | None 
     }
 
 
+def _serialize_question_for_review(q: Question, choice_order: list[str] | None = None):
+    choices = []
+    raw_choices = q.choices or []
+    if choice_order:
+        by_label = {c.get("label"): c for c in raw_choices}
+        for lbl in choice_order:
+            c = by_label.get(lbl)
+            if not c:
+                continue
+            choices.append(
+                {
+                    "label": c.get("label"),
+                    "content": c.get("content"),
+                    "is_correct": bool(c.get("is_correct")),
+                }
+            )
+    else:
+        for c in raw_choices:
+            choices.append(
+                {
+                    "label": c.get("label"),
+                    "content": c.get("content"),
+                    "is_correct": bool(c.get("is_correct")),
+                }
+            )
+
+    return {
+        "id": str(q.id),
+        "subject": q.subject,
+        "topic": q.topic,
+        "subtopic": q.subtopic,
+        "stem": q.stem,
+        "passage": q.passage,
+        "choices": choices,
+        "is_open_ended": q.is_open_ended,
+        "correct_answer": q.correct_answer,
+        "image_url": q.image_url,
+        "difficulty": q.difficulty,
+    }
+
+
+def _apply_override(q: Question, override: dict | None):
+    if not override:
+        return q
+    data = {
+        "id": str(q.id),
+        "subject": q.subject,
+        "topic": q.topic,
+        "subtopic": q.subtopic,
+        "stem": q.stem,
+        "passage": q.passage,
+        "choices": q.choices,
+        "is_open_ended": q.is_open_ended,
+        "correct_answer": q.correct_answer,
+        "explanation": q.explanation,
+        "image_url": q.image_url,
+        "difficulty": q.difficulty,
+    }
+    for key in list(data.keys()):
+        if key in override:
+            data[key] = override.get(key)
+    return SimpleNamespace(**data)
+
+
 def _score_answers(question_map: dict, answers: dict):
     totals = {"verbal": {"correct": 0, "total": 0}, "math": {"correct": 0, "total": 0}}
     topic_stats = {}
@@ -91,12 +156,41 @@ def _score_answers(question_map: dict, answers: dict):
     return totals, topic_stats, diff_stats
 
 
+def _check_answer(q, answer_value):
+    if q.is_open_ended:
+        expected = (q.correct_answer or "").strip()
+        actual = str(answer_value or "").strip()
+        if expected and actual:
+            return expected.lower() == actual.lower(), expected, actual, None, None
+        return False, expected, actual, None, None
+
+    pick = str(answer_value or "").strip()
+    correct_choice = next((c for c in (q.choices or []) if c.get("is_correct")), None)
+    correct_label = correct_choice.get("label") if correct_choice else None
+    correct_text = correct_choice.get("content") if correct_choice else None
+    picked_choice = next((c for c in (q.choices or []) if c.get("label") == pick), None)
+    picked_text = picked_choice.get("content") if picked_choice else None
+    is_correct = bool(pick and correct_label and pick == correct_label)
+    return is_correct, correct_label, pick, correct_text, picked_text
+
+
+def _build_question_map_for_exam(exam: MockExam):
+    overrides = exam.question_overrides or {}
+    qs = Question.objects.filter(id__in=(exam.question_ids or []))
+    return {str(q.id): _apply_override(q, overrides.get(str(q.id))) for q in qs}
+
+
 def _validate_counts(verbal_count: int, math_count: int):
     if verbal_count < 0 or math_count < 0:
         return "Question counts must be 0 or greater"
-    if verbal_count + math_count <= 0:
-        return "At least one question is required"
     return None
+
+
+def _update_exam_counts(exam: MockExam):
+    qs = Question.objects.filter(id__in=(exam.question_ids or []))
+    exam.verbal_question_count = qs.filter(subject="verbal").count()
+    exam.math_question_count = qs.filter(subject="math").count()
+    exam.save(update_fields=["verbal_question_count", "math_question_count"])
 
 
 def _random_sample(qs, count, exclude_ids):
@@ -171,10 +265,10 @@ def _parse_command(command: str):
     return rules
 
 
-def _generate_question_ids(rules, verbal_count: int, math_count: int):
+def _generate_question_ids(rules, exclude_ids=None):
     selected_ids = []
     errors = []
-    count_by_subject = {"verbal": 0, "math": 0}
+    base_excludes = {str(i) for i in (exclude_ids or [])}
 
     for idx, rule in enumerate(rules, start=1):
         subject = (rule.get("subject") or "").lower()
@@ -198,21 +292,16 @@ def _generate_question_ids(rules, verbal_count: int, math_count: int):
         if difficulty:
             qs = qs.filter(difficulty__iexact=difficulty)
 
-        picked, available = _random_sample(qs, count, selected_ids)
+        exclude = list(base_excludes.union(selected_ids))
+        picked, available = _random_sample(qs, count, exclude)
         if picked is None:
             errors.append(f"Rule {idx}: only {available} matching questions (need {count})")
             continue
 
         selected_ids.extend([str(pid) for pid in picked])
-        count_by_subject[subject] += count
 
     if errors:
         return None, errors
-
-    if count_by_subject["verbal"] != verbal_count:
-        return None, [f"Verbal rules produce {count_by_subject['verbal']} questions (need {verbal_count})"]
-    if count_by_subject["math"] != math_count:
-        return None, [f"Math rules produce {count_by_subject['math']} questions (need {math_count})"]
 
     return selected_ids, []
 
@@ -223,14 +312,34 @@ class MockExamListView(APIView):
     def get(self, request):
         user = request.user
         staff = _is_staff(user)
+        prof = getattr(user, "profile", None)
+        role = (getattr(prof, "role", None) or "").lower()
+        is_admin = user.is_superuser or getattr(prof, "is_admin", False) or role == "admin"
+        course_id = request.query_params.get("course_id")
 
-        exams = MockExam.objects.order_by("-created_at")
+        exams = MockExam.objects.select_related("course").order_by("-created_at")
+        if course_id:
+            exams = exams.filter(course_id=course_id)
         data = []
         for exam in exams:
+            if staff and not is_admin:
+                if exam.course_id:
+                    from courses.models import CourseTeacher
+
+                    if not CourseTeacher.objects.filter(course_id=exam.course_id, teacher=user).exists():
+                        continue
+                else:
+                    if exam.created_by_id != user.id:
+                        continue
             access_qs = MockExamAccess.objects.filter(mock_exam=exam, is_active=True)
             locked = False
             has_access = True
             if not staff:
+                if exam.course_id:
+                    from courses.models import Enrollment
+
+                    if not Enrollment.objects.filter(course_id=exam.course_id, user=user).exists():
+                        continue
                 if access_qs.exists():
                     has_access = access_qs.filter(student=user).exists()
                 elif exam.allowed_students.exists():
@@ -273,6 +382,9 @@ class MockExamListView(APIView):
             data.append(
                 {
                     "id": str(exam.id),
+                    "course_id": str(exam.course_id) if exam.course_id else None,
+                    "course_title": exam.course.title if exam.course_id else None,
+                    "course_slug": exam.course.slug if exam.course_id else None,
                     "title": exam.title,
                     "description": exam.description,
                     "verbal_question_count": exam.verbal_question_count,
@@ -294,6 +406,192 @@ class MockExamListView(APIView):
             )
 
         return Response({"ok": True, "exams": data})
+
+
+class MockExamReviewView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        exam_id = request.query_params.get("mock_exam_id")
+        if not exam_id:
+            return Response({"error": "mock_exam_id required"}, status=400)
+        try:
+            exam = MockExam.objects.get(id=exam_id)
+        except MockExam.DoesNotExist:
+            return Response({"error": "Not found"}, status=404)
+
+        user = request.user
+        staff = _is_staff(user)
+        if not exam.results_published and not staff:
+            return Response({"error": "Results not published"}, status=403)
+
+        attempt = (
+            MockExamAttempt.objects.filter(mock_exam=exam, student=user, status="submitted")
+            .order_by("-submitted_at")
+            .first()
+        )
+        if not attempt:
+            return Response({"error": "No submitted attempt"}, status=404)
+
+        overrides = exam.question_overrides or {}
+        questions = Question.objects.filter(id__in=attempt.question_order)
+        by_id = {str(q.id): q for q in questions}
+        payload = []
+        for qid in attempt.question_order:
+            q = by_id.get(str(qid))
+            if not q:
+                continue
+            q2 = _apply_override(q, overrides.get(str(q.id)))
+            payload.append(_serialize_question_for_review(q2, attempt.choice_order.get(str(q.id))))
+
+        return Response(
+            {
+                "ok": True,
+                "review": True,
+                "attempt_id": str(attempt.id),
+                "mock_exam": {
+                    "id": str(exam.id),
+                    "title": exam.title,
+                    "description": exam.description,
+                    "verbal_question_count": exam.verbal_question_count,
+                    "math_question_count": exam.math_question_count,
+                    "total_time_minutes": exam.total_time_minutes,
+                },
+                "questions": payload,
+                "answers": attempt.answers,
+                "time_spent": attempt.time_spent,
+                "submitted_at": attempt.submitted_at,
+                "score_verbal": attempt.score_verbal,
+                "score_math": attempt.score_math,
+                "total_score": attempt.total_score,
+            }
+        )
+
+
+class MockExamAttemptsReportView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        if not _is_staff(request.user):
+            return Response({"error": "Forbidden"}, status=403)
+
+        exam_id = request.query_params.get("mock_exam_id")
+        if not exam_id:
+            return Response({"error": "mock_exam_id required"}, status=400)
+        try:
+            exam = MockExam.objects.select_related("course").get(id=exam_id)
+        except MockExam.DoesNotExist:
+            return Response({"error": "Not found"}, status=404)
+
+        user = request.user
+        prof = getattr(user, "profile", None)
+        role = (getattr(prof, "role", None) or "").lower()
+        is_admin = user.is_superuser or getattr(prof, "is_admin", False) or role == "admin"
+        if not is_admin:
+            if exam.course_id:
+                from courses.models import CourseTeacher
+
+                if not CourseTeacher.objects.filter(course_id=exam.course_id, teacher=user).exists():
+                    return Response({"error": "Forbidden"}, status=403)
+            elif exam.created_by_id != user.id:
+                return Response({"error": "Forbidden"}, status=403)
+
+        attempts_qs = MockExamAttempt.objects.filter(mock_exam=exam, status="submitted").select_related("student")
+        attempts_qs = attempts_qs.order_by("-submitted_at")
+
+        # Latest attempt per student
+        latest_by_student = {}
+        for attempt in attempts_qs:
+            sid = str(attempt.student_id)
+            if sid in latest_by_student:
+                continue
+            latest_by_student[sid] = attempt
+
+        # Attempt counts per student
+        counts = (
+            MockExamAttempt.objects.filter(mock_exam=exam, status="submitted")
+            .values("student_id")
+            .annotate(count=Count("id"))
+        )
+        count_map = {str(c["student_id"]): c["count"] for c in counts}
+
+        qmap = _build_question_map_for_exam(exam)
+
+        rows = []
+        for attempt in latest_by_student.values():
+            student = attempt.student
+            mistakes = []
+            unanswered = 0
+            for idx, qid in enumerate(attempt.question_order or [], start=1):
+                q = qmap.get(str(qid))
+                if not q:
+                    continue
+                answer_value = attempt.answers.get(str(qid))
+                if answer_value in (None, ""):
+                    unanswered += 1
+                    mistakes.append(
+                        {
+                            "index": idx,
+                            "question_id": str(qid),
+                            "subject": q.subject,
+                            "topic": q.topic,
+                            "subtopic": q.subtopic,
+                            "stem": q.stem,
+                            "status": "unanswered",
+                            "correct": q.correct_answer if q.is_open_ended else None,
+                            "correct_label": None,
+                            "correct_text": None,
+                            "answer": None,
+                            "answer_text": None,
+                            "is_open_ended": q.is_open_ended,
+                        }
+                    )
+                    continue
+
+                is_correct, correct_label, picked_label, correct_text, picked_text = _check_answer(q, answer_value)
+                if is_correct:
+                    continue
+                mistakes.append(
+                    {
+                        "index": idx,
+                        "question_id": str(qid),
+                        "subject": q.subject,
+                        "topic": q.topic,
+                        "subtopic": q.subtopic,
+                        "stem": q.stem,
+                        "status": "incorrect",
+                        "correct": q.correct_answer if q.is_open_ended else correct_label,
+                        "correct_label": correct_label,
+                        "correct_text": correct_text,
+                        "answer": picked_label if not q.is_open_ended else str(answer_value),
+                        "answer_text": picked_text if not q.is_open_ended else str(answer_value),
+                        "is_open_ended": q.is_open_ended,
+                    }
+                )
+
+            rows.append(
+                {
+                    "attempt_id": str(attempt.id),
+                    "student_profile": {
+                        "user_id": str(student.id),
+                        "username": getattr(student, "username", None),
+                        "first_name": getattr(student, "first_name", None),
+                        "last_name": getattr(student, "last_name", None),
+                        "nickname": getattr(getattr(student, "profile", None), "nickname", None),
+                        "student_id": getattr(getattr(student, "profile", None), "student_id", None),
+                    },
+                    "attempts_count": count_map.get(str(student.id), 0),
+                    "score_verbal": attempt.score_verbal,
+                    "score_math": attempt.score_math,
+                    "total_score": attempt.total_score,
+                    "submitted_at": attempt.submitted_at,
+                    "time_spent": attempt.time_spent,
+                    "mistakes": mistakes,
+                    "unanswered": unanswered,
+                }
+            )
+
+        return Response({"ok": True, "attempts": rows})
 
 
 class MockExamQuestionSearchView(APIView):
@@ -394,8 +692,18 @@ class MockExamQuestionLookupView(APIView):
             return Response({"error": "Forbidden"}, status=403)
 
         question_ids = request.data.get("question_ids") or []
-        if not isinstance(question_ids, list) or not question_ids:
-            return Response({"error": "question_ids required"}, status=400)
+        exam_id = request.data.get("mock_exam_id")
+        include_full = bool(request.data.get("full") or exam_id)
+        if not isinstance(question_ids, list):
+            return Response({"error": "question_ids must be a list"}, status=400)
+
+        overrides = {}
+        if exam_id:
+            try:
+                exam = MockExam.objects.get(id=exam_id)
+            except MockExam.DoesNotExist:
+                return Response({"error": "Mock exam not found"}, status=404)
+            overrides = exam.question_overrides or {}
 
         qs = Question.objects.filter(id__in=question_ids)
         by_id = {str(q.id): q for q in qs}
@@ -403,6 +711,27 @@ class MockExamQuestionLookupView(APIView):
         for qid in question_ids:
             q = by_id.get(str(qid))
             if not q:
+                continue
+            override = overrides.get(str(qid))
+            if include_full:
+                q2 = _apply_override(q, override)
+                ordered.append(
+                    {
+                        "id": str(q.id),
+                        "subject": q2.subject,
+                        "topic": q2.topic,
+                        "subtopic": q2.subtopic,
+                        "difficulty": q2.difficulty,
+                        "stem": q2.stem,
+                        "passage": q2.passage,
+                        "choices": q2.choices,
+                        "is_open_ended": q2.is_open_ended,
+                        "image_url": q2.image_url,
+                        "explanation": q2.explanation,
+                        "override": override or None,
+                        "published": q.published,
+                    }
+                )
                 continue
             ordered.append(
                 {
@@ -417,6 +746,52 @@ class MockExamQuestionLookupView(APIView):
             )
 
         return Response({"ok": True, "questions": ordered})
+
+
+class MockExamQuestionDetailView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        if not _is_staff(request.user):
+            return Response({"error": "Forbidden"}, status=403)
+
+        exam_id = request.data.get("mock_exam_id")
+        question_id = request.data.get("question_id")
+        if not exam_id or not question_id:
+            return Response({"error": "mock_exam_id and question_id required"}, status=400)
+
+        try:
+            exam = MockExam.objects.get(id=exam_id)
+        except MockExam.DoesNotExist:
+            return Response({"error": "Mock exam not found"}, status=404)
+
+        try:
+            q = Question.objects.get(id=question_id)
+        except Question.DoesNotExist:
+            return Response({"error": "Question not found"}, status=404)
+
+        override = (exam.question_overrides or {}).get(str(question_id))
+        q2 = _apply_override(q, override)
+        return Response(
+            {
+                "ok": True,
+                "question": {
+                    "id": str(q.id),
+                    "subject": q2.subject,
+                    "topic": q2.topic,
+                    "subtopic": q2.subtopic,
+                    "difficulty": q2.difficulty,
+                    "stem": q2.stem,
+                    "passage": q2.passage,
+                    "choices": q2.choices,
+                    "is_open_ended": q2.is_open_ended,
+                    "correct_answer": q2.correct_answer,
+                    "image_url": q2.image_url,
+                    "explanation": q2.explanation,
+                    "override": override or None,
+                },
+            }
+        )
 
 
 class MockExamStudentSearchView(APIView):
@@ -583,8 +958,7 @@ class MockExamCreateView(APIView):
 
         title = (request.data.get("title") or "").strip()
         description = request.data.get("description") or None
-        verbal_count = int(request.data.get("verbal_question_count") or 0)
-        math_count = int(request.data.get("math_question_count") or 0)
+        course_id = request.data.get("course_id")
         total_time = int(request.data.get("total_time_minutes") or 0)
         shuffle_questions = bool(request.data.get("shuffle_questions", True))
         shuffle_choices = bool(request.data.get("shuffle_choices", False))
@@ -605,10 +979,6 @@ class MockExamCreateView(APIView):
         if total_time <= 0:
             return Response({"error": "total_time_minutes must be greater than 0"}, status=400)
 
-        count_err = _validate_counts(verbal_count, math_count)
-        if count_err:
-            return Response({"error": count_err}, status=400)
-
         question_ids = request.data.get("question_ids") or []
         rules = request.data.get("rules") or []
         command = request.data.get("command") or ""
@@ -616,28 +986,29 @@ class MockExamCreateView(APIView):
         if question_ids:
             if len(question_ids) != len(set(question_ids)):
                 return Response({"error": "Duplicate questions detected"}, status=400)
-            qs = Question.objects.filter(id__in=question_ids)
-            by_subject = {
-                "verbal": qs.filter(subject="verbal").count(),
-                "math": qs.filter(subject="math").count(),
-            }
-            if by_subject["verbal"] != verbal_count or by_subject["math"] != math_count:
-                return Response({"error": "Selected questions do not match counts"}, status=400)
         elif rules:
-            question_ids, errors = _generate_question_ids(rules, verbal_count, math_count)
+            question_ids, errors = _generate_question_ids(rules, exclude_ids=[])
             if errors:
                 return Response({"error": " | ".join(errors)}, status=400)
         elif command:
             parsed = _parse_command(command)
             if not parsed:
                 return Response({"error": "Could not parse command"}, status=400)
-            question_ids, errors = _generate_question_ids(parsed, verbal_count, math_count)
+            question_ids, errors = _generate_question_ids(parsed, exclude_ids=[])
             if errors:
                 return Response({"error": " | ".join(errors)}, status=400)
         else:
             question_ids = []
 
+        verbal_count = 0
+        math_count = 0
+        if question_ids:
+            qs = Question.objects.filter(id__in=question_ids)
+            verbal_count = qs.filter(subject="verbal").count()
+            math_count = qs.filter(subject="math").count()
+
         exam = MockExam.objects.create(
+            course_id=course_id or None,
             title=title,
             description=description,
             verbal_question_count=verbal_count,
@@ -674,8 +1045,6 @@ class MockExamUpdateView(APIView):
         fields = [
             "title",
             "description",
-            "verbal_question_count",
-            "math_question_count",
             "total_time_minutes",
             "shuffle_questions",
             "shuffle_choices",
@@ -716,6 +1085,13 @@ class MockExamDeleteView(APIView):
             exam = MockExam.objects.get(id=exam_id)
         except MockExam.DoesNotExist:
             return Response({"error": "Not found"}, status=404)
+        if exam.course_id:
+            try:
+                from courses.models import CourseNode
+
+                CourseNode.objects.filter(quiz_id=exam.id).delete()
+            except Exception:
+                pass
         exam.delete()
         return Response({"ok": True})
 
@@ -743,16 +1119,9 @@ class MockExamQuestionsSetView(APIView):
         if len(question_ids) != len(set(question_ids)):
             return Response({"error": "Duplicate questions detected"}, status=400)
 
-        qs = Question.objects.filter(id__in=question_ids)
-        by_subject = {
-            "verbal": qs.filter(subject="verbal").count(),
-            "math": qs.filter(subject="math").count(),
-        }
-        if by_subject["verbal"] != exam.verbal_question_count or by_subject["math"] != exam.math_question_count:
-            return Response({"error": "Selected questions do not match counts"}, status=400)
-
         exam.question_ids = question_ids
         exam.save(update_fields=["question_ids"])
+        _update_exam_counts(exam)
         return Response({"ok": True})
 
 
@@ -782,15 +1151,221 @@ class MockExamQuestionsGenerateView(APIView):
         if not rules:
             return Response({"error": "rules or command required"}, status=400)
 
-        question_ids, errors = _generate_question_ids(
-            rules, exam.verbal_question_count, exam.math_question_count
-        )
+        append_mode = request.data.get("append", True)
+        if isinstance(append_mode, str):
+            append_mode = append_mode.lower() not in ("0", "false", "no")
+
+        existing_ids = list(exam.question_ids or [])
+        question_ids, errors = _generate_question_ids(rules, exclude_ids=existing_ids if append_mode else [])
         if errors:
             return Response({"error": " | ".join(errors)}, status=400)
 
-        exam.question_ids = question_ids
+        if append_mode:
+            merged = existing_ids + [qid for qid in question_ids if qid not in existing_ids]
+        else:
+            merged = question_ids
+
+        exam.question_ids = merged
         exam.save(update_fields=["question_ids"])
-        return Response({"ok": True, "question_ids": question_ids})
+        _update_exam_counts(exam)
+        return Response({"ok": True, "question_ids": exam.question_ids})
+
+
+class MockExamQuestionAddView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request):
+        if not _is_staff(request.user):
+            return Response({"error": "Forbidden"}, status=403)
+
+        exam_id = request.data.get("mock_exam_id")
+        question_id = request.data.get("question_id")
+        if not exam_id or not question_id:
+            return Response({"error": "mock_exam_id and question_id required"}, status=400)
+
+        try:
+            exam = MockExam.objects.get(id=exam_id)
+        except MockExam.DoesNotExist:
+            return Response({"error": "Not found"}, status=404)
+
+        prof = getattr(request.user, "profile", None)
+        role = (getattr(prof, "role", None) or "").lower()
+        is_admin = request.user.is_superuser or getattr(prof, "is_admin", False) or role == "admin"
+        if not is_admin:
+            if exam.course_id:
+                from courses.models import CourseTeacher
+
+                if not CourseTeacher.objects.filter(course_id=exam.course_id, teacher=request.user).exists():
+                    return Response({"error": "Forbidden"}, status=403)
+            elif exam.created_by_id != request.user.id:
+                return Response({"error": "Forbidden"}, status=403)
+
+        try:
+            q = Question.objects.get(id=question_id)
+        except Question.DoesNotExist:
+            return Response({"error": "Question not found"}, status=404)
+
+        existing = list(exam.question_ids or [])
+        if question_id in existing:
+            return Response({"error": "Question already added"}, status=400)
+
+        next_ids = existing + [question_id]
+
+        exam.question_ids = next_ids
+        exam.save(update_fields=["question_ids"])
+        _update_exam_counts(exam)
+        return Response({"ok": True, "question_ids": next_ids})
+
+
+class MockExamQuestionRemoveView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request):
+        if not _is_staff(request.user):
+            return Response({"error": "Forbidden"}, status=403)
+
+        exam_id = request.data.get("mock_exam_id")
+        question_id = request.data.get("question_id")
+        if not exam_id or not question_id:
+            return Response({"error": "mock_exam_id and question_id required"}, status=400)
+
+        try:
+            exam = MockExam.objects.get(id=exam_id)
+        except MockExam.DoesNotExist:
+            return Response({"error": "Not found"}, status=404)
+
+        prof = getattr(request.user, "profile", None)
+        role = (getattr(prof, "role", None) or "").lower()
+        is_admin = request.user.is_superuser or getattr(prof, "is_admin", False) or role == "admin"
+        if not is_admin:
+            if exam.course_id:
+                from courses.models import CourseTeacher
+
+                if not CourseTeacher.objects.filter(course_id=exam.course_id, teacher=request.user).exists():
+                    return Response({"error": "Forbidden"}, status=403)
+            elif exam.created_by_id != request.user.id:
+                return Response({"error": "Forbidden"}, status=403)
+
+        existing = list(exam.question_ids or [])
+        if question_id not in existing:
+            return Response({"error": "Question not in mock"}, status=400)
+
+        next_ids = [qid for qid in existing if str(qid) != str(question_id)]
+        overrides = exam.question_overrides or {}
+        overrides.pop(str(question_id), None)
+        exam.question_overrides = overrides
+        exam.question_ids = next_ids
+        exam.save(update_fields=["question_ids", "question_overrides"])
+        _update_exam_counts(exam)
+        return Response({"ok": True, "question_ids": next_ids})
+
+
+class MockExamQuestionReplaceView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request):
+        if not _is_staff(request.user):
+            return Response({"error": "Forbidden"}, status=403)
+
+        exam_id = request.data.get("mock_exam_id")
+        old_id = request.data.get("old_question_id")
+        new_id = request.data.get("new_question_id")
+        if not exam_id or not old_id or not new_id:
+            return Response({"error": "mock_exam_id, old_question_id, new_question_id required"}, status=400)
+
+        try:
+            exam = MockExam.objects.get(id=exam_id)
+        except MockExam.DoesNotExist:
+            return Response({"error": "Not found"}, status=404)
+
+        prof = getattr(request.user, "profile", None)
+        role = (getattr(prof, "role", None) or "").lower()
+        is_admin = request.user.is_superuser or getattr(prof, "is_admin", False) or role == "admin"
+        if not is_admin:
+            if exam.course_id:
+                from courses.models import CourseTeacher
+
+                if not CourseTeacher.objects.filter(course_id=exam.course_id, teacher=request.user).exists():
+                    return Response({"error": "Forbidden"}, status=403)
+            elif exam.created_by_id != request.user.id:
+                return Response({"error": "Forbidden"}, status=403)
+
+        if old_id == new_id:
+            return Response({"error": "Replacement question is the same"}, status=400)
+
+        try:
+            new_q = Question.objects.get(id=new_id)
+        except Question.DoesNotExist:
+            return Response({"error": "New question not found"}, status=404)
+
+        existing = list(exam.question_ids or [])
+        if old_id not in existing:
+            return Response({"error": "Old question not in mock"}, status=400)
+        if new_id in existing:
+            return Response({"error": "Question already in mock"}, status=400)
+
+        next_ids = [new_id if str(qid) == str(old_id) else qid for qid in existing]
+
+        overrides = exam.question_overrides or {}
+        if str(old_id) in overrides:
+            overrides.pop(str(old_id), None)
+            exam.question_overrides = overrides
+            exam.save(update_fields=["question_overrides"])
+
+        exam.question_ids = next_ids
+        exam.save(update_fields=["question_ids"])
+        _update_exam_counts(exam)
+        return Response({"ok": True, "question_ids": next_ids})
+
+
+class MockExamQuestionOverrideView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request):
+        if not _is_staff(request.user):
+            return Response({"error": "Forbidden"}, status=403)
+
+        exam_id = request.data.get("mock_exam_id")
+        question_id = request.data.get("question_id")
+        override = request.data.get("override")
+        clear = bool(request.data.get("clear"))
+        if not exam_id or not question_id:
+            return Response({"error": "mock_exam_id and question_id required"}, status=400)
+
+        try:
+            exam = MockExam.objects.get(id=exam_id)
+        except MockExam.DoesNotExist:
+            return Response({"error": "Not found"}, status=404)
+
+        prof = getattr(request.user, "profile", None)
+        role = (getattr(prof, "role", None) or "").lower()
+        is_admin = request.user.is_superuser or getattr(prof, "is_admin", False) or role == "admin"
+        if not is_admin:
+            if exam.course_id:
+                from courses.models import CourseTeacher
+
+                if not CourseTeacher.objects.filter(course_id=exam.course_id, teacher=request.user).exists():
+                    return Response({"error": "Forbidden"}, status=403)
+            elif exam.created_by_id != request.user.id:
+                return Response({"error": "Forbidden"}, status=403)
+
+        if question_id not in (exam.question_ids or []):
+            return Response({"error": "Question not in mock"}, status=400)
+
+        overrides = exam.question_overrides or {}
+        if clear:
+            overrides.pop(str(question_id), None)
+        else:
+            if not isinstance(override, dict):
+                return Response({"error": "override must be object"}, status=400)
+            overrides[str(question_id)] = override
+        exam.question_overrides = overrides
+        exam.save(update_fields=["question_overrides"])
+        return Response({"ok": True})
 
 
 class MockExamStartView(APIView):
@@ -808,11 +1383,19 @@ class MockExamStartView(APIView):
 
         staff = _is_staff(request.user)
 
+        if not (exam.question_ids or []):
+            return Response({"error": "No questions in this mock yet"}, status=400)
+
         if not exam.is_active and not staff:
             return Response({"error": "Locked"}, status=403)
         access = None
         access_qs = MockExamAccess.objects.filter(mock_exam=exam, is_active=True)
         if not staff:
+            if exam.course_id:
+                from courses.models import Enrollment
+
+                if not Enrollment.objects.filter(course_id=exam.course_id, user=request.user).exists():
+                    return Response({"error": "No access"}, status=403)
             if access_qs.exists():
                 access = access_qs.filter(student=request.user).first()
                 if not access:
@@ -851,6 +1434,8 @@ class MockExamStartView(APIView):
             .first()
         )
 
+        overrides = exam.question_overrides or {}
+
         if not attempt:
             attempt = MockExamAttempt.objects.create(
                 mock_exam=exam,
@@ -866,7 +1451,8 @@ class MockExamStartView(APIView):
             if exam.shuffle_choices:
                 qs = Question.objects.filter(id__in=order)
                 for q in qs:
-                    labels = [c.get("label") for c in (q.choices or []) if c.get("label")]
+                    q2 = _apply_override(q, overrides.get(str(q.id)))
+                    labels = [c.get("label") for c in (q2.choices or []) if c.get("label")]
                     random.shuffle(labels)
                     choice_order[str(q.id)] = labels
             attempt.choice_order = choice_order
@@ -883,7 +1469,8 @@ class MockExamStartView(APIView):
             q = by_id.get(str(qid))
             if not q:
                 continue
-            payload.append(_serialize_question_for_student(q, attempt.choice_order.get(str(q.id))))
+            q2 = _apply_override(q, overrides.get(str(q.id)))
+            payload.append(_serialize_question_for_student(q2, attempt.choice_order.get(str(q.id))))
 
         return Response(
             {
@@ -971,7 +1558,8 @@ class MockExamSubmitView(APIView):
             return Response({"error": "answers must be list or dict"}, status=400)
 
         questions = Question.objects.filter(id__in=attempt.question_order)
-        qmap = {str(q.id): q for q in questions}
+        overrides = (attempt.mock_exam.question_overrides or {}) if attempt.mock_exam_id else {}
+        qmap = {str(q.id): _apply_override(q, overrides.get(str(q.id))) for q in questions}
 
         totals, topic_stats, diff_stats = _score_answers(qmap, answers)
 

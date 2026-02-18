@@ -14,6 +14,9 @@ type AssignmentRow = {
   status: string;
   due_at: string | null;
   max_score: number | null;
+  kind?: "assignment" | "quiz";
+  results_published?: boolean;
+  is_active?: boolean;
 };
 
 type SubmissionRow = {
@@ -300,35 +303,56 @@ export default function GradebookPage() {
             {assignments.map((a) => {
               const submission = a.submission;
               const grade = submission?.grade ?? null;
+              const isQuiz = a.kind === "quiz";
+              const openHref = isQuiz
+                ? staff
+                  ? `/practice/mock-exams?manage=${a.id}`
+                  : `/practice/mock-exams/${a.id}`
+                : `/course/${courseId}/assignment/${a.id}`;
 
               return (
                 <div key={a.id} className="grid grid-cols-4 gap-3 px-4 py-3 text-sm items-center">
                   <div className="space-y-1">
                     <div className="font-medium">{a.title}</div>
-                    <Link className="underline text-xs" href={`/course/${courseId}/assignment/${a.id}`}>
-                      Open
+                    <Link className="underline text-xs" href={openHref}>
+                      {isQuiz ? "Open quiz" : "Open"}
                     </Link>
                   </div>
 
-                  <div className="text-neutral-600 capitalize">{a.status}</div>
+                  <div className="text-neutral-600 capitalize">
+                    {isQuiz ? (a.is_active === false ? "disabled" : "quiz") : a.status}
+                  </div>
 
-                  <div className="text-neutral-600">{a.due_at ? new Date(a.due_at).toLocaleString() : "—"}</div>
+                  <div className="text-neutral-600">
+                    {a.due_at && !isQuiz ? new Date(a.due_at).toLocaleString() : "—"}
+                  </div>
 
                   <div className="text-right">
                     {grade ? (
                       <div className="inline-flex justify-end w-full">{gradeBadge(grade.score, a.max_score)}</div>
                     ) : submission ? (
-                      "Pending"
+                      isQuiz && a.results_published === false ? (
+                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+                          Results hidden
+                        </span>
+                      ) : (
+                        "Pending"
+                      )
                     ) : (
                       "No submission"
                     )}
 
-                    {submission ? (
+                    {submission && !isQuiz ? (
                       <div className="text-xs text-neutral-500 mt-1 text-right">
                         {submission.file_name ? submission.file_name : "Unnamed file"}
-                        {submission.created_at ? ` • ${new Date(submission.created_at).toLocaleString()}` : ""}
+                        {submission.created_at ? ` ? ${new Date(submission.created_at).toLocaleString()}` : ""}
+                      </div>
+                    ) : submission && isQuiz && submission.created_at ? (
+                      <div className="text-xs text-neutral-500 mt-1 text-right">
+                        Submitted {new Date(submission.created_at).toLocaleString()}
                       </div>
                     ) : null}
+
 
                     {grade?.feedback ? <div className="text-xs text-neutral-500 mt-1">{grade.feedback}</div> : null}
                   </div>

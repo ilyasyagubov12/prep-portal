@@ -16,6 +16,7 @@ from .views import (
     CourseNodeSetScheduleView,
     CourseNodeUpdateView,
     CourseNodeDeleteView,
+    CourseQuizCreateView,
 )
 
 urlpatterns = [
@@ -29,6 +30,7 @@ urlpatterns = [
     path("course-nodes/set-schedule/", CourseNodeSetScheduleView.as_view(), name="course_nodes_set_schedule"),
     path("course-nodes/update/", CourseNodeUpdateView.as_view(), name="course_nodes_update"),
     path("course-nodes/delete/", CourseNodeDeleteView.as_view(), name="course_nodes_delete"),
+    path("course-quizzes/create/", CourseQuizCreateView.as_view(), name="course_quizzes_create"),
     path("admin/courses/list/", AdminCoursesListView.as_view(), name="admin_courses_list"),
     path("admin/courses/create/", AdminCoursesCreateView.as_view(), name="admin_courses_create"),
     path("admin/courses/update/", AdminCoursesUpdateView.as_view(), name="admin_courses_update"),

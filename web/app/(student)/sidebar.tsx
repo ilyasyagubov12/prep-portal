@@ -28,7 +28,6 @@ const items: NavItem[] = [
   { section: "Practice" },
   { label: "Question Bank", href: "/practice/questions", icon: ClipboardList },
   { label: "Practice Test", href: "/practice/modules", icon: ClipboardCheck },
-  { label: "Mock Exams", href: "/practice/mock-exams", icon: Medal },
 
   { label: "Vocab", href: "/vocab", icon: SpellCheck },
   { label: "Score Calculator", href: "/score-calculator", icon: Calculator },
@@ -56,6 +55,7 @@ export default function Sidebar({
   const [nickname, setNickname] = useState("Student");
   const [avatarUrl, setAvatarUrl] = useState<string>("");
   const [roleText, setRoleText] = useState<string>("Student");
+  const [isStaff, setIsStaff] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -88,6 +88,8 @@ export default function Sidebar({
             ? "Admin"
             : "Student";
         setRoleText(label);
+        const roleRaw = (profile.role ?? "").toLowerCase();
+        setIsStaff(label === "Admin" || label === "Teacher" || roleRaw === "admin" || roleRaw === "teacher");
       }
     }
 
@@ -243,29 +245,56 @@ export default function Sidebar({
       </nav>
 
       {/* Logout */}
-      <button
-        onClick={logout}
+      <div
         style={{
           position: "absolute",
           bottom: 16,
           left: 16,
           right: 16,
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          padding: 10,
-          borderRadius: 10,
-          border: "1px solid rgba(255,255,255,0.25)",
-          background: "rgba(255,255,255,0.12)",
-          color: "#eaf2ff",
-          cursor: "pointer",
-          fontWeight: 700,
-          boxShadow: "0 8px 16px rgba(0,0,0,0.2)",
+          display: "grid",
+          gap: 8,
         }}
       >
-        <LogOut size={18} />
-        Log out
-      </button>
+        {isStaff ? (
+          <Link
+            href="/practice/mock-exams"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              padding: 10,
+              borderRadius: 10,
+              textDecoration: "none",
+              border: "1px solid rgba(255,255,255,0.25)",
+              background: "rgba(255,255,255,0.08)",
+              color: "#eaf2ff",
+              fontWeight: 600,
+            }}
+          >
+            <Medal size={18} />
+            Mock Exams (Admin)
+          </Link>
+        ) : null}
+        <button
+          onClick={logout}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            padding: 10,
+            borderRadius: 10,
+            border: "1px solid rgba(255,255,255,0.25)",
+            background: "rgba(255,255,255,0.12)",
+            color: "#eaf2ff",
+            cursor: "pointer",
+            fontWeight: 700,
+            boxShadow: "0 8px 16px rgba(0,0,0,0.2)",
+          }}
+        >
+          <LogOut size={18} />
+          Log out
+        </button>
+      </div>
     </aside>
   );
 }

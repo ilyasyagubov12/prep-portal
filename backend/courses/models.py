@@ -41,6 +41,7 @@ class CourseNode(models.Model):
         ("folder", "folder"),
         ("file", "file"),
         ("assignment", "assignment"),
+        ("quiz", "quiz"),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -57,6 +58,7 @@ class CourseNode(models.Model):
     published = models.BooleanField(default=True)
     publish_at = models.DateTimeField(blank=True, null=True)
     assignment_id = models.UUIDField(blank=True, null=True)
+    quiz_id = models.UUIDField(blank=True, null=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,

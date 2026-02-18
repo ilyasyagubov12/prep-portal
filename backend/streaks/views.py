@@ -13,16 +13,40 @@ from .utils import get_streak_base
 BAKU_TZ = ZoneInfo("Asia/Baku")
 
 
-def _local_now():
-    return timezone.localtime(timezone.now(), BAKU_TZ)
+def _parse_tz_offset(request):
+    raw = (
+        request.headers.get("X-TZ-Offset")
+        or request.query_params.get("tz_offset")
+        or request.data.get("tz_offset")
+    )
+    try:
+        offset = int(raw)
+    except Exception:
+        return 0
+    if offset > 840:
+        return 840
+    if offset < -840:
+        return -840
+    return offset
 
 
-def _local_date():
-    return _local_now().date()
+def _local_now(request):
+    # JS getTimezoneOffset(): minutes to add to local time to get UTC.
+    offset = _parse_tz_offset(request)
+    return (timezone.now() - timedelta(minutes=offset)).replace(tzinfo=None)
 
 
-def _get_streak_count(user):
-    base = get_streak_base(user)
+def _local_date(request):
+    return _local_now(request).date()
+
+
+def _time_left_seconds(local_now):
+    next_midnight = datetime.combine(local_now.date() + timedelta(days=1), datetime.min.time())
+    return max(0, int((next_midnight - local_now).total_seconds()))
+
+
+def _get_streak_count(user, today):
+    base = get_streak_base(user, today=today)
     offset = getattr(getattr(user, "profile", None), "streak_offset", 0) or 0
     return max(0, base + offset)
 
@@ -32,24 +56,18 @@ class StreakStatusView(APIView):
 
     def get(self, request):
         user = request.user
-        today = _local_date()
+        local_now = _local_now(request)
+        today = local_now.date()
         progress = DailyStreakProgress.objects.filter(user=user, date=today).first()
         math_count = progress.math_count if progress else 0
         verbal_count = progress.verbal_count if progress else 0
         completed = bool(progress and progress.completed_at)
-
-        now = _local_now()
-        next_midnight = (today + timedelta(days=1))
-        next_midnight_dt = timezone.make_aware(
-            datetime.combine(next_midnight, datetime.min.time()),
-            BAKU_TZ,
-        )
-        time_left = max(0, int((next_midnight_dt - now).total_seconds()))
+        time_left = _time_left_seconds(local_now)
 
         return Response(
             {
                 "ok": True,
-                "streak_count": _get_streak_count(user),
+                "streak_count": _get_streak_count(user, today),
                 "today": {
                     "date": today.isoformat(),
                     "math_count": math_count,
@@ -87,7 +105,8 @@ class StreakAttemptView(APIView):
         if subject not in ["math", "verbal"]:
             subject = q.subject
 
-        today = _local_date()
+        local_now = _local_now(request)
+        today = local_now.date()
         attempt, created = QuestionAttempt.objects.get_or_create(
             user=user,
             question=q,
@@ -110,21 +129,15 @@ class StreakAttemptView(APIView):
                 progress.verbal_count = min(5, progress.verbal_count + 1)
 
             if progress.math_count >= 5 and progress.verbal_count >= 5 and not progress.completed_at:
-                progress.completed_at = _local_now()
+                progress.completed_at = timezone.now()
             progress.save()
 
-        now = _local_now()
-        next_midnight = (today + timedelta(days=1))
-        next_midnight_dt = timezone.make_aware(
-            datetime.combine(next_midnight, datetime.min.time()),
-            BAKU_TZ,
-        )
-        time_left = max(0, int((next_midnight_dt - now).total_seconds()))
+        time_left = _time_left_seconds(local_now)
 
         return Response(
             {
                 "ok": True,
-                "streak_count": _get_streak_count(user),
+                "streak_count": _get_streak_count(user, today),
                 "today": {
                     "date": today.isoformat(),
                     "math_count": progress.math_count,

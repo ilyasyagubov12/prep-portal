@@ -26,6 +26,7 @@ class CourseSerializer(serializers.ModelSerializer):
 
 class CourseNodeSerializer(serializers.ModelSerializer):
     assignment = serializers.SerializerMethodField()
+    quiz = serializers.SerializerMethodField()
     storage_url = serializers.SerializerMethodField()
 
     class Meta:
@@ -45,6 +46,8 @@ class CourseNodeSerializer(serializers.ModelSerializer):
             "publish_at",
             "assignment_id",
             "assignment",
+            "quiz_id",
+            "quiz",
             "created_by",
             "created_at",
         ]
@@ -53,6 +56,12 @@ class CourseNodeSerializer(serializers.ModelSerializer):
         assignments_map = self.context.get("assignments_map")
         if assignments_map:
             return assignments_map.get(obj.assignment_id)
+        return None
+
+    def get_quiz(self, obj):
+        quizzes_map = self.context.get("quizzes_map")
+        if quizzes_map:
+            return quizzes_map.get(obj.quiz_id)
         return None
 
     def get_storage_url(self, obj):

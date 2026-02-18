@@ -23,8 +23,9 @@ type ExamQuestion = {
   subtopic?: string | null;
   stem: string;
   passage?: string | null;
-  choices?: { label: string; content: string }[];
+  choices?: { label: string; content: string; is_correct?: boolean }[];
   is_open_ended?: boolean | null;
+  correct_answer?: string | null;
   image_url?: string | null;
   difficulty?: string | null;
 };
@@ -142,6 +143,7 @@ export default function Page() {
   const [mapOpen, setMapOpen] = useState(false);
   const [result, setResult] = useState<MockResult | null>(null);
   const [autoResumeChecked, setAutoResumeChecked] = useState(false);
+  const [reviewMode, setReviewMode] = useState(false);
   const [lastSectionIndex, setLastSectionIndex] = useState<{ verbal: number | null; math: number | null }>({
     verbal: null,
     math: null,
@@ -189,6 +191,7 @@ export default function Page() {
     if (!mockId) return;
     setLoading(true);
     setError(null);
+    setReviewMode(false);
     try {
       const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
       if (!token) throw new Error("Not logged in");
@@ -246,16 +249,55 @@ export default function Page() {
     }
   }
 
+  async function loadReview() {
+    if (!mockId) return;
+    setError(null);
+    try {
+      const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
+      if (!token) return;
+      const res = await fetch(`${API_BASE}/api/mock-exams/review/?mock_exam_id=${mockId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const { json, text } = await readResponse(res);
+      if (!res.ok) {
+        const htmlError = extractHtmlError(text);
+        const fallback = text ? text.slice(0, 200) : "Failed to load review";
+        throw new Error(json?.error || htmlError || fallback);
+      }
+
+      const attempt = json.attempt_id || null;
+      const examPayload = json.mock_exam || null;
+      const questionPayload = json.questions || [];
+      const spentFromServer = Number(json.time_spent || 0);
+      const computedLeft = Math.max(0, (examPayload?.total_time_minutes || 0) * 60 - spentFromServer);
+
+      setAttemptId(attempt);
+      setExam(examPayload);
+      setQuestions(questionPayload);
+      setAnswers(json.answers ?? {});
+      setTimeLeft(computedLeft);
+      setReviewMode(true);
+      setIntroMode(false);
+    } catch {
+      // ignore review errors (no submitted attempt or results not published)
+    }
+  }
+
   useEffect(() => {
     if (!mockId || autoResumeChecked) return;
     if (typeof window === "undefined") return;
     const lastAttempt = localStorage.getItem(getExamAttemptKey(mockId));
-    if (lastAttempt) startExam();
+    if (lastAttempt) {
+      startExam();
+      setAutoResumeChecked(true);
+      return;
+    }
+    void loadReview();
     setAutoResumeChecked(true);
   }, [mockId, autoResumeChecked]);
 
   useEffect(() => {
-    if (!attemptId || introMode || result) return;
+    if (!attemptId || introMode || result || reviewMode) return;
     saveAttemptState(attemptId, {
       currentIndex,
       answers,
@@ -265,27 +307,28 @@ export default function Page() {
   }, [attemptId, introMode, result, currentIndex, answers, flags, timeLeft]);
 
   useEffect(() => {
-    if (introMode || result || !attemptId) return;
+    if (introMode || result || reviewMode || !attemptId) return;
     const id = window.setInterval(() => {
       setTimeLeft((t) => (t > 0 ? t - 1 : 0));
     }, 1000);
     return () => window.clearInterval(id);
-  }, [introMode, result, attemptId]);
+  }, [introMode, result, reviewMode, attemptId]);
 
   useEffect(() => {
-    if (!attemptId || introMode || result) return;
+    if (!attemptId || introMode || result || reviewMode) return;
     const id = window.setInterval(() => {
       void saveProgress();
     }, 30000);
     return () => window.clearInterval(id);
-  }, [attemptId, introMode, result, answers, timeLeft]);
+  }, [attemptId, introMode, result, reviewMode, answers, timeLeft]);
 
   useEffect(() => {
     if (timeLeft !== 0) return;
     if (submittedRef.current || result) return;
+    if (reviewMode) return;
     if (!attemptId) return;
     submitExam();
-  }, [timeLeft, attemptId, result]);
+  }, [timeLeft, attemptId, result, reviewMode]);
 
   useEffect(() => {
     if (!currentQ) return;
@@ -347,12 +390,14 @@ export default function Page() {
   function setAnswer(value: string) {
     const q = currentQ;
     if (!q) return;
+    if (reviewMode) return;
     setAnswers((prev) => ({ ...prev, [q.id]: value }));
   }
 
   function toggleFlag() {
     const q = currentQ;
     if (!q) return;
+    if (reviewMode) return;
     setFlags((prev) => ({ ...prev, [q.id]: !prev[q.id] }));
   }
 
@@ -453,10 +498,10 @@ export default function Page() {
 
           <button
             className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
-            onClick={() => router.push("/practice/mock-exams")}
+            onClick={() => router.push("/home")}
             type="button"
           >
-            Back to Mock Exams
+            Back to Home
           </button>
         </div>
       </div>
@@ -473,26 +518,32 @@ export default function Page() {
               <div className="text-lg font-semibold text-slate-900">{exam?.title || "Mock"}</div>
               <div className="text-xs text-slate-500">{exam?.description || "Single timer mock"}</div>
             </div>
-            <div className="text-xl font-semibold text-slate-900">{formatTime(timeLeft)}</div>
+            <div className="text-xl font-semibold text-slate-900">
+              {reviewMode ? "Review" : formatTime(timeLeft)}
+            </div>
             <div className="flex flex-wrap items-center gap-2">
-              <button
-                className={`rounded-full border px-3 py-1 text-xs font-semibold ${
-                  currentSection === "verbal" ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200"
-                }`}
-                onClick={() => goToSection("verbal")}
-                type="button"
-              >
-                Verbal ({verbalIndices.length})
-              </button>
-              <button
-                className={`rounded-full border px-3 py-1 text-xs font-semibold ${
-                  currentSection === "math" ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200"
-                }`}
-                onClick={() => goToSection("math")}
-                type="button"
-              >
-                Math ({mathIndices.length})
-              </button>
+              {verbalIndices.length > 0 ? (
+                <button
+                  className={`rounded-full border px-3 py-1 text-xs font-semibold ${
+                    currentSection === "verbal" ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200"
+                  }`}
+                  onClick={() => goToSection("verbal")}
+                  type="button"
+                >
+                  Verbal ({verbalIndices.length})
+                </button>
+              ) : null}
+              {mathIndices.length > 0 ? (
+                <button
+                  className={`rounded-full border px-3 py-1 text-xs font-semibold ${
+                    currentSection === "math" ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200"
+                  }`}
+                  onClick={() => goToSection("math")}
+                  type="button"
+                >
+                  Math ({mathIndices.length})
+                </button>
+              ) : null}
               <button
                 className="text-sm text-slate-500"
                 onClick={() => router.push("/practice/mock-exams")}
@@ -553,33 +604,67 @@ export default function Page() {
                   </div>
 
                   {currentQ.is_open_ended ? (
-                    <textarea
-                      className="mt-4 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm min-h-[110px]"
-                      value={answers[currentQ.id] ?? ""}
-                      onChange={(e) => setAnswer(e.target.value)}
-                      placeholder="Type your answer"
-                    />
+                    <div className="mt-4 space-y-2">
+                      <textarea
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm min-h-[110px]"
+                        value={answers[currentQ.id] ?? ""}
+                        onChange={(e) => setAnswer(e.target.value)}
+                        placeholder="Type your answer"
+                        readOnly={reviewMode}
+                      />
+                      {reviewMode ? (
+                        <div className="text-xs text-slate-600">
+                          Correct answer:{" "}
+                          <span className="font-semibold text-emerald-700">
+                            {currentQ.correct_answer || "—"}
+                          </span>
+                        </div>
+                      ) : null}
+                    </div>
                   ) : (
                     <div className="mt-4 space-y-3">
                       {(currentQ.choices || []).map((c) => {
                         const isSelected = answers[currentQ.id] === c.label;
+                        const isCorrect = reviewMode && !!c.is_correct;
+                        const isWrong = reviewMode && isSelected && !c.is_correct;
+                        const isChosenCorrect = reviewMode && isSelected && !!c.is_correct;
                         return (
                           <button
                             key={c.label}
                             className={`w-full rounded-xl border px-4 py-3 text-left text-sm transition flex items-center gap-2 ${
-                              isSelected ? "border-blue-600 bg-blue-50 shadow-sm" : "border-slate-200"
+                              isCorrect
+                                ? "border-emerald-500 bg-emerald-50"
+                                : isWrong
+                                ? "border-red-500 bg-red-50"
+                                : isSelected
+                                ? "border-blue-600 bg-blue-50 shadow-sm"
+                                : "border-slate-200"
                             }`}
                             onClick={() => setAnswer(c.label)}
                             type="button"
                           >
                             <span
                               className={`inline-flex items-center justify-center h-6 w-6 rounded-full border text-[11px] font-semibold mr-2 ${
-                                isSelected ? "border-blue-600 bg-blue-600 text-white" : "border-slate-300 text-slate-700"
+                                isCorrect
+                                  ? "border-emerald-600 bg-emerald-600 text-white"
+                                  : isWrong
+                                  ? "border-red-600 bg-red-600 text-white"
+                                  : isChosenCorrect
+                                  ? "border-emerald-600 bg-emerald-600 text-white"
+                                  : isSelected
+                                  ? "border-blue-600 bg-blue-600 text-white"
+                                  : "border-slate-300 text-slate-700"
                               }`}
                             >
                               {c.label}
                             </span>
                             <span className="flex-1">{c.content}</span>
+                            {reviewMode && isCorrect ? (
+                              <span className="text-[10px] font-semibold uppercase text-emerald-600">Correct</span>
+                            ) : null}
+                            {reviewMode && isWrong ? (
+                              <span className="text-[10px] font-semibold uppercase text-red-600">Your choice</span>
+                            ) : null}
                           </button>
                         );
                       })}
@@ -620,33 +705,67 @@ export default function Page() {
                 </div>
 
                 {currentQ.is_open_ended ? (
-                  <textarea
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm min-h-[110px]"
-                    value={answers[currentQ.id] ?? ""}
-                    onChange={(e) => setAnswer(e.target.value)}
-                    placeholder="Type your answer"
-                  />
+                  <div className="space-y-2">
+                    <textarea
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm min-h-[110px]"
+                      value={answers[currentQ.id] ?? ""}
+                      onChange={(e) => setAnswer(e.target.value)}
+                      placeholder="Type your answer"
+                      readOnly={reviewMode}
+                    />
+                    {reviewMode ? (
+                      <div className="text-xs text-slate-600">
+                        Correct answer:{" "}
+                        <span className="font-semibold text-emerald-700">
+                          {currentQ.correct_answer || "—"}
+                        </span>
+                      </div>
+                    ) : null}
+                  </div>
                 ) : (
                   <div className="space-y-2">
                     {(currentQ.choices || []).map((c) => {
                       const isSelected = answers[currentQ.id] === c.label;
+                      const isCorrect = reviewMode && !!c.is_correct;
+                      const isWrong = reviewMode && isSelected && !c.is_correct;
+                      const isChosenCorrect = reviewMode && isSelected && !!c.is_correct;
                       return (
                         <button
                           key={c.label}
                           className={`w-full rounded-xl border px-4 py-3 text-left text-sm transition flex items-center gap-2 ${
-                            isSelected ? "border-blue-600 bg-blue-50 shadow-sm" : "border-slate-200"
+                            isCorrect
+                              ? "border-emerald-500 bg-emerald-50"
+                              : isWrong
+                              ? "border-red-500 bg-red-50"
+                              : isSelected
+                              ? "border-blue-600 bg-blue-50 shadow-sm"
+                              : "border-slate-200"
                           }`}
                           onClick={() => setAnswer(c.label)}
                           type="button"
                         >
                           <span
                             className={`inline-flex items-center justify-center h-6 w-6 rounded-full border text-[11px] font-semibold mr-2 ${
-                              isSelected ? "border-blue-600 bg-blue-600 text-white" : "border-slate-300 text-slate-700"
+                              isCorrect
+                                ? "border-emerald-600 bg-emerald-600 text-white"
+                                : isWrong
+                                ? "border-red-600 bg-red-600 text-white"
+                                : isChosenCorrect
+                                ? "border-emerald-600 bg-emerald-600 text-white"
+                                : isSelected
+                                ? "border-blue-600 bg-blue-600 text-white"
+                                : "border-slate-300 text-slate-700"
                             }`}
                           >
                             {c.label}
                           </span>
                           <span className="flex-1">{renderChoiceContent(c.content, true)}</span>
+                          {reviewMode && isCorrect ? (
+                            <span className="text-[10px] font-semibold uppercase text-emerald-600">Correct</span>
+                          ) : null}
+                          {reviewMode && isWrong ? (
+                            <span className="text-[10px] font-semibold uppercase text-red-600">Your choice</span>
+                          ) : null}
                         </button>
                       );
                     })}
@@ -678,13 +797,23 @@ export default function Page() {
             >
               Question Map
             </button>
-            <button
-              className="rounded-lg border border-slate-900 px-4 py-2 text-sm font-semibold text-slate-900"
-              onClick={submitExam}
-              type="button"
-            >
-              Submit Exam
-            </button>
+            {!reviewMode ? (
+              <button
+                className="rounded-lg border border-slate-900 px-4 py-2 text-sm font-semibold text-slate-900"
+                onClick={submitExam}
+                type="button"
+              >
+                Submit Exam
+              </button>
+            ) : (
+              <button
+                className="rounded-lg border border-slate-900 px-4 py-2 text-sm font-semibold text-slate-900"
+                onClick={() => router.push("/home")}
+                type="button"
+              >
+                Back to Home
+              </button>
+            )}
           </div>
           <button
             className="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white"
@@ -723,69 +852,83 @@ export default function Page() {
             </div>
 
             <div className="mt-4 space-y-5">
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Verbal</div>
-                <div className="mt-3 grid grid-cols-9 gap-2">
-                  {verbalIndices.map((idx, i) => {
-                    const status = statuses[idx];
-                    return (
-                      <button
-                        key={`verbal-${idx}`}
-                        className={`h-8 rounded-md text-[11px] font-semibold ${
-                          idx === currentIndex
-                            ? "bg-slate-900 text-white"
-                            : status.isFlagged
-                            ? "bg-amber-200 text-amber-900"
-                            : status.isAnswered
-                            ? "bg-emerald-200 text-emerald-900"
-                            : "border border-dashed border-slate-300 text-slate-600"
-                        }`}
-                        onClick={() => {
-                          setCurrentIndex(idx);
-                          setMapOpen(false);
-                        }}
-                        type="button"
-                      >
-                        {i + 1}
-                      </button>
-                    );
-                  })}
+              {verbalIndices.length > 0 ? (
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Verbal</div>
+                  <div className="mt-3 grid grid-cols-9 gap-2">
+                    {verbalIndices.map((idx, i) => {
+                      const status = statuses[idx];
+                      return (
+                        <button
+                          key={`verbal-${idx}`}
+                          className={`h-8 rounded-md text-[11px] font-semibold ${
+                            idx === currentIndex
+                              ? "bg-slate-900 text-white"
+                              : status.isFlagged
+                              ? "bg-amber-200 text-amber-900"
+                              : status.isAnswered
+                              ? "bg-emerald-200 text-emerald-900"
+                              : "border border-dashed border-slate-300 text-slate-600"
+                          }`}
+                          onClick={() => {
+                            setCurrentIndex(idx);
+                            setMapOpen(false);
+                          }}
+                          type="button"
+                        >
+                          {i + 1}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
+              ) : null}
 
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Math</div>
-                <div className="mt-3 grid grid-cols-9 gap-2">
-                  {mathIndices.map((idx, i) => {
-                    const status = statuses[idx];
-                    return (
-                      <button
-                        key={`math-${idx}`}
-                        className={`h-8 rounded-md text-[11px] font-semibold ${
-                          idx === currentIndex
-                            ? "bg-slate-900 text-white"
-                            : status.isFlagged
-                            ? "bg-amber-200 text-amber-900"
-                            : status.isAnswered
-                            ? "bg-emerald-200 text-emerald-900"
-                            : "border border-dashed border-slate-300 text-slate-600"
-                        }`}
-                        onClick={() => {
-                          setCurrentIndex(idx);
-                          setMapOpen(false);
-                        }}
-                        type="button"
-                      >
-                        {i + 1}
-                      </button>
-                    );
-                  })}
+              {mathIndices.length > 0 ? (
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Math</div>
+                  <div className="mt-3 grid grid-cols-9 gap-2">
+                    {mathIndices.map((idx, i) => {
+                      const status = statuses[idx];
+                      return (
+                        <button
+                          key={`math-${idx}`}
+                          className={`h-8 rounded-md text-[11px] font-semibold ${
+                            idx === currentIndex
+                              ? "bg-slate-900 text-white"
+                              : status.isFlagged
+                              ? "bg-amber-200 text-amber-900"
+                              : status.isAnswered
+                              ? "bg-emerald-200 text-emerald-900"
+                              : "border border-dashed border-slate-300 text-slate-600"
+                          }`}
+                          onClick={() => {
+                            setCurrentIndex(idx);
+                            setMapOpen(false);
+                          }}
+                          type="button"
+                        >
+                          {i + 1}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
+              ) : null}
             </div>
 
             <div className="mt-5 rounded-xl bg-slate-50 px-4 py-3 text-xs text-slate-600">
-              Verbal answered {counts.verbal.answered}/{counts.verbal.total} · flagged {counts.verbal.flagged} | Math answered {counts.math.answered}/{counts.math.total} · flagged {counts.math.flagged}
+              {verbalIndices.length > 0 ? (
+                <span>
+                  Verbal answered {counts.verbal.answered}/{counts.verbal.total} ? flagged {counts.verbal.flagged}
+                </span>
+              ) : null}
+              {verbalIndices.length > 0 && mathIndices.length > 0 ? <span> | </span> : null}
+              {mathIndices.length > 0 ? (
+                <span>
+                  Math answered {counts.math.answered}/{counts.math.total} ? flagged {counts.math.flagged}
+                </span>
+              ) : null}
             </div>
           </div>
         </div>
