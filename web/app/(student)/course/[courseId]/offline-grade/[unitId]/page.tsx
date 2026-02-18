@@ -179,6 +179,11 @@ export default function OfflineGradePage() {
     return m;
   }, [grades]);
 
+  const gradedCount = useMemo(
+    () => grades.filter((g) => g.score !== null && typeof g.score !== "undefined").length,
+    [grades]
+  );
+
   async function saveUnit() {
     if (!token || !unit) return;
     const title = unitTitle.trim();
@@ -227,7 +232,7 @@ export default function OfflineGradePage() {
   }
 
   const staff = isStaff(profile);
-  if (loading) return <div className="p-4 text-sm text-neutral-600">Loading…</div>;
+  if (loading) return <div className="p-4 text-sm text-neutral-600">Loading...</div>;
   if (error) return <div className="p-4 text-sm text-red-600">Error: {error}</div>;
   if (!unit) return <div className="p-4 text-sm text-neutral-600">Offline grade not found.</div>;
 
@@ -235,135 +240,198 @@ export default function OfflineGradePage() {
     const g = gradeMap.get(profile?.user_id ?? "");
     const notReleased = unit.publish_at && Date.parse(unit.publish_at) > Date.now();
     return (
-      <div className="p-4 space-y-3">
-        <h1 className="text-xl font-semibold">{unit.title}</h1>
-        <div className="text-sm text-neutral-600">Max score: {unit.max_score ?? "—"}</div>
-        {notReleased ? (
-          <div className="text-sm text-neutral-500">
-            Grade will be visible on {new Date(unit.publish_at!).toLocaleString()}.
+      <div className="min-h-screen bg-slate-50">
+        <div className="mx-auto max-w-4xl p-4 sm:p-6 space-y-4">
+          <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="text-xs uppercase tracking-[0.25em] text-slate-400">Offline Grade</div>
+            <h1 className="mt-2 text-2xl font-semibold text-slate-900">{unit.title}</h1>
+            <div className="mt-1 text-sm text-slate-600">Max score: {unit.max_score ?? "-"}</div>
           </div>
-        ) : g ? (
-          <div className="border rounded p-4 space-y-2">
-            <div className="text-lg font-semibold">
-              {g.score ?? "—"}
-              {unit.max_score ? ` / ${unit.max_score}` : ""}
-            </div>
-            {g.feedback ? <div className="text-sm text-neutral-600">{g.feedback}</div> : null}
+          <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            {notReleased ? (
+              <div className="text-sm text-slate-500">
+                Grade will be visible on {new Date(unit.publish_at!).toLocaleString()}.
+              </div>
+            ) : g ? (
+              <div className="space-y-2">
+                <div className="text-lg font-semibold text-slate-900">
+                  {g.score ?? "-"}
+                  {unit.max_score ? ` / ${unit.max_score}` : ""}
+                </div>
+                {g.feedback ? <div className="text-sm text-slate-600">{g.feedback}</div> : null}
+              </div>
+            ) : (
+              <div className="text-sm text-slate-500">No grade yet.</div>
+            )}
           </div>
-        ) : (
-          <div className="text-sm text-neutral-500">No grade yet.</div>
-        )}
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="p-4 space-y-4">
-      <div className="flex items-center justify-between gap-2">
-        <div>
-          <h1 className="text-xl font-semibold">{unit.title}</h1>
-          <div className="text-sm text-neutral-600">
-            Max score: {unit.max_score ?? "—"} · Releases: {unit.publish_at ? new Date(unit.publish_at).toLocaleString() : "immediately"}
+    <div className="min-h-screen bg-slate-50">
+      <div className="mx-auto max-w-6xl p-4 sm:p-6 space-y-5">
+        <div className="rounded-3xl border border-slate-200 bg-white p-5 sm:p-6 shadow-sm">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <div className="text-xs uppercase tracking-[0.25em] text-slate-400">Offline Grade</div>
+              <h1 className="mt-2 text-2xl font-semibold text-slate-900">{unit.title}</h1>
+              <div className="mt-1 text-sm text-slate-600">
+                Max score: {unit.max_score ?? "-"} - Release: {unit.publish_at ? new Date(unit.publish_at).toLocaleString() : "Immediately"}
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:border-slate-300"
+                type="button"
+                onClick={() => router.push(courseSlug ? `/courses/${courseSlug}` : "/courses")}
+              >
+                Back to course
+              </button>
+              <button
+                className="rounded-full border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-100"
+                type="button"
+                onClick={async () => {
+                  if (!token || !unit) return;
+                  if (!confirm("Delete this offline grade item and all its grades?")) return;
+                  try {
+                    const res = await fetch(`${API_BASE}/api/offline/units/delete/`, {
+                      method: "POST",
+                      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+                      body: JSON.stringify({ unit_id: unit.id, course_id: courseId }),
+                    });
+                    const json = await res.json().catch(() => null);
+                    if (!res.ok) throw new Error(json?.error || "Delete failed");
+                    router.push(courseSlug ? `/courses/${courseSlug}` : "/courses");
+                  } catch (e: any) {
+                    alert(e?.message ?? "Delete failed");
+                  }
+                }}
+              >
+                Delete
+              </button>
+            </div>
           </div>
         </div>
-        <div className="flex gap-2">
-            <button
-              className="underline text-sm"
-              type="button"
-              onClick={() => router.push(courseSlug ? `/courses/${courseSlug}` : "/courses")}
-            >
-              Back to course
-            </button>
-          <button
-            className="border rounded px-3 py-2 text-sm text-red-600"
-            type="button"
-            onClick={async () => {
-              if (!token || !unit) return;
-              if (!confirm("Delete this offline grade item and all its grades?")) return;
-              try {
-                const res = await fetch(`${API_BASE}/api/offline/units/delete/`, {
-                  method: "POST",
-                  headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-                  body: JSON.stringify({ unit_id: unit.id, course_id: courseId }),
-                });
-                const json = await res.json().catch(() => null);
-                if (!res.ok) throw new Error(json?.error || "Delete failed");
-                  router.push(courseSlug ? `/courses/${courseSlug}` : "/courses");
-                } catch (e: any) {
-                  alert(e?.message ?? "Delete failed");
-                }
-            }}
-          >
-            Delete
-          </button>
-        </div>
-      </div>
 
-      <div className="border rounded-lg p-4 space-y-3">
-        <div className="font-medium text-sm">Offline grade settings</div>
-        <div className="flex flex-wrap gap-2 items-center text-sm">
-          <input className="border rounded px-3 py-2" value={unitTitle} onChange={(e) => setUnitTitle(e.target.value)} placeholder="Title" />
-          <input
-            type="number"
-            className="border rounded px-3 py-2 w-32"
-            value={unitMax}
-            onChange={(e) => setUnitMax(e.target.value)}
-            placeholder="Max score"
-          />
-          <input
-            type="datetime-local"
-            className="border rounded px-3 py-2"
-            value={unitPublish}
-            onChange={(e) => setUnitPublish(e.target.value)}
-          />
-          <button className="border rounded px-3 py-2 text-sm" type="button" onClick={saveUnit}>
-            Save settings
-          </button>
-        </div>
-      </div>
-
-      {students.length === 0 ? (
-        <div className="text-sm text-neutral-500">No students enrolled.</div>
-      ) : (
-        <div className="border rounded-lg divide-y">
-          {students.map((s) => {
-            const g = gradeMap.get(s.user_id);
-            return (
-              <div key={s.user_id} className="p-3 grid md:grid-cols-4 gap-3 items-center">
-                <div>
-                  <div className="font-medium">{s.username || s.nickname || s.user_id}</div>
-                  <div className="text-xs text-neutral-500">{s.user_id}</div>
-                  <div className="text-xs text-neutral-500">
-                    Graded: {g?.graded_at ? new Date(g.graded_at).toLocaleString() : "—"}
-                  </div>
-                </div>
+        <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+          <div className="rounded-3xl border border-slate-200 bg-white p-5 sm:p-6 shadow-sm">
+            <div className="text-sm font-semibold text-slate-900">Offline grade settings</div>
+            <div className="text-xs text-slate-500">Update title, max score, or release time.</div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <label className="space-y-2 text-xs font-semibold text-slate-600">
+                Title
+                <input
+                  className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-normal text-slate-900 outline-none focus:border-slate-300 focus:ring-2 focus:ring-slate-900/10"
+                  value={unitTitle}
+                  onChange={(e) => setUnitTitle(e.target.value)}
+                  placeholder="Title"
+                />
+              </label>
+              <label className="space-y-2 text-xs font-semibold text-slate-600">
+                Max score
                 <input
                   type="number"
-                  className="border rounded px-2 py-2 text-sm w-full"
-                  value={scoreDraft[s.user_id] ?? ""}
-                  placeholder="Score"
-                  onChange={(e) => setScoreDraft((p) => ({ ...p, [s.user_id]: e.target.value }))}
+                  className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-normal text-slate-900 outline-none focus:border-slate-300 focus:ring-2 focus:ring-slate-900/10"
+                  value={unitMax}
+                  onChange={(e) => setUnitMax(e.target.value)}
+                  placeholder="Max score"
                 />
+              </label>
+              <label className="space-y-2 text-xs font-semibold text-slate-600 sm:col-span-2">
+                Release date & time
                 <input
-                  type="text"
-                  className="border rounded px-2 py-2 text-sm w-full"
-                  value={feedbackDraft[s.user_id] ?? ""}
-                  placeholder="Feedback"
-                  onChange={(e) => setFeedbackDraft((p) => ({ ...p, [s.user_id]: e.target.value }))}
+                  type="datetime-local"
+                  className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-normal text-slate-900 outline-none focus:border-slate-300 focus:ring-2 focus:ring-slate-900/10"
+                  value={unitPublish}
+                  onChange={(e) => setUnitPublish(e.target.value)}
                 />
-                <button
-                  className="border rounded px-3 py-2 text-sm"
-                  type="button"
-                  disabled={saving[s.user_id]}
-                  onClick={() => saveGrade(s.user_id)}
-                >
-                  {saving[s.user_id] ? "Saving…" : "Save grade"}
-                </button>
+              </label>
+            </div>
+            <div className="mt-4 flex items-center justify-end">
+              <button
+                className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+                type="button"
+                onClick={saveUnit}
+              >
+                Save settings
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-slate-200 bg-white p-5 sm:p-6 shadow-sm">
+            <div className="text-sm font-semibold text-slate-900">Progress</div>
+            <div className="text-xs text-slate-500">Quick snapshot for this offline grade.</div>
+            <div className="mt-4 space-y-3 text-sm text-slate-600">
+              <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                <span>Total students</span>
+                <span className="font-semibold text-slate-900">{students.length}</span>
               </div>
-            );
-          })}
+              <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                <span>Graded</span>
+                <span className="font-semibold text-slate-900">{gradedCount}</span>
+              </div>
+              <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                <span>Pending</span>
+                <span className="font-semibold text-slate-900">{Math.max(0, students.length - gradedCount)}</span>
+              </div>
+            </div>
+          </div>
         </div>
-      )}
+
+        {students.length === 0 ? (
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500 shadow-sm">
+            No students enrolled.
+          </div>
+        ) : (
+          <div className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+            <div className="flex flex-col gap-2 border-b border-slate-200 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="text-sm font-semibold text-slate-900">Students</div>
+                <div className="text-xs text-slate-500">Enter scores and feedback. Save per student.</div>
+              </div>
+              <div className="text-xs text-slate-500">{gradedCount}/{students.length} graded</div>
+            </div>
+            <div className="divide-y divide-slate-100">
+              {students.map((s) => {
+                const g = gradeMap.get(s.user_id);
+                return (
+                  <div key={s.user_id} className="p-4 grid gap-3 lg:grid-cols-[1.2fr_0.6fr_1fr_auto] items-start">
+                    <div>
+                      <div className="font-semibold text-slate-900">{s.nickname || s.username || s.user_id}</div>
+                      <div className="text-xs text-slate-500">{s.username ? `@${s.username}` : s.user_id}</div>
+                      <div className="text-xs text-slate-500">Graded: {g?.graded_at ? new Date(g.graded_at).toLocaleString() : "-"}</div>
+                    </div>
+                    <input
+                      type="number"
+                      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-300 focus:ring-2 focus:ring-slate-900/10"
+                      value={scoreDraft[s.user_id] ?? ""}
+                      placeholder="Score"
+                      onChange={(e) => setScoreDraft((p) => ({ ...p, [s.user_id]: e.target.value }))}
+                    />
+                    <input
+                      type="text"
+                      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-300 focus:ring-2 focus:ring-slate-900/10"
+                      value={feedbackDraft[s.user_id] ?? ""}
+                      placeholder="Feedback (optional)"
+                      onChange={(e) => setFeedbackDraft((p) => ({ ...p, [s.user_id]: e.target.value }))}
+                    />
+                    <button
+                      className="h-11 rounded-full border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:border-slate-300"
+                      type="button"
+                      disabled={saving[s.user_id]}
+                      onClick={() => saveGrade(s.user_id)}
+                    >
+                      {saving[s.user_id] ? "Saving..." : "Save"}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
