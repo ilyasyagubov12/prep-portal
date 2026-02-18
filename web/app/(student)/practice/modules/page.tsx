@@ -356,6 +356,8 @@ function ExamSection({
   refresh: () => void;
 }) {
   const [retakeDraft, setRetakeDraft] = useState<Record<string, string>>({});
+  const openManage = (practiceId: string) => setManageId(practiceId);
+  const closeManage = () => setManageId(null);
 
   useEffect(() => {
     setRetakeDraft({});
