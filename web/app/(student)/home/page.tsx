@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { Manrope } from "next/font/google";
-import mascot from "@/sss/mascot(ilyas).png";
 import happy from "@/sss/happy(ilyas).png";
 import vic from "@/sss/vic(ilyas).png";
 
@@ -25,6 +24,23 @@ type PracticeTest = {
     status: string;
     module_scores?: Record<string, { correct: number; total: number }>;
   } | null;
+};
+
+type CourseSummary = {
+  id: string;
+  slug: string;
+  title: string;
+  description?: string | null;
+  cover_url?: string | null;
+};
+
+type GradePreviewItem = {
+  id: string;
+  title: string;
+  score: number;
+  max_score?: number | null;
+  kind: "assignment" | "quiz" | "offline";
+  graded_at?: string | null;
 };
 
 export default function HomePage() {
@@ -58,6 +74,10 @@ export default function HomePage() {
   const [practiceTests, setPracticeTests] = useState<PracticeTest[]>([]);
   const [loadingPractices, setLoadingPractices] = useState(false);
   const [practiceError, setPracticeError] = useState<string | null>(null);
+  const [courses, setCourses] = useState<CourseSummary[]>([]);
+  const [courseGrades, setCourseGrades] = useState<Record<string, GradePreviewItem[]>>({});
+  const [coursesLoading, setCoursesLoading] = useState(false);
+  const [coursesError, setCoursesError] = useState<string | null>(null);
 
   useEffect(() => {
     const id = window.setInterval(() => setNow(new Date()), 60_000);
@@ -161,6 +181,87 @@ export default function HomePage() {
     })();
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const access = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
+      if (!access) return;
+      setCoursesLoading(true);
+      setCoursesError(null);
+      try {
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/courses/`, {
+          headers: { Authorization: `Bearer ${access}` },
+        });
+        const list = await res.json().catch(() => []);
+        if (!res.ok) throw new Error(list?.error || "Failed to load courses");
+        if (cancelled) return;
+        setCourses(list ?? []);
+
+        const gradesMap: Record<string, GradePreviewItem[]> = {};
+        await Promise.all(
+          (list ?? []).map(async (course: CourseSummary) => {
+            const gradeRes = await fetch(
+              `${process.env.NEXT_PUBLIC_API_BASE}/api/grades/me/?course_id=${course.id}`,
+              { headers: { Authorization: `Bearer ${access}` } }
+            );
+            const gradeJson = await gradeRes.json().catch(() => null);
+            if (!gradeRes.ok || !gradeJson) {
+              gradesMap[course.id] = [];
+              return;
+            }
+
+            const items: GradePreviewItem[] = [];
+            const assignments = gradeJson.assignments ?? [];
+            for (const row of assignments) {
+              const grade = row?.submission?.grade;
+              if (!grade || typeof grade.score !== "number") continue;
+              items.push({
+                id: row.id,
+                title: row.title,
+                score: grade.score,
+                max_score: row.max_score,
+                kind: row.kind === "quiz" ? "quiz" : "assignment",
+                graded_at: grade.graded_at ?? row?.submission?.created_at ?? null,
+              });
+            }
+
+            const offline = gradeJson.offline_units ?? [];
+            for (const unit of offline) {
+              const g = unit?.grade;
+              if (!g || typeof g.score !== "number") continue;
+              items.push({
+                id: unit.id,
+                title: unit.title,
+                score: g.score,
+                max_score: unit.max_score,
+                kind: "offline",
+                graded_at: g.graded_at ?? null,
+              });
+            }
+
+            items.sort((a, b) => {
+              const aTime = a.graded_at ? new Date(a.graded_at).getTime() : 0;
+              const bTime = b.graded_at ? new Date(b.graded_at).getTime() : 0;
+              return bTime - aTime;
+            });
+
+            gradesMap[course.id] = items.slice(0, 5);
+          })
+        );
+
+        if (!cancelled) setCourseGrades(gradesMap);
+      } catch (e: any) {
+        if (!cancelled) setCoursesError(e?.message ?? "Failed to load grades");
+      } finally {
+        if (!cancelled) setCoursesLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const formattedDates = useMemo(() => {
     const fmt = new Intl.DateTimeFormat("en-US", { month: "long", day: "numeric", year: "numeric" });
     return examDates.map((d) => ({ ...d, label: fmt.format(new Date(d.date + "T00:00:00")) }));
@@ -182,6 +283,49 @@ export default function HomePage() {
     const m = Math.floor((safe % 3600) / 60);
     const s = safe % 60;
     return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  }
+
+  function gradeBadge(score: number | null | undefined, max: number | null | undefined) {
+    if (score === null || typeof score === "undefined") return null;
+    const nScore = typeof score === "string" ? Number(score) : score;
+    const nMax = typeof max === "string" ? Number(max) : max;
+    const pct = nMax ? (nScore / nMax) * 100 : nScore;
+
+    let bg = "#ef4444";
+    let fg = "#ffffff";
+    if (pct >= 90) {
+      bg = "#166534";
+      fg = "#f8fafc";
+    } else if (pct >= 80) {
+      bg = "#22c55e";
+      fg = "#0f172a";
+    } else if (pct >= 70) {
+      bg = "#facc15";
+      fg = "#0f172a";
+    } else if (pct >= 60) {
+      bg = "#f97316";
+      fg = "#0f172a";
+    }
+
+    return (
+      <span
+        style={{
+          backgroundColor: bg,
+          color: fg,
+          padding: "6px 10px",
+          borderRadius: "999px",
+          display: "inline-block",
+          fontSize: "11px",
+          fontWeight: 700,
+          minWidth: "72px",
+          textAlign: "center",
+          boxShadow: "0 0 0 1px rgba(0,0,0,0.15)",
+        }}
+      >
+        {nScore}
+        {nMax ? ` / ${nMax}` : ""}
+      </span>
+    );
   }
 
   const mathProgress = Math.min(1, streakMath / 5);
@@ -479,22 +623,104 @@ export default function HomePage() {
             </div>
 
             <div className="relative rounded-3xl border border-slate-200 bg-white p-5 sm:p-6 shadow-sm">
-              <div className="text-sm text-slate-600">Study Abroad</div>
-              <div className="text-xs text-slate-500">Global programs, scholarships, and application help.</div>
-              <div className="mt-6 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-400">
-                  Coming soon
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm text-slate-600">Course Gradebook</div>
+                  <div className="text-xs text-slate-500">Latest scores from your classes.</div>
                 </div>
-                <div className="mt-2 text-sm font-semibold text-slate-700">
-                  We’re building your study abroad hub.
-                </div>
-                <div className="mt-1 text-xs text-slate-500">
-                  Stay tuned for destinations, requirements, and timelines.
-                </div>
+                <button
+                  className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700"
+                  onClick={() => router.push("/courses")}
+                >
+                  View all
+                </button>
               </div>
-              <div className="pointer-events-none absolute right-0 bottom-0 top-0 w-32 sm:w-48 lg:w-80">
-                <div className="absolute inset-0 rounded-2xl bg-slate-200/40 blur-2xl" />
-                <Image src={mascot} alt="Mascot" fill className="object-contain object-bottom drop-shadow-lg" />
+
+              <div className="mt-5 space-y-4 max-h-[22rem] overflow-auto pr-1">
+                {coursesLoading ? (
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">
+                    Loading course grades...
+                  </div>
+                ) : coursesError ? (
+                  <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-6 text-sm text-red-600">
+                    {coursesError}
+                  </div>
+                ) : courses.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+                    No courses assigned yet.
+                  </div>
+                ) : (
+                  courses.map((course) => {
+                    const grades = courseGrades[course.id] ?? [];
+                    return (
+                      <div
+                        key={course.id}
+                        className="rounded-2xl border border-slate-200 bg-slate-50/60 px-4 py-4"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="text-sm font-semibold text-slate-900">{course.title}</div>
+                            {course.description ? (
+                              <div className="mt-1 text-xs text-slate-500 line-clamp-2">
+                                {course.description}
+                              </div>
+                            ) : null}
+                          </div>
+                          {course.slug ? (
+                            <button
+                              className="text-xs font-semibold text-blue-600"
+                              onClick={() => router.push(`/courses/${course.slug}`)}
+                            >
+                              Open →
+                            </button>
+                          ) : null}
+                        </div>
+
+                        <div className="mt-3 grid gap-2">
+                          {grades.length === 0 ? (
+                            <div className="rounded-lg border border-dashed border-slate-200 bg-white px-3 py-3 text-xs text-slate-500">
+                              No graded work yet.
+                            </div>
+                          ) : (
+                            grades.map((item) => {
+                              const label =
+                                item.kind === "quiz"
+                                  ? "Quiz"
+                                  : item.kind === "offline"
+                                  ? "Offline grade"
+                                  : "Assignment";
+                              const dateLabel = item.graded_at
+                                ? new Date(item.graded_at).toLocaleDateString("en-US", {
+                                    month: "short",
+                                    day: "numeric",
+                                  })
+                                : null;
+                              return (
+                                <div
+                                  key={`${course.id}-${item.id}`}
+                                  className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2"
+                                >
+                                  <div>
+                                    <div className="text-xs font-semibold text-slate-700">{item.title}</div>
+                                    <div className="text-[11px] text-slate-500">
+                                      {label}
+                                      {dateLabel ? ` • ${dateLabel}` : ""}
+                                    </div>
+                                  </div>
+                                  <div className="text-xs font-semibold text-slate-900">
+                                    {gradeBadge(item.score, item.max_score) ?? (
+                                      item.max_score != null ? `${item.score}/${item.max_score}` : item.score
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
               </div>
             </div>
           </div>
