@@ -180,11 +180,19 @@ export default function TopicQuestionsPage() {
   }, [passageHtml, current]);
 
 
-  function wrapLatexIfNeeded(input: string) {
+  function formatMathHtml(input: string) {
     const trimmed = input.trim();
     if (!trimmed) return "";
-    const hasDelims = trimmed.includes("\\(") || trimmed.includes("\\[") || trimmed.includes("$$");
-    return hasDelims ? trimmed : `\\(${trimmed}\\)`;
+    const latexFlag = "$LATEX$";
+    const hasDelims = (val: string) =>
+      val.includes("\\(") || val.includes("\\[") || val.includes("$$") || /\$[^$]+\$/.test(val);
+    if (trimmed.startsWith(latexFlag)) {
+      const content = trimmed.slice(latexFlag.length).trim();
+      if (!content) return "";
+      return hasDelims(content) ? content : `\\(${content}\\)`;
+    }
+    if (hasDelims(trimmed)) return trimmed;
+    return trimmed;
   }
 
   const currentQ = questions[current];
@@ -296,7 +304,7 @@ export default function TopicQuestionsPage() {
   const stemHtmlValue = useMemo(() => {
     if (!currentQ) return "";
     const raw = currentQ.stem || "";
-    const html = isMath ? wrapLatexIfNeeded(raw) : raw;
+    const html = isMath ? formatMathHtml(raw) : raw;
     return html.replace(/\n/g, "<br/>");
   }, [currentQ, isMath]);
   const explanationHtml = useMemo(() => {
@@ -491,7 +499,7 @@ export default function TopicQuestionsPage() {
                                 onClick={() => (isCross ? null : selectChoice(currentQ.id, c.label))}
                               >
                               {isMath ? (
-                                <MathContent html={wrapLatexIfNeeded(c.content || "").replace(/\n/g, "<br/>")} />
+                                <MathContent html={formatMathHtml(c.content || "").replace(/\n/g, "<br/>")} />
                               ) : (
                                 c.content
                               )}
@@ -640,7 +648,7 @@ export default function TopicQuestionsPage() {
                                 {isMath ? (
                                   <span
                                     dangerouslySetInnerHTML={{
-                                      __html: wrapLatexIfNeeded(c.content || "").replace(/\n/g, "<br/>"),
+                                      __html: formatMathHtml(c.content || "").replace(/\n/g, "<br/>"),
                                     }}
                                   />
                                 ) : (

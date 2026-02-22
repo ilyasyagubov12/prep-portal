@@ -28,22 +28,37 @@ def _serialize_question_for_student(q: ModulePracticeQuestion, choice_order: lis
     choices = []
     raw_choices = q.choices or []
     if choice_order:
-        by_label = {c.get("label"): c for c in raw_choices if c.get("label")}
-        used = set()
-        for label in choice_order:
-            c = by_label.get(label)
-            if not c:
-                continue
-            choices.append({"label": c.get("label"), "content": c.get("content")})
-            used.add(label)
-        for c in raw_choices:
-            label = c.get("label")
-            if label and label in used:
-                continue
-            choices.append({"label": c.get("label"), "content": c.get("content")})
+        if all(isinstance(i, int) for i in choice_order):
+            ordered = [i for i in choice_order if 0 <= i < len(raw_choices)]
+            used = set(ordered)
+            for idx, raw_idx in enumerate(ordered):
+                c = raw_choices[raw_idx]
+                label = chr(65 + idx)
+                choices.append({"label": label, "content": c.get("content")})
+            for raw_idx, c in enumerate(raw_choices):
+                if raw_idx in used:
+                    continue
+                label = chr(65 + len(choices))
+                choices.append({"label": label, "content": c.get("content")})
+        else:
+            by_label = {c.get("label"): c for c in raw_choices if c.get("label")}
+            used = set()
+            for idx, label in enumerate(choice_order):
+                c = by_label.get(label)
+                if not c:
+                    continue
+                fallback = chr(65 + idx)
+                choices.append({"label": c.get("label") or fallback, "content": c.get("content")})
+                used.add(label)
+            for idx, c in enumerate(raw_choices):
+                label = c.get("label") or chr(65 + len(choices))
+                if c.get("label") and c.get("label") in used:
+                    continue
+                choices.append({"label": label, "content": c.get("content")})
     else:
-        for c in raw_choices:
-            choices.append({"label": c.get("label"), "content": c.get("content")})
+        for idx, c in enumerate(raw_choices):
+            label = c.get("label") or chr(65 + idx)
+            choices.append({"label": label, "content": c.get("content")})
     return {
         "id": str(q.id),
         "subject": q.subject,
@@ -54,6 +69,86 @@ def _serialize_question_for_student(q: ModulePracticeQuestion, choice_order: lis
         "passage": q.passage,
         "choices": choices,
         "is_open_ended": q.is_open_ended,
+        "image_url": q.image_url,
+        "explanation": q.explanation,
+    }
+
+
+def _serialize_question_for_review(q: ModulePracticeQuestion, choice_order: list | None = None):
+    choices = []
+    raw_choices = q.choices or []
+    if choice_order:
+        if all(isinstance(i, int) for i in choice_order):
+            ordered = [i for i in choice_order if 0 <= i < len(raw_choices)]
+            used = set(ordered)
+            for idx, raw_idx in enumerate(ordered):
+                c = raw_choices[raw_idx]
+                label = chr(65 + idx)
+                choices.append(
+                    {
+                        "label": label,
+                        "content": c.get("content"),
+                        "is_correct": bool(c.get("is_correct")),
+                    }
+                )
+            for raw_idx, c in enumerate(raw_choices):
+                if raw_idx in used:
+                    continue
+                label = chr(65 + len(choices))
+                choices.append(
+                    {
+                        "label": label,
+                        "content": c.get("content"),
+                        "is_correct": bool(c.get("is_correct")),
+                    }
+                )
+        else:
+            by_label = {c.get("label"): c for c in raw_choices if c.get("label")}
+            used = set()
+            for idx, label in enumerate(choice_order):
+                c = by_label.get(label)
+                if not c:
+                    continue
+                fallback = chr(65 + idx)
+                choices.append(
+                    {
+                        "label": c.get("label") or fallback,
+                        "content": c.get("content"),
+                        "is_correct": bool(c.get("is_correct")),
+                    }
+                )
+                used.add(label)
+            for c in raw_choices:
+                label = c.get("label")
+                if label and label in used:
+                    continue
+                choices.append(
+                    {
+                        "label": label or chr(65 + len(choices)),
+                        "content": c.get("content"),
+                        "is_correct": bool(c.get("is_correct")),
+                    }
+                )
+    else:
+        for idx, c in enumerate(raw_choices):
+            choices.append(
+                {
+                    "label": c.get("label") or chr(65 + idx),
+                    "content": c.get("content"),
+                    "is_correct": bool(c.get("is_correct")),
+                }
+            )
+    return {
+        "id": str(q.id),
+        "subject": q.subject,
+        "module_index": q.module_index,
+        "topic": q.topic_tag,
+        "subtopic": None,
+        "stem": q.question_text,
+        "passage": q.passage,
+        "choices": choices,
+        "is_open_ended": q.is_open_ended,
+        "correct_answer": q.correct_answer,
         "image_url": q.image_url,
         "explanation": q.explanation,
     }
@@ -79,9 +174,10 @@ def _serialize_question_for_staff(q: ModulePracticeQuestion):
     }
 
 
-def _score_answers(question_map: dict, answers: dict) -> tuple[int, int]:
+def _score_answers(question_map: dict, answers: dict, choice_order: dict | None = None) -> tuple[int, int]:
     total = 0
     correct = 0
+    order_map = choice_order or {}
     for qid, q in question_map.items():
         if qid not in answers:
             continue
@@ -93,9 +189,20 @@ def _score_answers(question_map: dict, answers: dict) -> tuple[int, int]:
                 correct += 1
         else:
             pick = str(answers.get(qid) or "").strip()
-            correct_label = next((c.get("label") for c in (q.choices or []) if c.get("is_correct")), None)
-            if pick and correct_label and pick == correct_label:
-                correct += 1
+            raw_choices = q.choices or []
+            order = order_map.get(str(qid)) or order_map.get(qid) or []
+            if order and all(isinstance(i, int) for i in order):
+                idx = ord(pick.upper()) - 65 if pick else -1
+                if 0 <= idx < len(order):
+                    raw_idx = order[idx]
+                    if 0 <= raw_idx < len(raw_choices) and raw_choices[raw_idx].get("is_correct"):
+                        correct += 1
+            else:
+                correct_label = next(
+                    (c.get("label") for c in raw_choices if c.get("is_correct")), None
+                )
+                if pick and correct_label and pick == correct_label:
+                    correct += 1
     return correct, total
 
 
@@ -1031,9 +1138,9 @@ class ModulePracticeStartView(APIView):
                     continue
                 if practice.shuffle_choices:
                     if str(q.id) not in choice_order:
-                        labels = [c.get("label") for c in (q.choices or []) if c.get("label")]
-                        random.shuffle(labels)
-                        choice_order[str(q.id)] = labels
+                        indices = list(range(len(q.choices or [])))
+                        random.shuffle(indices)
+                        choice_order[str(q.id)] = indices
                         updated = True
                     payload_questions.append(
                         _serialize_question_for_student(q, choice_order.get(str(q.id)))
@@ -1066,6 +1173,158 @@ class ModulePracticeStartView(APIView):
                     "description": practice.description,
                 },
                 "modules": modules_payload,
+            }
+        )
+
+
+class ModulePracticeReviewView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        pid = request.query_params.get("practice_id")
+        attempt_id = request.query_params.get("attempt_id")
+        user = request.user
+        staff = _is_staff(user)
+        attempt = None
+        practice = None
+
+        if attempt_id:
+            attempt = (
+                ModulePracticeAttempt.objects.select_related("practice")
+                .filter(id=attempt_id, status="submitted")
+                .first()
+            )
+            if not attempt:
+                return Response({"error": "No submitted attempt"}, status=404)
+            practice = attempt.practice
+            if attempt.student_id != user.id and not staff:
+                return Response({"error": "Forbidden"}, status=403)
+        else:
+            if not pid:
+                return Response({"error": "practice_id required"}, status=400)
+            try:
+                practice = ModulePractice.objects.get(id=pid)
+            except ModulePractice.DoesNotExist:
+                return Response({"error": "Not found"}, status=404)
+            attempt = (
+                ModulePracticeAttempt.objects.filter(practice=practice, student=user, status="submitted")
+                .order_by("-completed_at")
+                .first()
+            )
+
+        if not practice:
+            return Response({"error": "Not found"}, status=404)
+        if not practice.results_published and not staff:
+            return Response({"error": "Results not published"}, status=403)
+        if not attempt:
+            return Response({"error": "No submitted attempt"}, status=404)
+
+        modules = ModulePracticeModule.objects.filter(practice=practice).order_by(
+            models.Case(
+                models.When(subject="verbal", then=0),
+                models.When(subject="math", then=1),
+                default=2,
+                output_field=models.IntegerField(),
+            ),
+            "module_index",
+        )
+
+        question_order = attempt.question_order or {}
+        choice_order = attempt.choice_order or {}
+        modules_payload = []
+        for m in modules:
+            order = question_order.get(str(m.id))
+            if not order:
+                order = list(
+                    ModulePracticeQuestion.objects.filter(module=m)
+                    .order_by("order", "created_at")
+                    .values_list("id", flat=True)
+                )
+                order = [str(i) for i in order]
+
+            questions = ModulePracticeQuestion.objects.filter(id__in=order)
+            qmap = {str(q.id): q for q in questions}
+            payload_questions = []
+            for qid in order:
+                q = qmap.get(str(qid))
+                if not q:
+                    continue
+                payload_questions.append(
+                    _serialize_question_for_review(q, choice_order.get(str(q.id)))
+                )
+
+            modules_payload.append(
+                {
+                    "id": str(m.id),
+                    "subject": m.subject,
+                    "module_index": m.module_index,
+                    "time_limit_minutes": m.time_limit_minutes,
+                    "questions": payload_questions,
+                }
+            )
+
+        return Response(
+            {
+                "ok": True,
+                "review": True,
+                "attempt_id": str(attempt.id),
+                "practice": {
+                    "id": str(practice.id),
+                    "title": practice.title,
+                    "description": practice.description,
+                },
+                "modules": modules_payload,
+                "answers": attempt.answers,
+                "module_scores": attempt.module_scores,
+                "completed_at": attempt.completed_at,
+            }
+        )
+
+
+class ModulePracticeAttemptsView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        pid = request.query_params.get("practice_id")
+        if not pid:
+            return Response({"error": "practice_id required"}, status=400)
+        try:
+            practice = ModulePractice.objects.get(id=pid)
+        except ModulePractice.DoesNotExist:
+            return Response({"error": "Not found"}, status=404)
+
+        user = request.user
+        staff = _is_staff(user)
+        student_id = request.query_params.get("student_id")
+        if student_id:
+            if not staff and str(student_id) != str(user.id):
+                return Response({"error": "Forbidden"}, status=403)
+            target_id = student_id
+        else:
+            target_id = user.id
+
+        attempts = (
+            ModulePracticeAttempt.objects.filter(practice=practice, student_id=target_id, status="submitted")
+            .order_by("-completed_at", "-started_at")
+        )
+
+        data = []
+        for attempt in attempts:
+            data.append(
+                {
+                    "id": str(attempt.id),
+                    "completed_at": attempt.completed_at,
+                    "module_scores": attempt.module_scores,
+                    "correct": attempt.correct,
+                    "total": attempt.total,
+                }
+            )
+
+        return Response(
+            {
+                "ok": True,
+                "results_published": practice.results_published,
+                "attempts": data,
             }
         )
 
@@ -1111,7 +1370,7 @@ class ModulePracticeSubmitView(APIView):
             ids = [str(q.id) for q in questions]
             qmap = {str(q.id): q for q in questions}
             module_answers = {qid: answers.get(qid) for qid in ids if qid in answers}
-            correct, count = _score_answers(qmap, module_answers)
+            correct, count = _score_answers(qmap, module_answers, attempt.choice_order or {})
             total_correct += correct
             total_count += count
             key = f"{m.subject}-{m.module_index}"

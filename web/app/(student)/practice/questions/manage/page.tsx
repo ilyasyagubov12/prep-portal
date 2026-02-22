@@ -22,6 +22,8 @@ export default function ManageQuestionsPage() {
   const [questions, setQuestions] = useState<Question[]>([]);
   const [subtopic, setSubtopic] = useState("");
   const [search, setSearch] = useState("");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const token =
@@ -48,6 +50,7 @@ export default function ManageQuestionsPage() {
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || "Failed to load");
       setQuestions(json.questions ?? []);
+      setSelectedIds(new Set());
     } catch (e: any) {
       setErr(e?.message ?? "Failed to load");
     } finally {
@@ -112,6 +115,66 @@ export default function ManageQuestionsPage() {
     } catch (e: any) {
       setErr(e?.message ?? "Delete failed");
     }
+  }
+
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    setSelectedIds((prev) => {
+      if (questions.length === 0) return new Set();
+      const allSelected = questions.every((q) => prev.has(q.id));
+      if (allSelected) return new Set();
+      return new Set(questions.map((q) => q.id));
+    });
+  }
+
+  async function deleteSelected() {
+    if (!token) {
+      setErr("Not logged in");
+      return;
+    }
+    const ids = Array.from(selectedIds);
+    if (!ids.length) return;
+    const ok = confirm(`Delete ${ids.length} question(s)?`);
+    if (!ok) return;
+    setBulkDeleting(true);
+    setErr(null);
+    const deleted: string[] = [];
+    const failed: string[] = [];
+    await Promise.all(
+      ids.map(async (id) => {
+        try {
+          const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/questions/${id}/`, {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          const json = await res.json().catch(() => null);
+          if (!res.ok) throw new Error(json?.error || "Delete failed");
+          deleted.push(id);
+        } catch {
+          failed.push(id);
+        }
+      })
+    );
+    if (deleted.length) {
+      setQuestions((q) => q.filter((x) => !deleted.includes(x.id)));
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        deleted.forEach((id) => next.delete(id));
+        return next;
+      });
+    }
+    if (failed.length) {
+      setErr(`Failed to delete ${failed.length} question(s).`);
+    }
+    setBulkDeleting(false);
   }
 
   useEffect(() => {
@@ -213,6 +276,7 @@ export default function ManageQuestionsPage() {
           <div className="text-sm font-semibold text-slate-800">Results</div>
           <div className="flex items-center gap-3 text-xs text-neutral-500">
             <span>{questions.length} found</span>
+            <span>{selectedIds.size} selected</span>
             <label className="inline-flex items-center gap-2">
               <input
                 ref={fileInputRef}
@@ -225,6 +289,26 @@ export default function ManageQuestionsPage() {
             </label>
           </div>
         </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-100"
+            onClick={toggleSelectAll}
+            disabled={questions.length === 0}
+          >
+            {questions.length > 0 && questions.every((q) => selectedIds.has(q.id))
+              ? "Clear all"
+              : "Select all"}
+          </button>
+          <button
+            type="button"
+            className="rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-semibold text-red-600 shadow-sm hover:bg-red-50 disabled:opacity-60"
+            onClick={deleteSelected}
+            disabled={selectedIds.size === 0 || bulkDeleting}
+          >
+            {bulkDeleting ? "Deleting…" : "Delete selected"}
+          </button>
+        </div>
         {questions.length === 0 ? (
           <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-sm text-neutral-600">
             No questions.
@@ -236,9 +320,18 @@ export default function ManageQuestionsPage() {
                 key={q.id}
                 className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 shadow-sm flex flex-col gap-2"
               >
-                <div className="text-xs text-neutral-500 uppercase tracking-[0.12em]">
-                  {q.subject} • {q.topic}
-                  {q.subtopic ? ` • ${q.subtopic}` : ""}
+                <div className="flex items-start gap-2">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={selectedIds.has(q.id)}
+                    onChange={() => toggleSelect(q.id)}
+                    aria-label={`Select question ${q.id}`}
+                  />
+                  <div className="text-xs text-neutral-500 uppercase tracking-[0.12em]">
+                    {q.subject} • {q.topic}
+                    {q.subtopic ? ` • ${q.subtopic}` : ""}
+                  </div>
                 </div>
                 <div className="text-sm text-neutral-900 line-clamp-2" dangerouslySetInnerHTML={{ __html: q.stem }} />
                 <div className="flex gap-2 pt-1">

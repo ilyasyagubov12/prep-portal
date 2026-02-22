@@ -26,11 +26,19 @@ function MathContent({ html, className }: { html: string; className?: string }) 
   return <span ref={ref} className={className} />;
 }
 
-function wrapLatexIfNeeded(input: string) {
+function formatMathHtml(input: string) {
   const trimmed = input.trim();
   if (!trimmed) return "";
-  const hasDelims = trimmed.includes("\\(") || trimmed.includes("\\[") || trimmed.includes("$$");
-  return hasDelims ? trimmed : `\\(${trimmed}\\)`;
+  const latexFlag = "$LATEX$";
+  const hasDelims = (val: string) =>
+    val.includes("\\(") || val.includes("\\[") || val.includes("$$") || /\$[^$]+\$/.test(val);
+  if (trimmed.startsWith(latexFlag)) {
+    const content = trimmed.slice(latexFlag.length).trim();
+    if (!content) return "";
+    return hasDelims(content) ? content : `\\(${content}\\)`;
+  }
+  if (hasDelims(trimmed)) return trimmed;
+  return trimmed;
 }
 
 function formatTime(seconds: number) {
@@ -108,7 +116,7 @@ export default function Page() {
   const stemHtml = useMemo(() => {
     if (!currentQ) return "";
     const raw = currentQ.stem || "";
-    return (isMath ? wrapLatexIfNeeded(raw) : raw).replace(/\n/g, "<br/>");
+    return (isMath ? formatMathHtml(raw) : raw).replace(/\n/g, "<br/>");
   }, [currentQ, isMath]);
 
   const passageHtml = useMemo(() => {
@@ -212,7 +220,7 @@ export default function Page() {
                         <span className="inline-flex items-center justify-center h-6 w-6 rounded-full border border-slate-300 text-xs font-semibold mr-2">
                           {c.label}
                         </span>
-                        <MathContent html={wrapLatexIfNeeded(c.content || "").replace(/\n/g, "<br/>")} />
+                        <MathContent html={formatMathHtml(c.content || "").replace(/\n/g, "<br/>")} />
                       </button>
                     ))}
                   </div>

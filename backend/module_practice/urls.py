@@ -17,6 +17,8 @@ from .views import (
     ModulePracticeStudentLookupView,
     ModulePracticeAccessSetView,
     ModulePracticeStartView,
+    ModulePracticeReviewView,
+    ModulePracticeAttemptsView,
     ModulePracticeSubmitView,
 )
 
@@ -38,5 +40,7 @@ urlpatterns = [
     path("module-practice/students/lookup/", ModulePracticeStudentLookupView.as_view(), name="module_practice_students_lookup"),
     path("module-practice/access/set/", ModulePracticeAccessSetView.as_view(), name="module_practice_access_set"),
     path("module-practice/start/", ModulePracticeStartView.as_view(), name="module_practice_start"),
+    path("module-practice/review/", ModulePracticeReviewView.as_view(), name="module_practice_review"),
+    path("module-practice/attempts/", ModulePracticeAttemptsView.as_view(), name="module_practice_attempts"),
     path("module-practice/submit/", ModulePracticeSubmitView.as_view(), name="module_practice_submit"),
 ]

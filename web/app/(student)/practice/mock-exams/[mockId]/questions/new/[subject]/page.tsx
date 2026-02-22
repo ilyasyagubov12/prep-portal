@@ -240,8 +240,16 @@ export default function NewMockExamQuestionPage() {
   function wrapLatexIfNeeded(input: string) {
     const trimmed = input.trim();
     if (!trimmed) return "";
-    const hasDelims = trimmed.includes("\\(") || trimmed.includes("\\[") || trimmed.includes("$$");
-    return hasDelims ? trimmed : `\\(${trimmed}\\)`;
+    const latexFlag = "$LATEX$";
+    const hasDelims = (val: string) =>
+      val.includes("\\(") || val.includes("\\[") || val.includes("$$") || /\$[^$]+\$/.test(val);
+    if (trimmed.startsWith(latexFlag)) {
+      const content = trimmed.slice(latexFlag.length).trim();
+      if (!content) return "";
+      return hasDelims(content) ? content : `\\(${content}\\)`;
+    }
+    if (hasDelims(trimmed)) return trimmed;
+    return trimmed;
   }
 
   if (loading) return null;

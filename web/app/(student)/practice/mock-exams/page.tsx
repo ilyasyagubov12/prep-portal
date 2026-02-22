@@ -24,6 +24,8 @@ type MockExam = {
   shuffle_choices: boolean;
   allow_retakes: boolean;
   retake_limit?: number | null;
+  attempts_count?: number | null;
+  access_limit?: number | null;
   is_active: boolean;
   results_published: boolean;
   locked?: boolean;
@@ -329,6 +331,9 @@ export default function Page() {
                   startExam={startExam}
                   token={accessToken}
                   refresh={() => accessToken && loadExams(accessToken)}
+                  onReviewAttempt={(examId, attemptId) =>
+                    router.push(`/practice/mock-exams/${examId}?review_attempt=${attemptId}`)
+                  }
                 />
               ))}
             </div>
@@ -348,6 +353,7 @@ function MockExamCard({
   startExam,
   token,
   refresh,
+  onReviewAttempt,
 }: {
   exam: MockExam;
   canManage: boolean;
@@ -357,12 +363,18 @@ function MockExamCard({
   startExam: (examId: string) => void;
   token: string | null;
   refresh: () => void;
+  onReviewAttempt: (examId: string, attemptId: string) => void;
 }) {
   const active = manageId === exam.id;
   const isLocked = !!exam.locked && !canManage;
+  const attemptsCount = exam.attempts_count ?? 0;
+  const retakeLimit = exam.allow_retakes ? exam.access_limit ?? exam.retake_limit ?? null : 1;
+  const retakeReached = !canManage && retakeLimit !== null && attemptsCount >= retakeLimit;
+  const startDisabled = isLocked || retakeReached;
   const [retakeDraft, setRetakeDraft] = useState<string>("");
   const [timeDraft, setTimeDraft] = useState<string>("");
-  const [resultsOpen, setResultsOpen] = useState(false);
+  const [activePanel, setActivePanel] = useState<"results" | "access" | "builder" | null>(null);
+  const [panelAutoOpened, setPanelAutoOpened] = useState(false);
   const [resultsLoading, setResultsLoading] = useState(false);
   const [resultsError, setResultsError] = useState<string | null>(null);
   const [resultsData, setResultsData] = useState<AttemptReport[]>([]);
@@ -371,6 +383,18 @@ function MockExamCard({
     setRetakeDraft(exam.retake_limit != null ? String(exam.retake_limit) : "");
     setTimeDraft(String(exam.total_time_minutes ?? 0));
   }, [exam.retake_limit, exam.total_time_minutes, exam.id]);
+
+  useEffect(() => {
+    if (active && canManage && !panelAutoOpened) {
+      setActivePanel("results");
+      setPanelAutoOpened(true);
+      return;
+    }
+    if (!active && panelAutoOpened) {
+      setPanelAutoOpened(false);
+      setActivePanel(null);
+    }
+  }, [active, canManage, panelAutoOpened]);
 
   async function loadResults() {
     if (!token) return;
@@ -391,10 +415,10 @@ function MockExamCard({
   }
 
   useEffect(() => {
-    if (!resultsOpen) return;
+    if (activePanel !== "results") return;
     void loadResults();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resultsOpen]);
+  }, [activePanel]);
 
   async function updateExam(payload: Record<string, any>) {
     if (!token) return;
@@ -428,6 +452,16 @@ function MockExamCard({
     refresh();
   }
 
+  function togglePanel(panel: "results" | "access" | "builder") {
+    if (activePanel === panel) {
+      setActivePanel(null);
+      closeManage();
+      return;
+    }
+    setActivePanel(panel);
+    if (!active) openManage(exam.id);
+  }
+
   return (
     <div
       className={`rounded-2xl border bg-white p-5 shadow-sm transition-all ${
@@ -446,7 +480,11 @@ function MockExamCard({
           ) : null}
         </div>
         <div className="flex flex-col items-end gap-2">
-          {isLocked ? (
+          {retakeReached ? (
+            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500">
+              Limit reached
+            </span>
+          ) : isLocked ? (
             <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500">Locked</span>
           ) : exam.is_active ? (
             <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">Active</span>
@@ -459,13 +497,6 @@ function MockExamCard({
             <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700">Results hidden</span>
           )}
         </div>
-      </div>
-
-      <div className="mt-4 grid gap-2 text-sm text-slate-600">
-        <div className="rounded-xl bg-slate-50 px-3 py-2">Verbal: {exam.verbal_question_count} questions</div>
-        <div className="rounded-xl bg-slate-50 px-3 py-2">Math: {exam.math_question_count} questions</div>
-        <div className="rounded-xl bg-slate-50 px-3 py-2">Total: {exam.question_count} questions</div>
-        <div className="rounded-xl bg-slate-50 px-3 py-2">Total time: {exam.total_time_minutes} minutes</div>
       </div>
 
       {exam.attempt ? (
@@ -488,38 +519,54 @@ function MockExamCard({
       <div className="mt-4 flex flex-wrap gap-2">
         <button
           className={`rounded-xl px-4 py-2 text-sm font-semibold text-white ${
-            isLocked ? "cursor-not-allowed bg-slate-300" : "bg-slate-900 hover:bg-slate-800"
+            startDisabled ? "cursor-not-allowed bg-slate-300" : "bg-slate-900 hover:bg-slate-800"
           }`}
           onClick={() => {
-            if (isLocked) return;
+            if (startDisabled) return;
             startExam(exam.id);
           }}
           type="button"
-          disabled={isLocked}
+          disabled={startDisabled}
         >
-          {isLocked ? "Locked" : "Start mock exam"}
+          {retakeReached ? "Limit reached" : isLocked ? "Locked" : "Start mock exam"}
         </button>
-        {canManage ? (
+        {!canManage && exam.results_published && exam.attempt?.id ? (
           <button
-            className="rounded-xl border px-3 py-2 text-sm"
-            onClick={() => (active ? closeManage() : openManage(exam.id))}
+            className="rounded-xl border px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
             type="button"
+            onClick={() => router.push(`/practice/mock-exams/${exam.id}?review=1`)}
           >
-            {active ? "Close" : "Manage"}
+            Review latest attempt
           </button>
         ) : null}
         {canManage ? (
-          <button
-            className={`rounded-xl border px-3 py-2 text-sm ${resultsOpen ? "bg-slate-100" : ""}`}
-            onClick={() => setResultsOpen((prev) => !prev)}
-            type="button"
-          >
-            {resultsOpen ? "Hide results" : "Results"}
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              className={`rounded-xl border px-3 py-2 text-sm ${activePanel === "results" ? "bg-slate-100" : ""}`}
+              onClick={() => togglePanel("results")}
+              type="button"
+            >
+              Results overview
+            </button>
+            <button
+              className={`rounded-xl border px-3 py-2 text-sm ${activePanel === "access" ? "bg-slate-100" : ""}`}
+              onClick={() => togglePanel("access")}
+              type="button"
+            >
+              Access control
+            </button>
+            <button
+              className={`rounded-xl border px-3 py-2 text-sm ${activePanel === "builder" ? "bg-slate-100" : ""}`}
+              onClick={() => togglePanel("builder")}
+              type="button"
+            >
+              Question builder
+            </button>
+          </div>
         ) : null}
       </div>
 
-      {canManage && active ? (
+      {canManage && active && activePanel === "builder" ? (
         <div className="mt-5 space-y-4 border-t pt-4">
           <div className="rounded-xl border bg-white p-3">
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Exam setup</div>
@@ -551,30 +598,6 @@ function MockExamCard({
             <div className="mt-2 text-[11px] text-slate-400">
               Counts update automatically as you add or remove questions.
             </div>
-          </div>
-
-          <div className="flex flex-wrap gap-3">
-            <button
-              className="rounded-lg border px-3 py-2 text-xs font-semibold"
-              type="button"
-              onClick={() => updateExam({ results_published: !exam.results_published })}
-            >
-              {exam.results_published ? "Hide results" : "Publish results"}
-            </button>
-            <button
-              className="rounded-lg border px-3 py-2 text-xs font-semibold"
-              type="button"
-              onClick={() => updateExam({ is_active: !exam.is_active })}
-            >
-              {exam.is_active ? "Disable access" : "Enable access"}
-            </button>
-            <button
-              className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700"
-              type="button"
-              onClick={deleteExam}
-            >
-              Delete mock
-            </button>
           </div>
 
           <div className="rounded-xl border bg-slate-50 p-3">
@@ -630,16 +653,44 @@ function MockExamCard({
             </div>
           </div>
 
-          <MockExamAccessManager exam={exam} token={token} refresh={refresh} />
-
           <MockExamBuilder exam={exam} token={token} refresh={refresh} />
         </div>
       ) : null}
 
-      {canManage && resultsOpen ? (
+      {canManage && active && activePanel === "access" ? (
+        <div className="mt-5 space-y-4 border-t pt-4">
+          <div className="flex flex-wrap gap-3">
+            <button
+              className="rounded-lg border px-3 py-2 text-xs font-semibold"
+              type="button"
+              onClick={() => updateExam({ results_published: !exam.results_published })}
+            >
+              {exam.results_published ? "Hide results" : "Publish results"}
+            </button>
+            <button
+              className="rounded-lg border px-3 py-2 text-xs font-semibold"
+              type="button"
+              onClick={() => updateExam({ is_active: !exam.is_active })}
+            >
+              {exam.is_active ? "Disable access" : "Enable access"}
+            </button>
+            <button
+              className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700"
+              type="button"
+              onClick={deleteExam}
+            >
+              Delete mock
+            </button>
+          </div>
+
+          <MockExamAccessManager exam={exam} token={token} refresh={refresh} />
+        </div>
+      ) : null}
+
+      {canManage && active && activePanel === "results" ? (
         <div className="mt-5 space-y-3 border-t pt-4">
           <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Results overview</div>
-          {resultsLoading ? <div className="text-sm text-slate-500">Loading results…</div> : null}
+          {resultsLoading ? <div className="text-sm text-slate-500">Loading results...</div> : null}
           {resultsError ? <div className="text-sm text-red-600">{resultsError}</div> : null}
           {!resultsLoading && resultsData.length === 0 ? (
             <div className="text-sm text-slate-500">No submitted attempts yet.</div>
@@ -668,45 +719,31 @@ function MockExamCard({
                     </div>
                   </div>
                   <div className="mt-2 text-xs text-slate-500">
-                    Submitted: {formatStamp(attempt.submitted_at)} · Time spent: {Math.round(attempt.time_spent / 60)}m
+                    Submitted: {formatStamp(attempt.submitted_at)} | Time spent: {Math.round(attempt.time_spent / 60)}m
                   </div>
-
-                  <details className="mt-3 rounded-lg border bg-slate-50 p-3">
-                    <summary className="cursor-pointer text-xs font-semibold text-slate-700">
-                      Mistakes ({attempt.mistakes.length}) · Unanswered {attempt.unanswered}
-                    </summary>
-                    <div className="mt-3 space-y-3 text-xs text-slate-600">
-                      {attempt.mistakes.length === 0 ? (
-                        <div>No mistakes recorded.</div>
-                      ) : (
-                        attempt.mistakes.map((m) => (
-                          <div key={`${attempt.attempt_id}-${m.question_id}`} className="rounded-lg bg-white p-3">
-                            <div className="text-[11px] uppercase tracking-wide text-slate-400">
-                              Q{m.index} · {m.subject} · {m.topic || "Topic"}
-                            </div>
-                            <div className="mt-1 text-sm text-slate-800">{m.stem}</div>
-                            <div className="mt-2 grid gap-1">
-                              <div className="text-[11px] text-slate-500">
-                                Status: {m.status === "unanswered" ? "Unanswered" : "Incorrect"}
-                              </div>
-                              <div className="text-[11px] text-slate-500">
-                                Your answer: {m.answer_text || m.answer || "—"}
-                              </div>
-                              <div className="text-[11px] text-slate-500">
-                                Correct: {m.correct_text || m.correct || "—"}
-                              </div>
-                            </div>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </details>
+                  <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-slate-600">
+                    <span className="rounded-full bg-slate-100 px-3 py-1">
+                      Correct: {(attempt.score_verbal || 0) + (attempt.score_math || 0)}
+                    </span>
+                    <span className="rounded-full bg-slate-100 px-3 py-1">
+                      Wrong: {Math.max(0, (exam.question_count || 0) - (attempt.score_verbal || 0) - (attempt.score_math || 0) - (attempt.unanswered || 0))}
+                    </span>
+                    <span className="rounded-full bg-slate-100 px-3 py-1">Unanswered: {attempt.unanswered || 0}</span>
+                  </div>
+                  <button
+                    className="mt-3 rounded-lg border border-slate-900 px-3 py-1 text-xs font-semibold text-slate-900"
+                    type="button"
+                    onClick={() => onReviewAttempt(exam.id, attempt.attempt_id)}
+                  >
+                    Review attempt
+                  </button>
                 </div>
               );
             })}
           </div>
         </div>
       ) : null}
+
     </div>
   );
 }

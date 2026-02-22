@@ -20,19 +20,41 @@ def _is_staff(user: User) -> bool:
     return user.is_superuser or is_admin or role in ("admin", "teacher")
 
 
-def _serialize_question_for_student(q: Question, choice_order: list[str] | None = None):
+def _serialize_question_for_student(q: Question, choice_order: list | None = None):
     choices = []
     raw_choices = q.choices or []
     if choice_order:
-        by_label = {c.get("label"): c for c in raw_choices}
-        for lbl in choice_order:
-            c = by_label.get(lbl)
-            if not c:
-                continue
-            choices.append({"label": c.get("label"), "content": c.get("content")})
+        if all(isinstance(i, int) for i in choice_order):
+            ordered = [i for i in choice_order if 0 <= i < len(raw_choices)]
+            used = set(ordered)
+            for idx, raw_idx in enumerate(ordered):
+                c = raw_choices[raw_idx]
+                label = chr(65 + idx)
+                choices.append({"label": label, "content": c.get("content")})
+            for raw_idx, c in enumerate(raw_choices):
+                if raw_idx in used:
+                    continue
+                label = chr(65 + len(choices))
+                choices.append({"label": label, "content": c.get("content")})
+        else:
+            by_label = {c.get("label"): c for c in raw_choices if c.get("label")}
+            used = set()
+            for idx, lbl in enumerate(choice_order):
+                c = by_label.get(lbl)
+                if not c:
+                    continue
+                fallback = chr(65 + idx)
+                choices.append({"label": c.get("label") or fallback, "content": c.get("content")})
+                used.add(lbl)
+            for c in raw_choices:
+                label = c.get("label") or chr(65 + len(choices))
+                if c.get("label") and c.get("label") in used:
+                    continue
+                choices.append({"label": label, "content": c.get("content")})
     else:
-        for c in raw_choices:
-            choices.append({"label": c.get("label"), "content": c.get("content")})
+        for idx, c in enumerate(raw_choices):
+            label = c.get("label") or chr(65 + idx)
+            choices.append({"label": label, "content": c.get("content")})
 
     return {
         "id": str(q.id),
@@ -48,27 +70,66 @@ def _serialize_question_for_student(q: Question, choice_order: list[str] | None 
     }
 
 
-def _serialize_question_for_review(q: Question, choice_order: list[str] | None = None):
+def _serialize_question_for_review(q: Question, choice_order: list | None = None):
     choices = []
     raw_choices = q.choices or []
     if choice_order:
-        by_label = {c.get("label"): c for c in raw_choices}
-        for lbl in choice_order:
-            c = by_label.get(lbl)
-            if not c:
-                continue
-            choices.append(
-                {
-                    "label": c.get("label"),
-                    "content": c.get("content"),
-                    "is_correct": bool(c.get("is_correct")),
-                }
-            )
+        if all(isinstance(i, int) for i in choice_order):
+            ordered = [i for i in choice_order if 0 <= i < len(raw_choices)]
+            used = set(ordered)
+            for idx, raw_idx in enumerate(ordered):
+                c = raw_choices[raw_idx]
+                label = chr(65 + idx)
+                choices.append(
+                    {
+                        "label": label,
+                        "content": c.get("content"),
+                        "is_correct": bool(c.get("is_correct")),
+                    }
+                )
+            for raw_idx, c in enumerate(raw_choices):
+                if raw_idx in used:
+                    continue
+                label = chr(65 + len(choices))
+                choices.append(
+                    {
+                        "label": label,
+                        "content": c.get("content"),
+                        "is_correct": bool(c.get("is_correct")),
+                    }
+                )
+        else:
+            by_label = {c.get("label"): c for c in raw_choices if c.get("label")}
+            used = set()
+            for idx, lbl in enumerate(choice_order):
+                c = by_label.get(lbl)
+                if not c:
+                    continue
+                fallback = chr(65 + idx)
+                choices.append(
+                    {
+                        "label": c.get("label") or fallback,
+                        "content": c.get("content"),
+                        "is_correct": bool(c.get("is_correct")),
+                    }
+                )
+                used.add(lbl)
+            for c in raw_choices:
+                label = c.get("label")
+                if label and label in used:
+                    continue
+                choices.append(
+                    {
+                        "label": label or chr(65 + len(choices)),
+                        "content": c.get("content"),
+                        "is_correct": bool(c.get("is_correct")),
+                    }
+                )
     else:
-        for c in raw_choices:
+        for idx, c in enumerate(raw_choices):
             choices.append(
                 {
-                    "label": c.get("label"),
+                    "label": c.get("label") or chr(65 + idx),
                     "content": c.get("content"),
                     "is_correct": bool(c.get("is_correct")),
                 }
@@ -112,10 +173,11 @@ def _apply_override(q: Question, override: dict | None):
     return SimpleNamespace(**data)
 
 
-def _score_answers(question_map: dict, answers: dict):
+def _score_answers(question_map: dict, answers: dict, choice_order: dict | None = None):
     totals = {"verbal": {"correct": 0, "total": 0}, "math": {"correct": 0, "total": 0}}
     topic_stats = {}
     diff_stats = {}
+    order_map = choice_order or {}
 
     for qid, q in question_map.items():
         if qid not in answers:
@@ -131,9 +193,20 @@ def _score_answers(question_map: dict, answers: dict):
                 is_correct = True
         else:
             pick = str(answers.get(qid) or "").strip()
-            correct_label = next((c.get("label") for c in (q.choices or []) if c.get("is_correct")), None)
-            if pick and correct_label and pick == correct_label:
-                is_correct = True
+            raw_choices = q.choices or []
+            order = order_map.get(str(qid)) or order_map.get(qid) or []
+            if order and all(isinstance(i, int) for i in order):
+                idx = ord(pick.upper()) - 65 if pick else -1
+                if 0 <= idx < len(order):
+                    raw_idx = order[idx]
+                    if 0 <= raw_idx < len(raw_choices) and raw_choices[raw_idx].get("is_correct"):
+                        is_correct = True
+            else:
+                correct_label = next(
+                    (c.get("label") for c in raw_choices if c.get("is_correct")), None
+                )
+                if pick and correct_label and pick == correct_label:
+                    is_correct = True
 
         if is_correct:
             totals[subject]["correct"] += 1
@@ -358,6 +431,9 @@ class MockExamListView(APIView):
                 .order_by("-started_at")
                 .first()
             )
+            attempts_count = MockExamAttempt.objects.filter(
+                mock_exam=exam, student=user, status="submitted"
+            ).count()
             attempt_summary = None
             if latest_attempt and (exam.results_published or staff):
                 attempt_summary = {
@@ -378,6 +454,11 @@ class MockExamListView(APIView):
                 else:
                     allowed_ids = list(exam.allowed_students.values_list("id", flat=True))
                     allowed_count = exam.allowed_students.count()
+            access_limit = None
+            if access_qs.exists():
+                access_row = access_qs.filter(student=user).first()
+                if access_row:
+                    access_limit = access_row.attempt_limit
 
             data.append(
                 {
@@ -402,6 +483,8 @@ class MockExamListView(APIView):
                     "allowed_student_count": allowed_count,
                     "question_ids": exam.question_ids if staff else None,
                     "attempt": attempt_summary,
+                    "attempts_count": attempts_count,
+                    "access_limit": access_limit,
                 }
             )
 
@@ -412,26 +495,48 @@ class MockExamReviewView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
+        attempt_id = request.query_params.get("attempt_id")
         exam_id = request.query_params.get("mock_exam_id")
-        if not exam_id:
-            return Response({"error": "mock_exam_id required"}, status=400)
-        try:
-            exam = MockExam.objects.get(id=exam_id)
-        except MockExam.DoesNotExist:
-            return Response({"error": "Not found"}, status=404)
-
         user = request.user
         staff = _is_staff(user)
-        if not exam.results_published and not staff:
-            return Response({"error": "Results not published"}, status=403)
+        if attempt_id:
+            if not staff:
+                return Response({"error": "Forbidden"}, status=403)
+            try:
+                attempt = MockExamAttempt.objects.select_related("mock_exam", "mock_exam__course").get(
+                    id=attempt_id
+                )
+            except MockExamAttempt.DoesNotExist:
+                return Response({"error": "Not found"}, status=404)
+            exam = attempt.mock_exam
+            prof = getattr(user, "profile", None)
+            role = (getattr(prof, "role", None) or "").lower()
+            is_admin = user.is_superuser or getattr(prof, "is_admin", False) or role == "admin"
+            if not is_admin:
+                if exam.course_id:
+                    from courses.models import CourseTeacher
 
-        attempt = (
-            MockExamAttempt.objects.filter(mock_exam=exam, student=user, status="submitted")
-            .order_by("-submitted_at")
-            .first()
-        )
-        if not attempt:
-            return Response({"error": "No submitted attempt"}, status=404)
+                    if not CourseTeacher.objects.filter(course_id=exam.course_id, teacher=user).exists():
+                        return Response({"error": "Forbidden"}, status=403)
+                elif exam.created_by_id != user.id:
+                    return Response({"error": "Forbidden"}, status=403)
+        else:
+            if not exam_id:
+                return Response({"error": "mock_exam_id required"}, status=400)
+            try:
+                exam = MockExam.objects.get(id=exam_id)
+            except MockExam.DoesNotExist:
+                return Response({"error": "Not found"}, status=404)
+            if not exam.results_published and not staff:
+                return Response({"error": "Results not published"}, status=403)
+
+            attempt = (
+                MockExamAttempt.objects.filter(mock_exam=exam, student=user, status="submitted")
+                .order_by("-submitted_at")
+                .first()
+            )
+            if not attempt:
+                return Response({"error": "No submitted attempt"}, status=404)
 
         overrides = exam.question_overrides or {}
         questions = Question.objects.filter(id__in=attempt.question_order)
@@ -1452,9 +1557,9 @@ class MockExamStartView(APIView):
                 qs = Question.objects.filter(id__in=order)
                 for q in qs:
                     q2 = _apply_override(q, overrides.get(str(q.id)))
-                    labels = [c.get("label") for c in (q2.choices or []) if c.get("label")]
-                    random.shuffle(labels)
-                    choice_order[str(q.id)] = labels
+                    indices = list(range(len(q2.choices or [])))
+                    random.shuffle(indices)
+                    choice_order[str(q.id)] = indices
             attempt.choice_order = choice_order
             attempt.save()
 
@@ -1561,7 +1666,7 @@ class MockExamSubmitView(APIView):
         overrides = (attempt.mock_exam.question_overrides or {}) if attempt.mock_exam_id else {}
         qmap = {str(q.id): _apply_override(q, overrides.get(str(q.id))) for q in questions}
 
-        totals, topic_stats, diff_stats = _score_answers(qmap, answers)
+        totals, topic_stats, diff_stats = _score_answers(qmap, answers, attempt.choice_order or {})
 
         attempt.answers = answers
         attempt.score_verbal = totals["verbal"]["correct"]

@@ -22,8 +22,9 @@ type QuizQuestion = {
   subtopic?: string | null;
   stem: string;
   passage?: string | null;
-  choices?: { label: string; content: string }[];
+  choices?: { label: string; content: string; is_correct?: boolean }[];
   is_open_ended?: boolean | null;
+  correct_answer?: string | null;
   image_url?: string | null;
 };
 
@@ -40,12 +41,25 @@ function MathContent({ html, className }: { html: string; className?: string }) 
 function wrapLatexIfNeeded(input: string) {
   const trimmed = input.trim();
   if (!trimmed) return "";
-  const hasDelims = trimmed.includes("\\(") || trimmed.includes("\\[") || trimmed.includes("$$");
-  return hasDelims ? trimmed : `\\(${trimmed}\\)`;
+  const latexFlag = "$LATEX$";
+  const hasDelims = (val: string) =>
+    val.includes("\\(") || val.includes("\\[") || val.includes("$$") || /\$[^$]+\$/.test(val);
+  if (trimmed.startsWith(latexFlag)) {
+    const content = trimmed.slice(latexFlag.length).trim();
+    if (!content) return "";
+    return hasDelims(content) ? content : `\\(${content}\\)`;
+  }
+  if (hasDelims(trimmed)) return trimmed;
+  return trimmed;
 }
 
 function hasLatexDelims(input: string) {
-  return input.includes("\\(") || input.includes("\\[") || input.includes("$$");
+  return (
+    input.includes("\\(") ||
+    input.includes("\\[") ||
+    input.includes("$$") ||
+    /\$[^$]+\$/.test(input)
+  );
 }
 
 function formatTime(seconds: number) {
@@ -119,6 +133,7 @@ export default function Page() {
   const router = useRouter();
   const search = useSearchParams();
   const practiceId = params.practiceId;
+  const reviewAttemptParam = search.get("review_attempt");
 
   const examParam = (search.get("exam") || "").toLowerCase();
   const examLabel = examParam === "act" ? "ACT" : "SAT";
@@ -137,6 +152,7 @@ export default function Page() {
   const [introMode, setIntroMode] = useState(true);
   const [mapOpen, setMapOpen] = useState(false);
   const [reviewMode, setReviewMode] = useState(false);
+  const [resultsReview, setResultsReview] = useState(false);
   const [reviewFlags, setReviewFlags] = useState<Record<string, boolean>>({});
   const [breakMode, setBreakMode] = useState(false);
   const [breakSeconds, setBreakSeconds] = useState(0);
@@ -168,6 +184,8 @@ export default function Page() {
     if (!practiceId) return;
     setLoading(true);
     setError(null);
+    setResultsReview(false);
+    setResult(null);
     try {
       const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
       if (!token) throw new Error("Not logged in");
@@ -225,31 +243,81 @@ export default function Page() {
     }
   }
 
+  async function loadReview(attemptOverride?: string | null) {
+    if (!practiceId) return;
+    setError(null);
+    try {
+      const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
+      if (!token) return;
+      const query = attemptOverride
+        ? `attempt_id=${encodeURIComponent(attemptOverride)}`
+        : `practice_id=${encodeURIComponent(practiceId)}`;
+      const res = await fetch(`${API_BASE}/api/module-practice/review/?${query}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const { json, text } = await readResponse(res);
+      if (!res.ok) {
+        const htmlError = extractHtmlError(text);
+        const fallback = text ? text.slice(0, 200) : "Failed to load review";
+        throw new Error(json?.error || htmlError || fallback);
+      }
+      const modulesPayload = json?.modules ?? [];
+      const attempt = json?.attempt_id ?? null;
+      setModules(modulesPayload);
+      setAttemptId(attempt);
+      setAnswers(json?.answers ?? {});
+      setResult(null);
+      setCurrentModule(0);
+      setCurrentQuestion(0);
+      setResultsReview(true);
+      setReviewMode(false);
+      setBreakMode(false);
+      setTimeExpired(false);
+      setEliminateMode(false);
+      setHighlightMode(false);
+      setHighlightedPassages({});
+      setHighlightedStems({});
+      setTimeLeft(0);
+      setIntroMode(false);
+      return true;
+    } catch {
+      // Ignore when no submitted attempt or results not published.
+      return false;
+    }
+  }
+
   useEffect(() => {
     if (!practiceId || autoResumeChecked) return;
     if (typeof window === "undefined") return;
     const lastAttempt = localStorage.getItem(getPracticeAttemptKey(practiceId));
+    if (reviewAttemptParam) {
+      void loadReview(reviewAttemptParam).finally(() => setAutoResumeChecked(true));
+      return;
+    }
     if (lastAttempt) {
       startAttempt();
+      setAutoResumeChecked(true);
+      return;
     }
     setAutoResumeChecked(true);
-  }, [practiceId, autoResumeChecked]);
+  }, [practiceId, autoResumeChecked, reviewAttemptParam]);
 
   useEffect(() => {
-    if (loading || result || !modules.length) return;
+    if (loading || result || resultsReview || !modules.length) return;
     const id = window.setInterval(() => {
       setTimeLeft((t) => (t > 0 ? t - 1 : 0));
     }, 1000);
     return () => window.clearInterval(id);
-  }, [loading, result, modules.length]);
+  }, [loading, result, resultsReview, modules.length]);
 
   useEffect(() => {
+    if (resultsReview) return;
     if (timeLeft !== 0) return;
     if (submittedRef.current) return;
     if (!modules.length) return;
     setTimeExpired(true);
     finishModule();
-  }, [timeLeft]);
+  }, [timeLeft, resultsReview]);
 
   useEffect(() => {
     if (!breakMode) return;
@@ -261,15 +329,15 @@ export default function Page() {
 
   useEffect(() => {
     const current = modules[currentModule];
-    if (current?.subject !== "verbal") {
+    if (resultsReview || current?.subject !== "verbal") {
       setHighlightMode(false);
     }
-  }, [modules, currentModule]);
+  }, [modules, currentModule, resultsReview]);
 
   // Calculator opens in a popup window (no API key required).
 
   useEffect(() => {
-    if (!attemptId || introMode) return;
+    if (!attemptId || introMode || resultsReview) return;
     saveAttemptState(attemptId, {
       currentModule,
       currentQuestion,
@@ -288,6 +356,7 @@ export default function Page() {
   }, [
     attemptId,
     introMode,
+    resultsReview,
     currentModule,
     currentQuestion,
     answers,
@@ -317,6 +386,16 @@ export default function Page() {
   }, []);
 
   function finishModule() {
+    if (resultsReview) {
+      const next = currentModule + 1;
+      if (next < modules.length) {
+        setCurrentModule(next);
+        setCurrentQuestion(0);
+        return;
+      }
+      router.push("/practice/modules");
+      return;
+    }
     const next = currentModule + 1;
     if (next < modules.length) {
       setReviewMode(true);
@@ -358,10 +437,12 @@ export default function Page() {
   }
 
   function toggleReviewFlag(questionId: string) {
+    if (resultsReview) return;
     setReviewFlags((prev) => ({ ...prev, [questionId]: !prev[questionId] }));
   }
 
   function toggleElimination(questionId: string, label: string) {
+    if (resultsReview) return;
     setEliminations((prev) => {
       const current = { ...(prev[questionId] || {}) };
       if (current[label]) delete current[label];
@@ -373,6 +454,7 @@ export default function Page() {
   function setAnswer(val: string) {
     const q = currentQ;
     if (!q) return;
+    if (resultsReview) return;
     setAnswers((prev) => ({ ...prev, [q.id]: val }));
   }
 
@@ -465,7 +547,7 @@ export default function Page() {
   }
 
   function handleHighlightMouseUp() {
-    if (!highlightMode) return;
+    if (!highlightMode || resultsReview) return;
     applyHighlight();
   }
 
@@ -519,6 +601,7 @@ export default function Page() {
   }
 
   function handleHighlightClick(type: "passage" | "stem", target: EventTarget | null) {
+    if (resultsReview) return;
     if (!(target instanceof Element)) return;
     const el = target;
     const removeTarget = el.closest("[data-hl-remove]") as HTMLElement | null;
@@ -563,6 +646,7 @@ export default function Page() {
     if (typeof window !== "undefined") {
       localStorage.removeItem(getPracticeAttemptKey(practiceId));
     }
+    setResultsReview(false);
     setResult(json);
   }
 
@@ -571,7 +655,7 @@ export default function Page() {
   const currentQ = questions[currentQuestion];
   const isMath = module?.subject === "math";
   const isVerbal = module?.subject === "verbal";
-  const navLocked = timeLeft === 0 || timeExpired;
+  const navLocked = !resultsReview && (timeLeft === 0 || timeExpired);
   const isMarkedForReview = currentQ ? !!reviewFlags[currentQ.id] : false;
   const eliminatedForCurrent = currentQ ? eliminations[currentQ.id] || {} : {};
   const imageUrl = currentQ?.image_url;
@@ -600,6 +684,64 @@ export default function Page() {
     if (highlightedPassages[currentQ.id]) return highlightedPassages[currentQ.id];
     return currentQ.passage.replace(/\n/g, "<br/>");
   }, [currentQ, highlightedPassages]);
+
+  const reviewStatus = useMemo(() => {
+    if (!resultsReview || !currentQ) return null;
+    const answer = answers[currentQ.id];
+    if (!answer) {
+      return { label: "Unanswered", className: "text-slate-400" };
+    }
+    if (currentQ.is_open_ended) {
+      const expected = (currentQ.correct_answer || "").trim().toLowerCase();
+      const actual = String(answer || "").trim().toLowerCase();
+      if (expected && actual === expected) {
+        return { label: "Correct", className: "text-emerald-600" };
+      }
+      return { label: "Wrong", className: "text-red-600" };
+    }
+    const correctLabel = (currentQ.choices || []).find((c) => c.is_correct)?.label;
+    if (correctLabel && answer === correctLabel) {
+      return { label: "Correct", className: "text-emerald-600" };
+    }
+    return { label: "Wrong", className: "text-red-600" };
+  }, [resultsReview, currentQ, answers]);
+
+  const reviewOutcomes = useMemo(() => {
+    if (!resultsReview) return null;
+    const outcomes: Record<string, "correct" | "wrong" | "unanswered"> = {};
+    let correct = 0;
+    let wrong = 0;
+    let unanswered = 0;
+    for (const q of questions) {
+      const answer = answers[q.id];
+      if (!answer) {
+        outcomes[q.id] = "unanswered";
+        unanswered += 1;
+        continue;
+      }
+      if (q.is_open_ended) {
+        const expected = (q.correct_answer || "").trim().toLowerCase();
+        const actual = String(answer || "").trim().toLowerCase();
+        if (expected && actual === expected) {
+          outcomes[q.id] = "correct";
+          correct += 1;
+        } else {
+          outcomes[q.id] = "wrong";
+          wrong += 1;
+        }
+        continue;
+      }
+      const correctLabel = (q.choices || []).find((c) => c.is_correct)?.label;
+      if (correctLabel && answer === correctLabel) {
+        outcomes[q.id] = "correct";
+        correct += 1;
+      } else {
+        outcomes[q.id] = "wrong";
+        wrong += 1;
+      }
+    }
+    return { outcomes, correct, wrong, unanswered };
+  }, [resultsReview, questions, answers]);
 
   if (introMode) {
     return (
@@ -816,7 +958,7 @@ export default function Page() {
     );
   }
 
-  if (result) {
+  if (result && !resultsReview) {
     return (
       <div className="min-h-screen bg-slate-50 px-4 py-10">
         <div className="mx-auto max-w-3xl rounded-2xl border bg-white p-6 shadow-sm">
@@ -842,6 +984,15 @@ export default function Page() {
           ) : (
             <div className="mt-3 text-sm text-slate-600">Results will be available after the teacher publishes them.</div>
           )}
+          {result.results_released ? (
+            <button
+              className="mt-4 rounded-lg border border-slate-900 px-4 py-2 text-sm font-semibold text-slate-900"
+              onClick={() => loadReview(attemptId)}
+              type="button"
+            >
+              Review answers
+            </button>
+          ) : null}
           <button
             className="mt-4 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
             onClick={() => router.push("/practice/modules")}
@@ -863,10 +1014,10 @@ export default function Page() {
               {module ? `${module.subject.toUpperCase()} Module ${module.module_index}` : "Mock exam"}
             </div>
             <div className="text-center text-sm font-semibold text-slate-900">
-              {formatTime(timeLeft)}
+              {resultsReview ? "Review" : formatTime(timeLeft)}
             </div>
             <div className="flex items-center justify-end gap-4 text-xs text-slate-600">
-              {module?.subject === "math" ? (
+              {module?.subject === "math" && !resultsReview ? (
                 <div className="flex items-center gap-2">
                   <button
                     className="inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[11px] font-semibold text-slate-700"
@@ -883,7 +1034,7 @@ export default function Page() {
                   </button>
                 </div>
               ) : null}
-              {module?.subject === "verbal" ? (
+              {module?.subject === "verbal" && !resultsReview ? (
                 <button
                   className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[11px] font-semibold ${
                     highlightMode ? "border-slate-900 text-slate-900" : "text-slate-700"
@@ -927,26 +1078,28 @@ export default function Page() {
                     </button>
                   </div>
                   <div className="flex items-center gap-4 text-slate-500">
-                    <button
-                      className={`inline-flex h-8 w-8 items-center justify-center rounded-full border shadow-sm text-[12px] font-bold transition ${
-                        eliminateMode ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-900 border-slate-200"
-                      }`}
-                      onClick={() => {
-                        setEliminateMode((v) => {
-                          const next = !v;
-                          if (next && currentQ) {
-                            setEliminations((prev) => ({ ...prev, [currentQ.id]: {} }));
-                          }
-                          return next;
-                        });
-                      }}
-                      aria-label="Toggle strike mode"
-                    >
-                      <span className="relative inline-flex h-4 w-4 items-center justify-center">
-                        <span className="text-[12px] font-bold leading-none">S</span>
-                        <span className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-current" />
-                      </span>
-                    </button>
+                    {!resultsReview ? (
+                      <button
+                        className={`inline-flex h-8 w-8 items-center justify-center rounded-full border shadow-sm text-[12px] font-bold transition ${
+                          eliminateMode ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-900 border-slate-200"
+                        }`}
+                        onClick={() => {
+                          setEliminateMode((v) => {
+                            const next = !v;
+                            if (next && currentQ) {
+                              setEliminations((prev) => ({ ...prev, [currentQ.id]: {} }));
+                            }
+                            return next;
+                          });
+                        }}
+                        aria-label="Toggle strike mode"
+                      >
+                        <span className="relative inline-flex h-4 w-4 items-center justify-center">
+                          <span className="text-[12px] font-bold leading-none">S</span>
+                          <span className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-current" />
+                        </span>
+                      </button>
+                    ) : null}
                   </div>
                 </div>
                 {resolvedImageUrl ? (
@@ -959,34 +1112,68 @@ export default function Page() {
                 <div className="text-lg font-semibold text-slate-900">
                   <MathContent html={stemHtml} />
                 </div>
+                {resultsReview && reviewStatus ? (
+                  <div className={`text-xs font-semibold ${reviewStatus.className}`}>
+                    {reviewStatus.label}
+                  </div>
+                ) : null}
 
                 {currentQ.is_open_ended ? (
-                  <textarea
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm min-h-[110px]"
-                    value={answers[currentQ.id] ?? ""}
-                    onChange={(e) => setAnswer(e.target.value)}
-                    placeholder="Type your answer"
-                  />
+                  <div className="space-y-2">
+                    <textarea
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm min-h-[110px]"
+                      value={answers[currentQ.id] ?? ""}
+                      onChange={(e) => setAnswer(e.target.value)}
+                      placeholder="Type your answer"
+                      readOnly={resultsReview}
+                    />
+                    {resultsReview ? (
+                      <div className="text-xs text-slate-600">
+                        Correct answer:{" "}
+                        <span className="font-semibold text-emerald-700">
+                          {currentQ.correct_answer || "—"}
+                        </span>
+                      </div>
+                    ) : null}
+                  </div>
                 ) : (
                   <div className="space-y-2">
                     {(currentQ.choices || []).map((c, idx) => {
                       const choiceLabel = c.label ?? String.fromCharCode(65 + idx);
-                      const isEliminated = !!eliminatedForCurrent[choiceLabel];
+                      const isEliminated = !resultsReview && !!eliminatedForCurrent[choiceLabel];
                       const isSelected = answers[currentQ.id] === choiceLabel;
+                      const isCorrect = resultsReview && !!c.is_correct;
+                      const isWrong = resultsReview && isSelected && !c.is_correct;
+                      const isChosenCorrect = resultsReview && isSelected && !!c.is_correct;
                       return (
                       <div
                         key={choiceLabel}
                         className={`w-full rounded-xl border px-4 py-3 text-left text-sm transition flex items-center gap-2 ${
-                          isSelected ? "border-blue-600 bg-blue-50 shadow-sm" : "border-slate-200"
+                          isCorrect
+                            ? "border-emerald-500 bg-emerald-50"
+                            : isWrong
+                            ? "border-red-500 bg-red-50"
+                            : isSelected
+                            ? "border-blue-600 bg-blue-50 shadow-sm"
+                            : "border-slate-200"
                         }`}
                         onClick={() => {
+                          if (resultsReview) return;
                           setAnswer(choiceLabel);
                         }}
                         role="button"
                       >
                         <span
                           className={`inline-flex items-center justify-center h-6 w-6 rounded-full border text-[11px] font-semibold mr-2 ${
-                            isSelected ? "border-blue-600 bg-blue-600 text-white" : "border-slate-300 text-slate-700"
+                            isCorrect
+                              ? "border-emerald-600 bg-emerald-600 text-white"
+                              : isWrong
+                              ? "border-red-600 bg-red-600 text-white"
+                              : isChosenCorrect
+                              ? "border-emerald-600 bg-emerald-600 text-white"
+                              : isSelected
+                              ? "border-blue-600 bg-blue-600 text-white"
+                              : "border-slate-300 text-slate-700"
                           }`}
                         >
                           {choiceLabel}
@@ -999,7 +1186,13 @@ export default function Page() {
                             {renderChoiceContent(c.content || "")}
                           </span>
                         </span>
-                        {eliminateMode ? (
+                        {resultsReview && isCorrect ? (
+                          <span className="text-[10px] font-semibold uppercase text-emerald-600">Correct</span>
+                        ) : null}
+                        {resultsReview && isWrong ? (
+                          <span className="text-[10px] font-semibold uppercase text-red-600">Your choice</span>
+                        ) : null}
+                        {eliminateMode && !resultsReview ? (
                           <button
                             type="button"
                             onClick={(e) => {
@@ -1062,26 +1255,28 @@ export default function Page() {
                       </button>
                     </div>
                     <div className="flex items-center gap-4 text-slate-500">
-                      <button
-                        className={`inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm text-[12px] font-bold text-slate-900 ${
-                          eliminateMode ? "ring-2 ring-slate-400" : ""
-                        }`}
-                        onClick={() => {
-                        setEliminateMode((v) => {
-                          const next = !v;
-                          if (next && currentQ) {
-                            setEliminations((prev) => ({ ...prev, [currentQ.id]: {} }));
-                          }
-                          return next;
-                        });
-                      }}
-                        aria-label="Toggle strike mode"
-                      >
-                        <span className="relative inline-flex h-4 w-4 items-center justify-center">
-                          <span className="text-[12px] font-bold leading-none">S</span>
-                          <span className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-current" />
-                        </span>
-                      </button>
+                      {!resultsReview ? (
+                        <button
+                          className={`inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm text-[12px] font-bold text-slate-900 ${
+                            eliminateMode ? "ring-2 ring-slate-400" : ""
+                          }`}
+                          onClick={() => {
+                          setEliminateMode((v) => {
+                            const next = !v;
+                            if (next && currentQ) {
+                              setEliminations((prev) => ({ ...prev, [currentQ.id]: {} }));
+                            }
+                            return next;
+                          });
+                        }}
+                          aria-label="Toggle strike mode"
+                        >
+                          <span className="relative inline-flex h-4 w-4 items-center justify-center">
+                            <span className="text-[12px] font-bold leading-none">S</span>
+                            <span className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-current" />
+                          </span>
+                        </button>
+                      ) : null}
                     </div>
                   </div>
                   <div
@@ -1094,34 +1289,68 @@ export default function Page() {
                   >
                     <span ref={stemBoxRef} dangerouslySetInnerHTML={{ __html: stemHtml }} />
                   </div>
+                  {resultsReview && reviewStatus ? (
+                    <div className={`mt-2 text-xs font-semibold ${reviewStatus.className}`}>
+                      {reviewStatus.label}
+                    </div>
+                  ) : null}
 
                   {currentQ.is_open_ended ? (
-                    <textarea
-                      className="mt-4 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm min-h-[110px]"
-                      value={answers[currentQ.id] ?? ""}
-                      onChange={(e) => setAnswer(e.target.value)}
-                      placeholder="Type your answer"
-                    />
+                    <div className="mt-4 space-y-2">
+                      <textarea
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm min-h-[110px]"
+                        value={answers[currentQ.id] ?? ""}
+                        onChange={(e) => setAnswer(e.target.value)}
+                        placeholder="Type your answer"
+                        readOnly={resultsReview}
+                      />
+                      {resultsReview ? (
+                        <div className="text-xs text-slate-600">
+                          Correct answer:{" "}
+                          <span className="font-semibold text-emerald-700">
+                            {currentQ.correct_answer || "—"}
+                          </span>
+                        </div>
+                      ) : null}
+                    </div>
                   ) : (
                     <div className="mt-4 space-y-3">
                       {(currentQ.choices || []).map((c, idx) => {
                         const choiceLabel = c.label ?? String.fromCharCode(65 + idx);
-                        const isEliminated = !!eliminatedForCurrent[choiceLabel];
+                        const isEliminated = !resultsReview && !!eliminatedForCurrent[choiceLabel];
                         const isSelected = answers[currentQ.id] === choiceLabel;
+                        const isCorrect = resultsReview && !!c.is_correct;
+                        const isWrong = resultsReview && isSelected && !c.is_correct;
+                        const isChosenCorrect = resultsReview && isSelected && !!c.is_correct;
                         return (
                         <div
                           key={choiceLabel}
                           className={`w-full rounded-xl border px-4 py-3 text-left text-sm transition flex items-center gap-2 ${
-                            isSelected ? "border-blue-600 bg-blue-50 shadow-sm" : "border-slate-200"
+                            isCorrect
+                              ? "border-emerald-500 bg-emerald-50"
+                              : isWrong
+                              ? "border-red-500 bg-red-50"
+                              : isSelected
+                              ? "border-blue-600 bg-blue-50 shadow-sm"
+                              : "border-slate-200"
                           }`}
                           onClick={() => {
+                          if (resultsReview) return;
                           setAnswer(choiceLabel);
                         }}
                           role="button"
                         >
                           <span
                             className={`inline-flex items-center justify-center h-6 w-6 rounded-full border text-[11px] font-semibold mr-2 ${
-                              isSelected ? "border-blue-600 bg-blue-600 text-white" : "border-slate-300 text-slate-700"
+                              isCorrect
+                                ? "border-emerald-600 bg-emerald-600 text-white"
+                                : isWrong
+                                ? "border-red-600 bg-red-600 text-white"
+                                : isChosenCorrect
+                                ? "border-emerald-600 bg-emerald-600 text-white"
+                                : isSelected
+                                ? "border-blue-600 bg-blue-600 text-white"
+                                : "border-slate-300 text-slate-700"
                             }`}
                           >
                             {choiceLabel}
@@ -1134,7 +1363,13 @@ export default function Page() {
                               {renderChoiceContent(c.content || "")}
                             </span>
                           </span>
-                          {eliminateMode ? (
+                          {resultsReview && isCorrect ? (
+                            <span className="text-[10px] font-semibold uppercase text-emerald-600">Correct</span>
+                          ) : null}
+                          {resultsReview && isWrong ? (
+                            <span className="text-[10px] font-semibold uppercase text-red-600">Your choice</span>
+                          ) : null}
+                          {eliminateMode && !resultsReview ? (
                             <button
                               type="button"
                               onClick={(e) => {
@@ -1245,26 +1480,50 @@ export default function Page() {
                 ✕
               </button>
             </div>
-            <div className="mt-3 flex items-center gap-4 text-xs text-slate-500">
-              <div className="flex items-center gap-1">
-                <span className="h-3 w-3 rounded-sm border border-slate-300 bg-white" />
-                Unanswered
+            {resultsReview ? (
+              <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-slate-500">
+                <div className="flex items-center gap-1">
+                  <span className="h-3 w-3 rounded-sm bg-emerald-200" />
+                  Correct
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="h-3 w-3 rounded-sm bg-red-200" />
+                  Wrong
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="h-3 w-3 rounded-sm border border-slate-300 bg-white" />
+                  Unanswered
+                </div>
               </div>
-              <div className="flex items-center gap-1">
-                <span className="h-3 w-3 rounded-sm bg-red-200" />
-                For Review
+            ) : (
+              <div className="mt-3 flex items-center gap-4 text-xs text-slate-500">
+                <div className="flex items-center gap-1">
+                  <span className="h-3 w-3 rounded-sm border border-slate-300 bg-white" />
+                  Unanswered
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="h-3 w-3 rounded-sm bg-red-200" />
+                  For Review
+                </div>
               </div>
-            </div>
+            )}
             <div className="mt-4 grid grid-cols-9 gap-2">
               {questions.map((q, idx) => {
                 const answered = Boolean(answers[q.id]);
                 const flagged = Boolean(reviewFlags[q.id]);
+                const reviewOutcome = reviewOutcomes?.outcomes?.[q.id] ?? null;
                 return (
                   <button
                     key={q.id}
                     className={`h-8 rounded-md text-[11px] font-semibold ${
                       idx === currentQuestion
                         ? "bg-slate-900 text-white"
+                        : resultsReview && reviewOutcome === "correct"
+                        ? "bg-emerald-200 text-emerald-900"
+                        : resultsReview && reviewOutcome === "wrong"
+                        ? "bg-red-200 text-red-900"
+                        : resultsReview && reviewOutcome === "unanswered"
+                        ? "border border-dashed border-slate-300 text-slate-600"
                         : flagged
                         ? "bg-red-100 text-red-700"
                         : answered

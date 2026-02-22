@@ -1672,29 +1672,24 @@ async function getSignedUrl(storage_path: string, storage_url?: string | null) {
             </div>
           ) : null}
 
-          <div className="rounded-2xl border bg-white shadow-sm">
-            <div className="p-4 border-b bg-slate-50/70">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Course content
-              </div>
-              <div className="mt-1 text-lg font-semibold text-slate-900">Files & folders</div>
-              <div className="mt-1 text-sm text-slate-600">
-                Students only see items you publish now or schedule with a future <code className="font-mono text-xs">publish_at</code> time.
-              </div>
-            </div>
+          <div className="rounded-2xl border border-transparent bg-transparent">
 
             {contentLoading ? (
               <div className="p-4 text-sm text-neutral-600">Loading...</div>
             ) : sortedNodes.length === 0 ? (
               <div className="p-4 text-sm text-neutral-600">Empty folder.</div>
             ) : (
-              <div className="flex flex-col gap-3 p-4">
+              <div className="flex flex-col gap-3 p-2">
                 {sortedNodes.map((n) => {
                   const visible = isVisible(n);
                   const st = canManage ? getNodeStatus(n) : null;
+                  const quizId = n.quiz_id || n.quiz?.id || null;
+                  const quizRow = quizId ? gradeRows.find((row) => row.kind === "quiz" && row.id === quizId) : null;
+                  const canReviewQuiz =
+                    !canManage && !!quizRow?.results_published && !!quizRow?.submission?.id;
 
                   return (
-                    <div key={n.id} id={`node-${n.id}`} className="rounded-xl border p-4 flex flex-col gap-3 bg-slate-50">
+                    <div key={n.id} id={`node-${n.id}`} className="rounded-xl border p-4 flex flex-col gap-3 bg-transparent">
                       <div className="flex items-start gap-3">
                         <div className="text-xl">
                           {n.kind === "folder"
@@ -1766,11 +1761,17 @@ async function getSignedUrl(storage_path: string, storage_url?: string | null) {
                           <>
                             <button
                               className="px-3 py-2 text-sm rounded border bg-white"
-                              onClick={() => openQuiz(n, canManage ? "manage" : "open")}
+                              onClick={() => {
+                                if (canReviewQuiz && quizId) {
+                                  router.push(`/practice/mock-exams/${quizId}?review=1`);
+                                  return;
+                                }
+                                openQuiz(n, canManage ? "manage" : "open");
+                              }}
                               type="button"
                               disabled={!canManage && !visible}
                             >
-                              {canManage ? "Manage" : "Open"}
+                              {canManage ? "Manage" : canReviewQuiz ? "Check latest attempt" : "Open"}
                             </button>
                             {canManage ? (
                               <>
@@ -2210,6 +2211,15 @@ async function getSignedUrl(storage_path: string, storage_url?: string | null) {
                       >
                         {isQuiz ? "Open quiz" : "Open"} <span aria-hidden>↗</span>
                       </button>
+                      {isQuiz && a.submission && a.results_published ? (
+                        <button
+                          className="inline-flex items-center gap-1 text-xs font-semibold text-slate-600 hover:text-slate-900 underline underline-offset-2 transition"
+                          type="button"
+                          onClick={() => router.push(`/practice/mock-exams/${a.id}?review=1`)}
+                        >
+                          Review attempt
+                        </button>
+                      ) : null}
                     </div>
 
                     {/* Status */}

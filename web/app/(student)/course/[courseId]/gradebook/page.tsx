@@ -317,6 +317,16 @@ export default function GradebookPage() {
                     <Link className="underline text-xs" href={openHref}>
                       {isQuiz ? "Open quiz" : "Open"}
                     </Link>
+                    {isQuiz && submission && a.results_published ? (
+                      <div>
+                        <Link
+                          className="underline text-xs text-slate-600"
+                          href={`/practice/mock-exams/${a.id}?review=1`}
+                        >
+                          Review attempt
+                        </Link>
+                      </div>
+                    ) : null}
                   </div>
 
                   <div className="text-neutral-600 capitalize">

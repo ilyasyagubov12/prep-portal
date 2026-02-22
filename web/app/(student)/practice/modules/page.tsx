@@ -26,9 +26,11 @@ type PracticeModule = {
 
 type PracticeAttempt = {
   id: string;
-  status: string;
+  status?: string;
   module_scores?: Record<string, { correct: number; total: number }>;
   completed_at: string | null;
+  correct?: number | null;
+  total?: number | null;
 };
 
 type ModuleQuestion = {
@@ -56,8 +58,16 @@ function MathContent({ html, className }: { html: string; className?: string }) 
 function wrapLatexIfNeeded(input: string) {
   const trimmed = input.trim();
   if (!trimmed) return "";
-  const hasDelims = trimmed.includes("\\(") || trimmed.includes("\\[") || trimmed.includes("$$");
-  return hasDelims ? trimmed : `\\(${trimmed}\\)`;
+  const latexFlag = "$LATEX$";
+  const hasDelims = (val: string) =>
+    val.includes("\\(") || val.includes("\\[") || val.includes("$$") || /\$[^$]+\$/.test(val);
+  if (trimmed.startsWith(latexFlag)) {
+    const content = trimmed.slice(latexFlag.length).trim();
+    if (!content) return "";
+    return hasDelims(content) ? content : `\\(${content}\\)`;
+  }
+  if (hasDelims(trimmed)) return trimmed;
+  return trimmed;
 }
 
 type Practice = {
@@ -113,6 +123,9 @@ export default function Page() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [practices, setPractices] = useState<Practice[]>([]);
+  const [attemptsByPractice, setAttemptsByPractice] = useState<Record<string, PracticeAttempt[]>>({});
+  const [attemptsLoading, setAttemptsLoading] = useState<Record<string, boolean>>({});
+  const [attemptsError, setAttemptsError] = useState<Record<string, string | null>>({});
 
   const [newTitle, setNewTitle] = useState("");
   const [newDesc, setNewDesc] = useState("");
@@ -170,6 +183,24 @@ export default function Page() {
       setError(e?.message ?? "Failed to load practices");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadAttempts(practiceId: string) {
+    if (!accessToken) return;
+    setAttemptsLoading((prev) => ({ ...prev, [practiceId]: true }));
+    setAttemptsError((prev) => ({ ...prev, [practiceId]: null }));
+    try {
+      const res = await fetch(`${API_BASE}/api/module-practice/attempts/?practice_id=${practiceId}`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Failed to load attempts");
+      setAttemptsByPractice((prev) => ({ ...prev, [practiceId]: json.attempts ?? [] }));
+    } catch (e: any) {
+      setAttemptsError((prev) => ({ ...prev, [practiceId]: e?.message ?? "Failed to load attempts" }));
+    } finally {
+      setAttemptsLoading((prev) => ({ ...prev, [practiceId]: false }));
     }
   }
 
@@ -322,6 +353,13 @@ export default function Page() {
             deletePractice={deletePractice}
             accessToken={accessToken}
             refresh={() => accessToken && loadPractices(accessToken)}
+            attemptsByPractice={attemptsByPractice}
+            attemptsLoading={attemptsLoading}
+            attemptsError={attemptsError}
+            loadAttempts={loadAttempts}
+            onReviewAttempt={(practiceId, attemptId) =>
+              router.push(`/practice/modules/${practiceId}?review_attempt=${attemptId}`)
+            }
           />
         </section>
         
@@ -342,6 +380,11 @@ function ExamSection({
   deletePractice,
   accessToken,
   refresh,
+  attemptsByPractice,
+  attemptsLoading,
+  attemptsError,
+  loadAttempts,
+  onReviewAttempt,
 }: {
   title: string;
   subtitle: string;
@@ -354,14 +397,39 @@ function ExamSection({
   deletePractice: (practiceId: string) => Promise<void>;
   accessToken: string | null;
   refresh: () => void;
+  attemptsByPractice: Record<string, PracticeAttempt[]>;
+  attemptsLoading: Record<string, boolean>;
+  attemptsError: Record<string, string | null>;
+  loadAttempts: (practiceId: string) => void;
+  onReviewAttempt: (practiceId: string, attemptId: string) => void;
 }) {
   const [retakeDraft, setRetakeDraft] = useState<Record<string, string>>({});
+  const [attemptsOpen, setAttemptsOpen] = useState<Record<string, boolean>>({});
+  const [activePanels, setActivePanels] = useState<
+    Record<string, "results" | "access" | "builder" | null>
+  >({});
   const openManage = (practiceId: string) => setManageId(practiceId);
   const closeManage = () => setManageId(null);
 
   useEffect(() => {
     setRetakeDraft({});
   }, [practices]);
+
+  useEffect(() => {
+    if (!canManage || !manageId) return;
+    setActivePanels((prev) => {
+      if (prev[manageId]) return prev;
+      return { ...prev, [manageId]: "results" };
+    });
+  }, [manageId, canManage]);
+
+  function toggleAttempts(practiceId: string) {
+    const next = !attemptsOpen[practiceId];
+    setAttemptsOpen((prev) => ({ ...prev, [practiceId]: next }));
+    if (next && !attemptsByPractice[practiceId] && !attemptsLoading[practiceId]) {
+      loadAttempts(practiceId);
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -378,13 +446,15 @@ function ExamSection({
         </div>
       ) : (
         <div className="grid gap-5 lg:grid-cols-2">
-          {practices.map((p) => (
-            <div
-              key={p.id}
-              className={`rounded-2xl border bg-white p-5 shadow-sm transition-all ${
-                manageId === p.id ? "lg:col-span-2" : ""
-              }`}
-            >
+          {practices.map((p) => {
+            const activePanel = activePanels[p.id] ?? null;
+            return (
+              <div
+                key={p.id}
+                className={`rounded-2xl border bg-white p-5 shadow-sm transition-all ${
+                  manageId === p.id ? "lg:col-span-2" : ""
+                }`}
+              >
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <div className="text-xs uppercase tracking-[0.3em] text-slate-400">Mock exam</div>
@@ -405,36 +475,88 @@ function ExamSection({
                 </div>
               </div>
 
-              <div className="mt-4 grid gap-2">
-                {p.modules.map((m) => (
-                  <div key={m.id} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-sm">
-                    <div className="font-medium">{formatModuleLabel(m)}</div>
-                    <div className="text-slate-500">
-                      {m.question_count || 0}/{getRequiredCount(m)} Q - {m.time_limit_minutes} min
-                    </div>
-                  </div>
-                ))}
-              </div>
+              
 
-              {p.attempt?.module_scores ? (
-                <div className="mt-4 rounded-xl bg-slate-100 p-3 text-sm text-slate-600">
-                  <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Latest attempt</div>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {Object.entries(p.attempt.module_scores).map(([key, val]) => {
-                      const [subject, idx] = key.split("-");
-                      const label = subject ? `${subject.toUpperCase()} M${idx}` : key;
-                      return (
-                        <span
-                          key={key}
-                          className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700"
-                        >
-                          {label}: {val.correct}/{val.total}
-                        </span>
-                      );
-                    })}
+              <div className="mt-4">
+                <button
+                  className="rounded-lg border px-3 py-1.5 text-xs font-semibold text-slate-700"
+                  type="button"
+                  onClick={() => toggleAttempts(p.id)}
+                >
+                  {attemptsOpen[p.id] ? "Hide attempts" : "View my attempts"}
+                </button>
+                {attemptsOpen[p.id] ? (
+                  <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3 text-sm">
+                    {!canManage && !p.results_published ? (
+                      <div className="text-xs text-slate-500">Results are hidden for this test.</div>
+                    ) : attemptsLoading[p.id] ? (
+                      <div className="text-xs text-slate-500">Loading attempts...</div>
+                    ) : attemptsError[p.id] ? (
+                      <div className="text-xs text-red-600">{attemptsError[p.id]}</div>
+                    ) : (attemptsByPractice[p.id] || []).length === 0 ? (
+                      <div className="text-xs text-slate-500">No attempts yet.</div>
+                    ) : (
+                      <div className="space-y-3">
+                        {(attemptsByPractice[p.id] || []).map((attempt, idx) => (
+                          <div
+                            key={attempt.id}
+                            className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2"
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="text-xs font-semibold text-slate-700">
+                                Attempt {idx + 1}
+                              </div>
+                              <div className="text-[11px] text-slate-500">
+                                {attempt.completed_at
+                                  ? new Date(attempt.completed_at).toLocaleString()
+                                  : "—"}
+                              </div>
+                            </div>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {attempt.module_scores
+                                ? Object.entries(attempt.module_scores).map(([key, val]) => {
+                                    const [subject, mod] = key.split("-");
+                                    const label = subject ? `${subject.toUpperCase()} M${mod}` : key;
+                                    const moduleTotal =
+                                      p.modules.find(
+                                        (m) =>
+                                          m.subject === subject &&
+                                          String(m.module_index) === String(mod)
+                                      ) || null;
+                                    const total = moduleTotal ? getRequiredCount(moduleTotal) : val.total;
+                                    return (
+                                      <span
+                                        key={key}
+                                        className="rounded-full bg-white px-3 py-1 text-[11px] font-semibold text-slate-700"
+                                      >
+                                        {label}: {val.correct}/{total}
+                                      </span>
+                                    );
+                                  })
+                                : null}
+                              {typeof attempt.correct === "number" && typeof attempt.total === "number" ? (
+                                <span className="rounded-full bg-white px-3 py-1 text-[11px] font-semibold text-slate-700">
+                                  Total: {attempt.correct}/{attempt.total}
+                                </span>
+                              ) : null}
+                            </div>
+                            <div className="mt-2">
+                              <button
+                                className="rounded-md border border-slate-900 px-3 py-1 text-[11px] font-semibold text-slate-900 disabled:opacity-60"
+                                type="button"
+                                disabled={!p.results_published}
+                                onClick={() => onReviewAttempt(p.id, attempt.id)}
+                              >
+                                {p.results_published ? "Review attempt" : "Results hidden"}
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                </div>
-              ) : null}
+                ) : null}
+              </div>
 
               <div className="mt-4 flex flex-wrap gap-2">
                 <button
@@ -445,18 +567,87 @@ function ExamSection({
                 >
                   Start mock exam
                 </button>
-                {canManage ? (
+                {p.results_published && p.attempt?.id ? (
                   <button
-                    className="rounded-xl border px-3 py-2 text-sm"
-                    onClick={() => (manageId === p.id ? closeManage() : openManage(p.id))}
+                    className="rounded-xl border px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                    onClick={() => onReviewAttempt(p.id, p.attempt!.id)}
                     type="button"
                   >
-                    {manageId === p.id ? "Close" : "Manage"}
+                    Review latest attempt
                   </button>
+                ) : null}
+                {canManage ? (
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      className={`rounded-xl border px-3 py-2 text-sm ${
+                        activePanel === "results" ? "bg-slate-100" : ""
+                      }`}
+                      onClick={() => {
+                        if (activePanel === "results") {
+                          setActivePanels((prev) => ({ ...prev, [p.id]: null }));
+                          closeManage();
+                          return;
+                        }
+                        setActivePanels((prev) => ({ ...prev, [p.id]: "results" }));
+                        if (manageId !== p.id) openManage(p.id);
+                      }}
+                      type="button"
+                    >
+                      Results overview
+                    </button>
+                    <button
+                      className={`rounded-xl border px-3 py-2 text-sm ${
+                        activePanel === "access" ? "bg-slate-100" : ""
+                      }`}
+                      onClick={() => {
+                        if (activePanel === "access") {
+                          setActivePanels((prev) => ({ ...prev, [p.id]: null }));
+                          closeManage();
+                          return;
+                        }
+                        setActivePanels((prev) => ({ ...prev, [p.id]: "access" }));
+                        if (manageId !== p.id) openManage(p.id);
+                      }}
+                      type="button"
+                    >
+                      Access control
+                    </button>
+                    <button
+                      className={`rounded-xl border px-3 py-2 text-sm ${
+                        activePanel === "builder" ? "bg-slate-100" : ""
+                      }`}
+                      onClick={() => {
+                        if (activePanel === "builder") {
+                          setActivePanels((prev) => ({ ...prev, [p.id]: null }));
+                          closeManage();
+                          return;
+                        }
+                        setActivePanels((prev) => ({ ...prev, [p.id]: "builder" }));
+                        if (manageId !== p.id) openManage(p.id);
+                      }}
+                      type="button"
+                    >
+                      Question builder
+                    </button>
+                  </div>
                 ) : null}
               </div>
 
-              {canManage && manageId === p.id ? (
+              {canManage && manageId === p.id && activePanel === "results" ? (
+                <div className="mt-5 space-y-4 border-t pt-4">
+                  <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+                    Results overview
+                  </div>
+                  <PracticeResultsPanel
+                    practiceId={p.id}
+                    token={accessToken}
+                    onReviewAttempt={(attemptId) => onReviewAttempt(p.id, attemptId)}
+                    modules={p.modules}
+                  />
+                </div>
+              ) : null}
+
+              {canManage && manageId === p.id && activePanel === "access" ? (
                 <div className="mt-5 space-y-4 border-t pt-4">
                   <div className="flex flex-wrap gap-3">
                     <button
@@ -481,7 +672,12 @@ function ExamSection({
                       Delete mock
                     </button>
                   </div>
+                  <PracticeAccessManager practice={p} token={accessToken} refresh={refresh} />
+                </div>
+              ) : null}
 
+              {canManage && manageId === p.id && activePanel === "builder" ? (
+                <div className="mt-5 space-y-4 border-t pt-4">
                   <div className="rounded-xl border bg-slate-50 p-3">
                     <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Settings</div>
                     <div className="mt-2 grid gap-2 text-xs text-slate-600">
@@ -558,12 +754,11 @@ function ExamSection({
                       <ModuleEditor key={m.id} practiceId={p.id} module={m} token={accessToken} />
                     ))}
                   </div>
-
-                  <PracticeAccessManager practice={p} token={accessToken} refresh={refresh} />
                 </div>
               ) : null}
             </div>
-          ))}
+          );
+        })}
         </div>
       )}
     </div>
@@ -830,6 +1025,225 @@ function PracticeAccessManager({
             )}
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function PracticeResultsPanel({
+  practiceId,
+  token,
+  onReviewAttempt,
+  modules,
+}: {
+  practiceId: string;
+  token: string | null;
+  onReviewAttempt: (attemptId: string) => void;
+  modules: PracticeModule[];
+}) {
+  const [query, setQuery] = useState("");
+  const [students, setStudents] = useState<Student[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [attemptsByStudent, setAttemptsByStudent] = useState<Record<string, PracticeAttempt[]>>({});
+  const [attemptsLoading, setAttemptsLoading] = useState<Record<string, boolean>>({});
+  const [attemptsError, setAttemptsError] = useState<Record<string, string | null>>({});
+  const [openStudentId, setOpenStudentId] = useState<string | null>(null);
+
+  const displayName = (s: Student) => {
+    if (s.nickname) return s.nickname;
+    if (s.first_name || s.last_name) return `${s.first_name ?? ""} ${s.last_name ?? ""}`.trim();
+    if (s.username) return s.username;
+    return s.student_id || s.user_id;
+  };
+
+  async function searchStudents(showAll = false) {
+    if (!token) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/module-practice/students/search/`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          q: showAll ? "" : query,
+          limit: 50,
+          practice_id: practiceId,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Failed to load students");
+      setStudents(json.students ?? []);
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to load students");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!token) return;
+    searchStudents(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [practiceId, token]);
+
+  async function loadStudentAttempts(studentId: string) {
+    if (!token) return;
+    setAttemptsLoading((prev) => ({ ...prev, [studentId]: true }));
+    setAttemptsError((prev) => ({ ...prev, [studentId]: null }));
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/module-practice/attempts/?practice_id=${practiceId}&student_id=${studentId}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Failed to load attempts");
+      setAttemptsByStudent((prev) => ({ ...prev, [studentId]: json.attempts ?? [] }));
+    } catch (e: any) {
+      setAttemptsError((prev) => ({ ...prev, [studentId]: e?.message ?? "Failed to load attempts" }));
+    } finally {
+      setAttemptsLoading((prev) => ({ ...prev, [studentId]: false }));
+    }
+  }
+
+  function toggleStudent(studentId: string) {
+    const next = openStudentId === studentId ? null : studentId;
+    setOpenStudentId(next);
+    if (next && !attemptsByStudent[studentId] && !attemptsLoading[studentId]) {
+      loadStudentAttempts(studentId);
+    }
+  }
+
+  return (
+    <div className="rounded-2xl border bg-white p-4 shadow-sm">
+      <div className="text-sm font-semibold text-slate-900">Student results</div>
+      <p className="mt-1 text-xs text-slate-500">Search students and review their submitted attempts.</p>
+
+      <div className="mt-3 flex flex-wrap gap-2">
+        <input
+          className="flex-1 rounded-xl border px-3 py-2 text-sm"
+          placeholder="Search by name, username, or student ID"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        <button
+          className="rounded-xl border px-3 py-2 text-xs font-semibold"
+          type="button"
+          onClick={() => searchStudents(false)}
+          disabled={loading}
+        >
+          Search
+        </button>
+        <button
+          className="rounded-xl border px-3 py-2 text-xs font-semibold"
+          type="button"
+          onClick={() => searchStudents(true)}
+          disabled={loading}
+        >
+          Show all
+        </button>
+      </div>
+
+      {error ? <div className="mt-2 text-xs text-red-600">{error}</div> : null}
+
+      <div className="mt-3 space-y-3">
+        {loading ? (
+          <div className="text-xs text-slate-500">Loading students...</div>
+        ) : students.length === 0 ? (
+          <div className="rounded-xl border border-dashed px-4 py-4 text-xs text-slate-500">
+            No students loaded.
+          </div>
+        ) : (
+          students.map((s) => (
+            <div key={s.user_id} className="rounded-xl border border-slate-200 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div className="text-sm font-semibold text-slate-900">{displayName(s)}</div>
+                  <div className="text-xs text-slate-500">
+                    {s.username || s.student_id || s.user_id}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-slate-600">
+                  <span className="rounded-full bg-slate-100 px-3 py-1">
+                    Attempts: {s.attempts_count ?? 0}
+                  </span>
+                  <button
+                    className="rounded-lg border px-3 py-1 text-xs font-semibold"
+                    type="button"
+                    onClick={() => toggleStudent(s.user_id)}
+                  >
+                    {openStudentId === s.user_id ? "Hide attempts" : "View attempts"}
+                  </button>
+                </div>
+              </div>
+
+              {openStudentId === s.user_id ? (
+                <div className="mt-3 rounded-lg bg-slate-50 p-3 text-xs">
+                  {attemptsLoading[s.user_id] ? (
+                    <div className="text-slate-500">Loading attempts...</div>
+                  ) : attemptsError[s.user_id] ? (
+                    <div className="text-red-600">{attemptsError[s.user_id]}</div>
+                  ) : (attemptsByStudent[s.user_id] || []).length === 0 ? (
+                    <div className="text-slate-500">No attempts yet.</div>
+                  ) : (
+                    <div className="space-y-2">
+                      {(attemptsByStudent[s.user_id] || []).map((attempt, idx) => (
+                        <div key={attempt.id} className="rounded-md border bg-white px-3 py-2">
+                          <div className="flex items-center justify-between">
+                            <div className="text-[11px] font-semibold text-slate-700">Attempt {idx + 1}</div>
+                            <div className="text-[11px] text-slate-500">
+                              {attempt.completed_at
+                                ? new Date(attempt.completed_at).toLocaleString()
+                                : "—"}
+                            </div>
+                          </div>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {attempt.module_scores
+                              ? Object.entries(attempt.module_scores).map(([key, val]) => {
+                                  const [subject, mod] = key.split("-");
+                                  const label = subject ? `${subject.toUpperCase()} M${mod}` : key;
+                                  const moduleTotal =
+                                    modules.find(
+                                      (m) =>
+                                        m.subject === subject &&
+                                        String(m.module_index) === String(mod)
+                                    ) || null;
+                                  const total = moduleTotal ? getRequiredCount(moduleTotal) : val.total;
+                                  return (
+                                    <span
+                                      key={key}
+                                      className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-700"
+                                    >
+                                      {label}: {val.correct}/{total}
+                                    </span>
+                                  );
+                                })
+                              : null}
+                            {typeof attempt.correct === "number" && typeof attempt.total === "number" ? (
+                              <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-700">
+                                Total: {attempt.correct}/{attempt.total}
+                              </span>
+                            ) : null}
+                          </div>
+                          <button
+                            className="mt-2 rounded-md border border-slate-900 px-3 py-1 text-[11px] font-semibold text-slate-900"
+                            type="button"
+                            onClick={() => onReviewAttempt(attempt.id)}
+                          >
+                            Review attempt
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : null}
+            </div>
+          ))
+        )}
       </div>
     </div>
   );

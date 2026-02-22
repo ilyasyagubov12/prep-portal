@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Bookmark } from "lucide-react";
 import { typesetMath } from "@/lib/mathjax";
 
@@ -54,8 +54,16 @@ function MathContent({ html, className }: { html: string; className?: string }) 
 function wrapLatexIfNeeded(input: string) {
   const trimmed = input.trim();
   if (!trimmed) return "";
-  const hasDelims = trimmed.includes("\\(") || trimmed.includes("\\[") || trimmed.includes("$$");
-  return hasDelims ? trimmed : `\\(${trimmed}\\)`;
+  const latexFlag = "$LATEX$";
+  const hasDelims = (val: string) =>
+    val.includes("\\(") || val.includes("\\[") || val.includes("$$") || /\$[^$]+\$/.test(val);
+  if (trimmed.startsWith(latexFlag)) {
+    const content = trimmed.slice(latexFlag.length).trim();
+    if (!content) return "";
+    return hasDelims(content) ? content : `\\(${content}\\)`;
+  }
+  if (hasDelims(trimmed)) return trimmed;
+  return trimmed;
 }
 
 function formatTime(seconds: number) {
@@ -128,7 +136,10 @@ function clearAttemptState(attemptId: string, examId?: string) {
 export default function Page() {
   const params = useParams<{ mockId: string }>();
   const router = useRouter();
+  const search = useSearchParams();
   const mockId = params.mockId;
+  const reviewAttemptParam = search.get("review_attempt");
+  const reviewLatestParam = search.get("review");
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -167,6 +178,27 @@ export default function Page() {
   const sectionPosition = currentQ ? Math.max(1, sectionIndices.indexOf(currentIndex) + 1) : 0;
   const sectionTotal = sectionIndices.length;
 
+  const reviewStatus = useMemo(() => {
+    if (!reviewMode || !currentQ) return null;
+    const answer = answers[currentQ.id];
+    if (!answer) {
+      return { label: "Unanswered", className: "text-slate-400" };
+    }
+    if (currentQ.is_open_ended) {
+      const expected = (currentQ.correct_answer || "").trim().toLowerCase();
+      const actual = String(answer || "").trim().toLowerCase();
+      if (expected && actual === expected) {
+        return { label: "Correct", className: "text-emerald-600" };
+      }
+      return { label: "Wrong", className: "text-red-600" };
+    }
+    const correctLabel = (currentQ.choices || []).find((c) => c.is_correct)?.label;
+    if (correctLabel && answer === correctLabel) {
+      return { label: "Correct", className: "text-emerald-600" };
+    }
+    return { label: "Wrong", className: "text-red-600" };
+  }, [reviewMode, currentQ, answers]);
+
   const counts = useMemo(() => {
     const base = {
       verbal: { answered: 0, flagged: 0, total: verbalIndices.length },
@@ -178,6 +210,43 @@ export default function Page() {
     }
     return base;
   }, [questions, answers, flags, verbalIndices.length, mathIndices.length]);
+
+  const reviewOutcomes = useMemo(() => {
+    if (!reviewMode) return null;
+    const outcomes: Record<string, "correct" | "wrong" | "unanswered"> = {};
+    let correct = 0;
+    let wrong = 0;
+    let unanswered = 0;
+    for (const q of questions) {
+      const answer = answers[q.id];
+      if (!answer) {
+        outcomes[q.id] = "unanswered";
+        unanswered += 1;
+        continue;
+      }
+      if (q.is_open_ended) {
+        const expected = (q.correct_answer || "").trim().toLowerCase();
+        const actual = String(answer || "").trim().toLowerCase();
+        if (expected && actual === expected) {
+          outcomes[q.id] = "correct";
+          correct += 1;
+        } else {
+          outcomes[q.id] = "wrong";
+          wrong += 1;
+        }
+        continue;
+      }
+      const correctLabel = (q.choices || []).find((c) => c.is_correct)?.label;
+      if (correctLabel && answer === correctLabel) {
+        outcomes[q.id] = "correct";
+        correct += 1;
+      } else {
+        outcomes[q.id] = "wrong";
+        wrong += 1;
+      }
+    }
+    return { outcomes, correct, wrong, unanswered };
+  }, [reviewMode, questions, answers]);
 
   const statuses = useMemo(() => {
     return questions.map((q, idx) => {
@@ -249,13 +318,16 @@ export default function Page() {
     }
   }
 
-  async function loadReview() {
+  async function loadReview(attemptOverride?: string | null) {
     if (!mockId) return;
     setError(null);
     try {
       const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
       if (!token) return;
-      const res = await fetch(`${API_BASE}/api/mock-exams/review/?mock_exam_id=${mockId}`, {
+      const query = attemptOverride
+        ? `attempt_id=${encodeURIComponent(attemptOverride)}`
+        : `mock_exam_id=${mockId}`;
+      const res = await fetch(`${API_BASE}/api/mock-exams/review/?${query}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const { json, text } = await readResponse(res);
@@ -278,8 +350,10 @@ export default function Page() {
       setTimeLeft(computedLeft);
       setReviewMode(true);
       setIntroMode(false);
-    } catch {
-      // ignore review errors (no submitted attempt or results not published)
+      return true;
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to load review");
+      return false;
     }
   }
 
@@ -287,14 +361,27 @@ export default function Page() {
     if (!mockId || autoResumeChecked) return;
     if (typeof window === "undefined") return;
     const lastAttempt = localStorage.getItem(getExamAttemptKey(mockId));
+    if (reviewAttemptParam) {
+      void (async () => {
+        const ok = await loadReview(reviewAttemptParam);
+        if (!ok && reviewLatestParam) {
+          await loadReview(null);
+        }
+        setAutoResumeChecked(true);
+      })();
+      return;
+    }
+    if (reviewLatestParam) {
+      void loadReview(null).finally(() => setAutoResumeChecked(true));
+      return;
+    }
     if (lastAttempt) {
       startExam();
       setAutoResumeChecked(true);
       return;
     }
-    void loadReview();
     setAutoResumeChecked(true);
-  }, [mockId, autoResumeChecked]);
+  }, [mockId, autoResumeChecked, reviewAttemptParam, reviewLatestParam]);
 
   useEffect(() => {
     if (!attemptId || introMode || result || reviewMode) return;
@@ -602,6 +689,11 @@ export default function Page() {
                   <div className="mt-4 text-sm font-semibold text-slate-900 whitespace-pre-wrap">
                     {currentQ.stem}
                   </div>
+                  {reviewMode && reviewStatus ? (
+                    <div className={`mt-2 text-xs font-semibold ${reviewStatus.className}`}>
+                      {reviewStatus.label}
+                    </div>
+                  ) : null}
 
                   {currentQ.is_open_ended ? (
                     <div className="mt-4 space-y-2">
@@ -703,6 +795,11 @@ export default function Page() {
                 <div className="text-lg font-semibold text-slate-900">
                   <MathContent html={wrapLatexIfNeeded(currentQ.stem)} />
                 </div>
+                {reviewMode && reviewStatus ? (
+                  <div className={`text-xs font-semibold ${reviewStatus.className}`}>
+                    {reviewStatus.label}
+                  </div>
+                ) : null}
 
                 {currentQ.is_open_ended ? (
                   <div className="space-y-2">
@@ -836,20 +933,37 @@ export default function Page() {
                 ×
               </button>
             </div>
-            <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-slate-500">
-              <div className="flex items-center gap-1">
-                <span className="h-3 w-3 rounded-sm border border-slate-300 bg-white" />
-                Unanswered
+            {reviewMode ? (
+              <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-slate-500">
+                <div className="flex items-center gap-1">
+                  <span className="h-3 w-3 rounded-sm bg-emerald-200" />
+                  Correct
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="h-3 w-3 rounded-sm bg-red-200" />
+                  Wrong
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="h-3 w-3 rounded-sm border border-slate-300 bg-white" />
+                  Unanswered
+                </div>
               </div>
-              <div className="flex items-center gap-1">
-                <span className="h-3 w-3 rounded-sm bg-emerald-200" />
-                Answered
+            ) : (
+              <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-slate-500">
+                <div className="flex items-center gap-1">
+                  <span className="h-3 w-3 rounded-sm border border-slate-300 bg-white" />
+                  Unanswered
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="h-3 w-3 rounded-sm bg-emerald-200" />
+                  Answered
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="h-3 w-3 rounded-sm bg-amber-200" />
+                  Flagged
+                </div>
               </div>
-              <div className="flex items-center gap-1">
-                <span className="h-3 w-3 rounded-sm bg-amber-200" />
-                Flagged
-              </div>
-            </div>
+            )}
 
             <div className="mt-4 space-y-5">
               {verbalIndices.length > 0 ? (
@@ -858,12 +972,19 @@ export default function Page() {
                   <div className="mt-3 grid grid-cols-9 gap-2">
                     {verbalIndices.map((idx, i) => {
                       const status = statuses[idx];
+                      const reviewStatus = reviewOutcomes?.outcomes?.[questions[idx]?.id ?? ""] ?? null;
                       return (
                         <button
                           key={`verbal-${idx}`}
                           className={`h-8 rounded-md text-[11px] font-semibold ${
                             idx === currentIndex
                               ? "bg-slate-900 text-white"
+                              : reviewMode && reviewStatus === "correct"
+                              ? "bg-emerald-200 text-emerald-900"
+                              : reviewMode && reviewStatus === "wrong"
+                              ? "bg-red-200 text-red-900"
+                              : reviewMode && reviewStatus === "unanswered"
+                              ? "border border-dashed border-slate-300 text-slate-600"
                               : status.isFlagged
                               ? "bg-amber-200 text-amber-900"
                               : status.isAnswered
@@ -890,12 +1011,19 @@ export default function Page() {
                   <div className="mt-3 grid grid-cols-9 gap-2">
                     {mathIndices.map((idx, i) => {
                       const status = statuses[idx];
+                      const reviewStatus = reviewOutcomes?.outcomes?.[questions[idx]?.id ?? ""] ?? null;
                       return (
                         <button
                           key={`math-${idx}`}
                           className={`h-8 rounded-md text-[11px] font-semibold ${
                             idx === currentIndex
                               ? "bg-slate-900 text-white"
+                              : reviewMode && reviewStatus === "correct"
+                              ? "bg-emerald-200 text-emerald-900"
+                              : reviewMode && reviewStatus === "wrong"
+                              ? "bg-red-200 text-red-900"
+                              : reviewMode && reviewStatus === "unanswered"
+                              ? "border border-dashed border-slate-300 text-slate-600"
                               : status.isFlagged
                               ? "bg-amber-200 text-amber-900"
                               : status.isAnswered
@@ -918,17 +1046,25 @@ export default function Page() {
             </div>
 
             <div className="mt-5 rounded-xl bg-slate-50 px-4 py-3 text-xs text-slate-600">
-              {verbalIndices.length > 0 ? (
+              {reviewMode && reviewOutcomes ? (
                 <span>
-                  Verbal answered {counts.verbal.answered}/{counts.verbal.total} ? flagged {counts.verbal.flagged}
+                  Correct {reviewOutcomes.correct} · Wrong {reviewOutcomes.wrong} · Unanswered {reviewOutcomes.unanswered}
                 </span>
-              ) : null}
-              {verbalIndices.length > 0 && mathIndices.length > 0 ? <span> | </span> : null}
-              {mathIndices.length > 0 ? (
-                <span>
-                  Math answered {counts.math.answered}/{counts.math.total} ? flagged {counts.math.flagged}
-                </span>
-              ) : null}
+              ) : (
+                <>
+                  {verbalIndices.length > 0 ? (
+                    <span>
+                      Verbal answered {counts.verbal.answered}/{counts.verbal.total} · flagged {counts.verbal.flagged}
+                    </span>
+                  ) : null}
+                  {verbalIndices.length > 0 && mathIndices.length > 0 ? <span> | </span> : null}
+                  {mathIndices.length > 0 ? (
+                    <span>
+                      Math answered {counts.math.answered}/{counts.math.total} · flagged {counts.math.flagged}
+                    </span>
+                  ) : null}
+                </>
+              )}
             </div>
           </div>
         </div>
