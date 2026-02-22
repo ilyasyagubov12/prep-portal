@@ -146,7 +146,9 @@ class QuestionImportView(APIView):
     """
     CSV import endpoint for admin/teacher.
     Columns expected:
-    subject, topic, subtopic, stem, passage, difficulty, published, choice_a, choice_b, choice_c, choice_d, correct
+    subject, topic, subtopic, stem, passage, difficulty, published,
+    choice_a, choice_b, choice_c, choice_d, choice_e, choice_f, correct,
+    is_open_ended, correct_answer
     """
 
     permission_classes = [permissions.IsAuthenticated]
@@ -197,6 +199,8 @@ class QuestionImportView(APIView):
                 difficulty = (row.get("difficulty") or "").strip() or None
                 published = str(row.get("published") or "").lower() in ("1", "true", "yes")
                 correct_letter = (row.get("correct") or "").strip().upper()
+                is_open_ended = str(row.get("is_open_ended") or "").strip().lower() in ("1", "true", "yes", "y")
+                correct_answer = (row.get("correct_answer") or "").strip() or None
                 choices = []
                 for letter in ["A", "B", "C", "D", "E", "F"]:
                   col = f"choice_{letter.lower()}"
@@ -207,10 +211,21 @@ class QuestionImportView(APIView):
                       "is_correct": letter == correct_letter
                     })
 
-                if not subject or not topic or not stem or len(choices) < 2:
+                # If no choices are provided but a correct_answer exists, treat as open-ended
+                if not is_open_ended and not choices and correct_answer:
+                    is_open_ended = True
+
+                if not subject or not topic or not stem:
                     raise ValueError("Missing required fields")
-                if not any(c["is_correct"] for c in choices):
-                    raise ValueError("No correct choice")
+
+                if is_open_ended:
+                    if not correct_answer:
+                        raise ValueError("Missing correct_answer for open-ended question")
+                else:
+                    if len(choices) < 2:
+                        raise ValueError("Missing required choices")
+                    if not any(c["is_correct"] for c in choices):
+                        raise ValueError("No correct choice")
 
                 Question.objects.create(
                     subject=subject,
@@ -221,6 +236,8 @@ class QuestionImportView(APIView):
                     difficulty=difficulty,
                     published=published,
                     choices=choices,
+                    is_open_ended=is_open_ended,
+                    correct_answer=correct_answer,
                     created_by=request.user,
                 )
                 created += 1
