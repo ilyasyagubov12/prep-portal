@@ -534,7 +534,7 @@ function MockExamCard({
           <button
             className="rounded-xl border px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
             type="button"
-            onClick={() => router.push(`/practice/mock-exams/${exam.id}?review=1`)}
+            onClick={() => onReviewAttempt(exam.id, exam.attempt!.id)}
           >
             Review latest attempt
           </button>
