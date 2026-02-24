@@ -22,6 +22,7 @@ from .views import (
     MockExamSubmitView,
     MockExamAttemptsReportView,
     MockExamReviewView,
+    MockExamExportView,
 )
 
 urlpatterns = [
@@ -42,6 +43,7 @@ urlpatterns = [
     path("mock-exams/questions/replace/", MockExamQuestionReplaceView.as_view(), name="mock_exams_questions_replace"),
     path("mock-exams/questions/override/", MockExamQuestionOverrideView.as_view(), name="mock_exams_questions_override"),
     path("mock-exams/questions/generate/", MockExamQuestionsGenerateView.as_view(), name="mock_exams_questions_generate"),
+    path("mock-exams/export/", MockExamExportView.as_view(), name="mock_exams_export"),
     path("mock-exams/start/", MockExamStartView.as_view(), name="mock_exams_start"),
     path("mock-exams/save/", MockExamSaveView.as_view(), name="mock_exams_save"),
     path("mock-exams/submit/", MockExamSubmitView.as_view(), name="mock_exams_submit"),

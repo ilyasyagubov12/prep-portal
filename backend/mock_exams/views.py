@@ -1,9 +1,12 @@
 import random
 import re
+import csv
+import io
 from django.db import models, transaction
 from types import SimpleNamespace
 from django.db.models import Count
 from django.utils import timezone
+from django.http import HttpResponse
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -1274,6 +1277,93 @@ class MockExamQuestionsGenerateView(APIView):
         exam.save(update_fields=["question_ids"])
         _update_exam_counts(exam)
         return Response({"ok": True, "question_ids": exam.question_ids})
+
+
+class MockExamExportView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        if not _is_staff(user):
+            return Response({"error": "Forbidden"}, status=403)
+
+        exam_id = request.query_params.get("mock_exam_id")
+        if not exam_id:
+            return Response({"error": "mock_exam_id required"}, status=400)
+
+        try:
+            exam = MockExam.objects.get(id=exam_id)
+        except MockExam.DoesNotExist:
+            return Response({"error": "Not found"}, status=404)
+
+        prof = getattr(user, "profile", None)
+        role = (getattr(prof, "role", None) or "").lower()
+        is_admin = user.is_superuser or getattr(prof, "is_admin", False) or role == "admin"
+        if not is_admin:
+            if exam.course_id:
+                from courses.models import CourseTeacher
+
+                if not CourseTeacher.objects.filter(course_id=exam.course_id, teacher=user).exists():
+                    return Response({"error": "Forbidden"}, status=403)
+            elif exam.created_by_id != user.id:
+                return Response({"error": "Forbidden"}, status=403)
+
+        question_ids = list(exam.question_ids or [])
+        if not question_ids:
+            return Response({"error": "No questions in this mock"}, status=400)
+
+        overrides = exam.question_overrides or {}
+        qs = Question.objects.filter(id__in=question_ids)
+        by_id = {str(q.id): q for q in qs}
+
+        fieldnames = [
+            "subject",
+            "module",
+            "chapter",
+            "stem",
+            "passage",
+            "choice_a",
+            "choice_b",
+            "choice_c",
+            "choice_d",
+            "correct",
+        ]
+
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for qid in question_ids:
+            q = by_id.get(str(qid))
+            if not q:
+                continue
+            q2 = _apply_override(q, overrides.get(str(q.id)))
+            row = {k: "" for k in fieldnames}
+            row["subject"] = (q2.subject or "").lower()
+            row["module"] = ""
+            row["chapter"] = q2.subtopic or q2.topic or ""
+            row["stem"] = q2.stem or ""
+            row["passage"] = q2.passage or ""
+
+            correct_label = ""
+            raw_choices = q2.choices or []
+            for idx, c in enumerate(raw_choices[:4]):
+                letter = chr(65 + idx)
+                row[f"choice_{letter.lower()}"] = c.get("content") or ""
+                if c.get("is_correct"):
+                    correct_label = letter
+
+            if q2.is_open_ended:
+                row["correct"] = q2.correct_answer or ""
+            else:
+                row["correct"] = correct_label
+
+            writer.writerow(row)
+
+        filename = f"mock_exam_{exam.id}.csv"
+        response = HttpResponse(output.getvalue(), content_type="text/csv; charset=utf-8")
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return response
 
 
 class MockExamQuestionAddView(APIView):

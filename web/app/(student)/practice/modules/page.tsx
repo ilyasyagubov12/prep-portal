@@ -514,7 +514,7 @@ function ExamSection({
                               </div>
                             </div>
                             <div className="mt-2 flex flex-wrap gap-2">
-                              {attempt.module_scores
+                              {p.results_published && attempt.module_scores
                                 ? Object.entries(attempt.module_scores).map(([key, val]) => {
                                     const [subject, mod] = key.split("-");
                                     const label = subject ? `${subject.toUpperCase()} M${mod}` : key;
@@ -535,7 +535,9 @@ function ExamSection({
                                     );
                                   })
                                 : null}
-                              {typeof attempt.correct === "number" && typeof attempt.total === "number" ? (
+                              {p.results_published &&
+                              typeof attempt.correct === "number" &&
+                              typeof attempt.total === "number" ? (
                                 <span className="rounded-full bg-white px-3 py-1 text-[11px] font-semibold text-slate-700">
                                   Total: {attempt.correct}/{attempt.total}
                                 </span>
@@ -1283,6 +1285,7 @@ function ModuleEditor({
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importing, setImporting] = useState(false);
   const [importMessage, setImportMessage] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   const requiredCount = getRequiredCount(module);
   const remaining = Math.max(requiredCount - moduleQuestions.length, 0);
@@ -1363,6 +1366,43 @@ function ModuleEditor({
       setErr(e?.message ?? "Import failed");
     } finally {
       setImporting(false);
+    }
+  }
+
+  async function exportCsv() {
+    if (!token) return;
+    setExporting(true);
+    setErr(null);
+    try {
+      const params = new URLSearchParams();
+      params.set("practice_id", practiceId);
+      const res = await fetch(`${API_BASE}/api/module-practice/export/?${params}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        let message = "Export failed";
+        try {
+          const json = await res.json();
+          message = json?.error || message;
+        } catch {
+          const text = await res.text();
+          if (text) message = text;
+        }
+        throw new Error(message);
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `practice_${practiceId}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (e: any) {
+      setErr(e?.message ?? "Export failed");
+    } finally {
+      setExporting(false);
     }
   }
 
@@ -1600,6 +1640,14 @@ function ModuleEditor({
           disabled={!importFile || importing}
         >
           {importing ? "Importing..." : "Upload CSV"}
+        </button>
+        <button
+          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-60"
+          type="button"
+          onClick={exportCsv}
+          disabled={exporting}
+        >
+          {exporting ? "Exporting..." : "Export CSV"}
         </button>
         <div className="text-[11px] text-slate-500">
           CSV columns: subject, module, chapter, stem, passage, A, B, C, D, answer.

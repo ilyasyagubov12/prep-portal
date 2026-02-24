@@ -15,6 +15,11 @@ type PracticeModule = {
   questions: QuizQuestion[];
 };
 
+type Profile = {
+  role: string | null;
+  is_admin?: boolean | null;
+};
+
 type QuizQuestion = {
   id: string;
   subject: "math" | "verbal";
@@ -99,6 +104,12 @@ function getPracticeAttemptKey(practiceId: string) {
   return `mock_practice_attempt_${practiceId}`;
 }
 
+function isTeacherOrAdmin(p: Profile | null) {
+  if (!p) return false;
+  const role = (p.role ?? "").toLowerCase();
+  return role === "teacher" || role === "admin" || !!p.is_admin;
+}
+
 function loadAttemptState(attemptId: string) {
   if (typeof window === "undefined") return null;
   try {
@@ -142,6 +153,8 @@ export default function Page() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [modules, setModules] = useState<PracticeModule[]>([]);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [hasToken, setHasToken] = useState(false);
   const [attemptId, setAttemptId] = useState<string | null>(null);
   const [currentModule, setCurrentModule] = useState(0);
   const [currentQuestion, setCurrentQuestion] = useState(0);
@@ -167,6 +180,32 @@ export default function Page() {
   const [highlightMode, setHighlightMode] = useState(false);
   const [autoResumeChecked, setAutoResumeChecked] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const lastQuestionRefresh = useRef(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadProfile() {
+      try {
+        const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
+        if (!cancelled) setHasToken(!!token);
+        if (!token) return;
+        const res = await fetch(`${API_BASE}/api/me/`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) return;
+        const json = await res.json();
+        if (!cancelled) {
+          setProfile({ role: json?.role ?? null, is_admin: json?.is_admin ?? false });
+        }
+      } catch {
+        // ignore
+      }
+    }
+    loadProfile();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const openDesmosPopup = () => {
     if (typeof window === "undefined") return;
@@ -517,7 +556,7 @@ export default function Page() {
       mark.appendChild(contents);
 
       const removeBtn = document.createElement("button");
-      removeBtn.textContent = "S";
+      removeBtn.textContent = "X";
       removeBtn.setAttribute("data-hl-remove", "1");
       removeBtn.setAttribute("type", "button");
       removeBtn.style.marginLeft = "6px";
@@ -662,6 +701,76 @@ export default function Page() {
   const isMarkedForReview = currentQ ? !!reviewFlags[currentQ.id] : false;
   const eliminatedForCurrent = currentQ ? eliminations[currentQ.id] || {} : {};
   const imageUrl = currentQ?.image_url;
+  const canEditQuestions = profile ? isTeacherOrAdmin(profile) : hasToken;
+  const showEditButton = canEditQuestions || hasToken;
+
+  async function refreshCurrentQuestion() {
+    if (!canEditQuestions || !currentQ) return;
+    const now = Date.now();
+    if (now - lastQuestionRefresh.current < 1500) return;
+    lastQuestionRefresh.current = now;
+    try {
+      const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
+      if (!token) return;
+      const res = await fetch(`${API_BASE}/api/module-practice/questions/${currentQ.id}/`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const json = await res.json();
+      const updated = json?.question;
+      if (!updated) return;
+      setModules((prev) =>
+        prev.map((m) => {
+          if (m.id !== module?.id) return m;
+          const nextQs = (m.questions || []).map((q) =>
+            q.id === currentQ.id
+              ? {
+                  ...q,
+                  stem: updated.question_text ?? q.stem,
+                  passage: updated.passage ?? q.passage,
+                  choices: updated.choices ?? q.choices,
+                  is_open_ended:
+                    typeof updated.is_open_ended === "boolean"
+                      ? updated.is_open_ended
+                      : q.is_open_ended,
+                  correct_answer: updated.correct_answer ?? q.correct_answer,
+                  image_url: updated.image_url ?? q.image_url,
+                }
+              : q
+          );
+          return { ...m, questions: nextQs };
+        })
+      );
+      setHighlightedPassages((prev) => {
+        if (!prev[currentQ.id]) return prev;
+        const next = { ...prev };
+        delete next[currentQ.id];
+        return next;
+      });
+      setHighlightedStems((prev) => {
+        if (!prev[currentQ.id]) return prev;
+        const next = { ...prev };
+        delete next[currentQ.id];
+        return next;
+      });
+    } catch {
+      // ignore
+    }
+  }
+
+  useEffect(() => {
+    if (!canEditQuestions) return;
+    const handleFocus = () => {
+      if (document.hidden) return;
+      refreshCurrentQuestion();
+    };
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleFocus);
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleFocus);
+    };
+  }, [canEditQuestions, currentQ?.id]);
   const resolvedImageUrl =
     imageUrl && imageUrl.startsWith("/") ? `${API_BASE}${imageUrl}` : imageUrl;
   const resolveChoiceImage = (url?: string | null) => {
@@ -877,7 +986,7 @@ export default function Page() {
     const title =
       module?.subject === "verbal" ? `Reading and Writing` : `Math`;
     return (
-      <div className="min-h-screen bg-slate-50 px-4 py-6 pb-24">
+      <div className="min-h-screen bg-white px-4 py-6 pb-24">
         <div className="mx-auto max-w-5xl space-y-6 text-center">
           <header className="rounded-2xl bg-white p-4 shadow-sm text-left">
             <div className="grid items-center gap-3 md:grid-cols-[1fr_auto_1fr]">
@@ -885,10 +994,25 @@ export default function Page() {
                 {module ? `${module.subject.toUpperCase()} Module ${module.module_index}` : "Mock exam"}
               </div>
               <div className="text-center text-sm font-semibold text-slate-900">{formatTime(timeLeft)}</div>
-              <div className="flex items-center justify-end gap-4 text-xs text-slate-600">
-                {module?.subject === "verbal" ? (
-                  <button className="inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[11px] font-semibold text-slate-700">
-                    <PenLine size={14} />
+                <div className="flex items-center justify-end gap-4 text-xs text-slate-600">
+                  {showEditButton && currentQ ? (
+                    <button
+                      className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-[11px] font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+                      onClick={() =>
+                        window.open(
+                          `/practice/modules/${practiceId}/questions/${currentQ.id}/edit`,
+                          "_blank"
+                        )
+                      }
+                      type="button"
+                    >
+                      <PenLine size={14} />
+                      Edit question
+                    </button>
+                  ) : null}
+                  {module?.subject === "verbal" ? (
+                    <button className="inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[11px] font-semibold text-slate-700">
+                      <PenLine size={14} />
                     Highlight
                   </button>
                 ) : null}
@@ -1079,21 +1203,36 @@ export default function Page() {
     );
   }
 
-  return (
-    <div className="min-h-screen bg-slate-50 px-4 py-6 pb-24">
-      <div className="mx-auto max-w-6xl space-y-6">
+    return (
+      <div className="min-h-screen bg-white px-4 py-6 pb-24">
+      <div className="mx-auto w-full max-w-none px-4 space-y-6">
         <header className="rounded-2xl bg-white p-4 shadow-sm">
           <div className="grid items-center gap-3 md:grid-cols-[1fr_auto_1fr]">
             <div className="text-xs uppercase tracking-[0.2em] text-slate-400">
               {module ? `${module.subject.toUpperCase()} Module ${module.module_index}` : "Mock exam"}
             </div>
-            <div className="text-center text-sm font-semibold text-slate-900">
-              {resultsReview ? "Review" : formatTime(timeLeft)}
-            </div>
-            <div className="flex items-center justify-end gap-4 text-xs text-slate-600">
-              {module?.subject === "math" && !resultsReview ? (
-                <div className="flex items-center gap-2">
+              <div className="text-center text-sm font-semibold text-slate-900">
+                {resultsReview ? "Review" : formatTime(timeLeft)}
+              </div>
+              <div className="flex items-center justify-end gap-4 text-xs text-slate-600">
+                {showEditButton && currentQ ? (
                   <button
+                    className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+                    onClick={() =>
+                      window.open(
+                        `/practice/modules/${practiceId}/questions/${currentQ.id}/edit`,
+                        "_blank"
+                      )
+                    }
+                    type="button"
+                  >
+                    <PenLine size={14} />
+                    Edit question
+                  </button>
+                ) : null}
+                {module?.subject === "math" && !resultsReview ? (
+                  <div className="flex items-center gap-2">
+                    <button
                     className="inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[11px] font-semibold text-slate-700"
                     onClick={() => setSheetOpen(true)}
                   >
@@ -1126,7 +1265,7 @@ export default function Page() {
           </div>
         </header>
 
-        <div className="relative rounded-2xl bg-white shadow-sm overflow-hidden">
+        <div className="relative w-full rounded-2xl bg-transparent shadow-none overflow-hidden">
           {navLocked ? (
             <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/90 text-sm font-semibold text-slate-700">
               Time is up. Moving to the next module...
@@ -1151,10 +1290,10 @@ export default function Page() {
                       {isMarkedForReview ? "Marked for Review" : "Mark for Review"}
                     </button>
                   </div>
-                  <div className="flex items-center gap-4 text-slate-500">
-                    {!resultsReview ? (
-                      <button
-                        className={`inline-flex h-8 w-8 items-center justify-center rounded-full border shadow-sm text-[12px] font-bold transition ${
+                    <div className="flex items-center gap-4 text-slate-500">
+                      {!resultsReview ? (
+                        <button
+                          className={`inline-flex h-8 w-8 items-center justify-center rounded-full border shadow-sm text-[12px] font-bold transition ${
                           eliminateMode ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-900 border-slate-200"
                         }`}
                         onClick={() => {
@@ -1301,12 +1440,11 @@ export default function Page() {
                 )}
               </div>
             ) : (
-              <div className="grid lg:grid-cols-[1fr_1fr]">
-                <div className="p-6">
-                  <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Reading passage</div>
-                  <div
-                    ref={passageBoxRef}
-                    className="mt-4 rounded-xl border border-slate-200 bg-white p-5 text-sm leading-6 text-slate-700 min-h-[340px]"
+              <div className="grid gap-0 lg:grid-cols-[1fr_1fr] w-full">
+                  <div className="p-6">
+                    <div
+                      ref={passageBoxRef}
+                      className="mt-4 rounded-xl border border-transparent bg-transparent p-5 text-[17px] leading-7 text-slate-700 min-h-[340px] w-full font-serif"
                     onMouseUp={handleHighlightMouseUp}
                     onClick={(e) => {
                       const target = e.target as HTMLElement;
@@ -1322,8 +1460,8 @@ export default function Page() {
                     {currentQ.passage ? <span dangerouslySetInnerHTML={{ __html: passageHtml }} /> : "No passage."}
                   </div>
                 </div>
-                <div className="border-l border-slate-200 p-6">
-                  <div className="flex items-center justify-between rounded-xl bg-slate-100 px-3 py-2 text-xs">
+                  <div className="border-l border-slate-200 p-6 w-full">
+                    <div className="flex items-center justify-between rounded-xl bg-slate-100 px-3 py-2 text-xs">
                     <div className="flex items-center gap-4">
                       <div className="h-7 w-7 rounded-sm bg-slate-900 text-white text-[11px] font-semibold flex items-center justify-center">
                         {currentQuestion + 1}
@@ -1338,10 +1476,10 @@ export default function Page() {
                         {isMarkedForReview ? "Marked for Review" : "Mark for Review"}
                       </button>
                     </div>
-                    <div className="flex items-center gap-4 text-slate-500">
-                      {!resultsReview ? (
-                        <button
-                          className={`inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm text-[12px] font-bold text-slate-900 ${
+                      <div className="flex items-center gap-4 text-slate-500">
+                        {!resultsReview ? (
+                          <button
+                            className={`inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm text-[12px] font-bold text-slate-900 ${
                             eliminateMode ? "ring-2 ring-slate-400" : ""
                           }`}
                           onClick={() => {
@@ -1363,8 +1501,8 @@ export default function Page() {
                       ) : null}
                     </div>
                   </div>
-                  <div
-                    className="mt-4 text-sm font-semibold text-slate-900"
+                    <div
+                      className="mt-4 text-[18px] font-semibold text-slate-900 font-serif"
                     onMouseUp={handleHighlightMouseUp}
                     onClick={(e) => {
                       const target = e.target as HTMLElement;

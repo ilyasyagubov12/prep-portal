@@ -1,4 +1,5 @@
 from django.utils import timezone
+from django.http import HttpResponse
 from django.db import transaction, models
 from rest_framework import status, permissions
 from rest_framework.response import Response
@@ -826,6 +827,118 @@ class ModulePracticeQuestionDetailView(APIView):
             return Response({"error": "Not found"}, status=404)
 
         return Response({"ok": True, "question": _serialize_question_for_staff(q)})
+
+
+class ModulePracticeExportView(APIView):
+    """
+    CSV export endpoint for module practice questions.
+    Exports all questions for a practice (optionally filtered by subject/module).
+    Columns:
+    subject, module, chapter, stem, passage, choice_a, choice_b, choice_c, choice_d, correct
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        if not _is_staff(request.user):
+            return Response({"error": "Forbidden"}, status=403)
+
+        pid = request.query_params.get("practice_id")
+        subject = (request.query_params.get("subject") or "").lower()
+        module_index = request.query_params.get("module_index")
+
+        if not pid:
+            return Response({"error": "practice_id required"}, status=400)
+        if subject and subject not in ("math", "verbal"):
+            return Response({"error": "subject must be math or verbal"}, status=400)
+        if module_index:
+            try:
+                module_index = int(module_index)
+            except Exception:
+                return Response({"error": "module_index must be int"}, status=400)
+
+        try:
+            practice = ModulePractice.objects.get(id=pid)
+        except ModulePractice.DoesNotExist:
+            return Response({"error": "Not found"}, status=404)
+
+        modules = ModulePracticeModule.objects.filter(practice=practice)
+        if subject:
+            modules = modules.filter(subject=subject)
+        if module_index:
+            modules = modules.filter(module_index=module_index)
+
+        modules = modules.order_by(
+            models.Case(
+                models.When(subject="verbal", then=0),
+                models.When(subject="math", then=1),
+                default=2,
+                output_field=models.IntegerField(),
+            ),
+            "module_index",
+        )
+
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(
+            [
+                "subject",
+                "module",
+                "chapter",
+                "stem",
+                "passage",
+                "choice_a",
+                "choice_b",
+                "choice_c",
+                "choice_d",
+                "correct",
+            ]
+        )
+
+        for m in modules:
+            questions = ModulePracticeQuestion.objects.filter(module=m).order_by("order", "created_at")
+            for q in questions:
+                choices = q.choices or []
+                choice_map = {}
+                for idx, c in enumerate(choices):
+                    label = (c.get("label") or chr(65 + idx)).upper()
+                    if label in ("A", "B", "C", "D") and label not in choice_map:
+                        choice_map[label] = c.get("content") or ""
+
+                choice_a = choice_map.get("A", "")
+                choice_b = choice_map.get("B", "")
+                choice_c = choice_map.get("C", "")
+                choice_d = choice_map.get("D", "")
+
+                if q.is_open_ended:
+                    correct = q.correct_answer or ""
+                else:
+                    correct_label = None
+                    for idx, c in enumerate(choices):
+                        if c.get("is_correct"):
+                            correct_label = (c.get("label") or chr(65 + idx)).upper()
+                            break
+                    correct = correct_label or ""
+
+                writer.writerow(
+                    [
+                        q.subject or m.subject,
+                        q.module_index or m.module_index,
+                        q.topic_tag or "",
+                        q.question_text or "",
+                        q.passage or "",
+                        choice_a,
+                        choice_b,
+                        choice_c,
+                        choice_d,
+                        correct,
+                    ]
+                )
+
+        filename = f"practice_{practice.id}.csv"
+        response = HttpResponse(buffer.getvalue(), content_type="text/csv; charset=utf-8")
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return response
 
 
 class ModulePracticeAccessGrantView(APIView):

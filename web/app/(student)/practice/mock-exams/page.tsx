@@ -1035,6 +1035,7 @@ function MockExamBuilder({
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [searching, setSearching] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     if (!token || topicMap) return;
@@ -1087,6 +1088,37 @@ function MockExamBuilder({
       setBuilderError(e?.message ?? "Failed to load questions");
     } finally {
       setLoadingQuestions(false);
+    }
+  }
+
+  async function exportMockCsv() {
+    if (!token) return;
+    setBuilderError(null);
+    setBuilderMessage(null);
+    setExporting(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/mock-exams/export/?mock_exam_id=${exam.id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const json = await res.json().catch(() => null);
+        throw new Error(json?.error || "Failed to export CSV");
+      }
+      const blob = await res.blob();
+      const safeTitle = (exam.title || "mock_exam").replace(/[^a-z0-9-_]+/gi, "_");
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${safeTitle}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      setBuilderMessage("CSV exported.");
+    } catch (e: any) {
+      setBuilderError(e?.message ?? "Failed to export CSV");
+    } finally {
+      setExporting(false);
     }
   }
 
@@ -1607,6 +1639,14 @@ function MockExamBuilder({
             disabled={selectedQuestionIds.length === 0}
           >
             Clear
+          </button>
+          <button
+            className="rounded-md border px-2 py-1 text-[11px] font-semibold"
+            type="button"
+            onClick={exportMockCsv}
+            disabled={exporting || questionList.length === 0}
+          >
+            {exporting ? "Exporting..." : "Export CSV"}
           </button>
           <button
             className="rounded-md border border-red-300 bg-red-50 px-2 py-1 text-[11px] font-semibold text-red-700"
