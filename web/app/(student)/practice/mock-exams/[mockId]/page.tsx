@@ -23,7 +23,7 @@ type ExamQuestion = {
   subtopic?: string | null;
   stem: string;
   passage?: string | null;
-  choices?: { label: string; content: string; is_correct?: boolean }[];
+  choices?: { label: string; content: string; is_correct?: boolean; image_url?: string | null }[];
   is_open_ended?: boolean | null;
   correct_answer?: string | null;
   image_url?: string | null;
@@ -155,6 +155,7 @@ export default function Page() {
   const [result, setResult] = useState<MockResult | null>(null);
   const [autoResumeChecked, setAutoResumeChecked] = useState(false);
   const [reviewMode, setReviewMode] = useState(false);
+  const [showScoreDetails, setShowScoreDetails] = useState(false);
   const [lastSectionIndex, setLastSectionIndex] = useState<{ verbal: number | null; math: number | null }>({
     verbal: null,
     math: null,
@@ -173,6 +174,15 @@ export default function Page() {
   );
 
   const currentQ = questions[currentIndex];
+  const resolveChoiceImage = (url?: string | null) => {
+    if (!url) return null;
+    return url.startsWith("/") ? `${API_BASE}${url}` : url;
+  };
+  const resolvedQuestionImageUrl = currentQ?.image_url
+    ? currentQ.image_url.startsWith("/")
+      ? `${API_BASE}${currentQ.image_url}`
+      : currentQ.image_url
+    : null;
   const currentSection = currentQ?.subject || "verbal";
   const sectionIndices = currentSection === "verbal" ? verbalIndices : mathIndices;
   const sectionPosition = currentQ ? Math.max(1, sectionIndices.indexOf(currentIndex) + 1) : 0;
@@ -247,6 +257,32 @@ export default function Page() {
     }
     return { outcomes, correct, wrong, unanswered };
   }, [reviewMode, questions, answers]);
+
+  const scoreBreakdown = useMemo(() => {
+    const groups: Record<string, { correct: number; total: number }> = {};
+    if (result?.analytics?.topic_accuracy) {
+      for (const [key, val] of Object.entries(result.analytics.topic_accuracy)) {
+        groups[key] = { correct: val.correct, total: val.total };
+      }
+      return groups;
+    }
+    for (const q of questions) {
+      const key = q.subtopic || q.topic || "Uncategorized";
+      if (!groups[key]) groups[key] = { correct: 0, total: 0 };
+      groups[key].total += 1;
+      const answer = answers[q.id];
+      let isCorrect = false;
+      if (q.is_open_ended) {
+        const expected = (q.correct_answer || "").trim().toLowerCase();
+        isCorrect = expected && String(answer || "").trim().toLowerCase() === expected;
+      } else {
+        const correctLabel = (q.choices || []).find((c) => c.is_correct)?.label;
+        isCorrect = !!correctLabel && answer === correctLabel;
+      }
+      if (isCorrect) groups[key].correct += 1;
+    }
+    return groups;
+  }, [result, questions, answers]);
 
   const statuses = useMemo(() => {
     return questions.map((q, idx) => {
@@ -543,10 +579,21 @@ export default function Page() {
                   <div className="text-xl font-semibold text-slate-900">{result.total_score}</div>
                 </div>
               </div>
-            ) : (
-              <div className="mt-4 text-sm text-slate-600">Your exam was submitted. Results are not published yet.</div>
-            )}
-          </div>
+              ) : (
+                <div className="mt-4 text-sm text-slate-600">Your exam was submitted. Results are not published yet.</div>
+              )}
+              {result.results_released ? (
+                <div className="mt-4">
+                  <button
+                    className="rounded-lg border px-4 py-2 text-sm font-semibold text-slate-700"
+                    onClick={() => setShowScoreDetails(true)}
+                    type="button"
+                  >
+                    Score details
+                  </button>
+                </div>
+              ) : null}
+            </div>
 
           {result.results_released ? (
             <div className="grid gap-4 md:grid-cols-2">
@@ -590,6 +637,39 @@ export default function Page() {
           >
             Back to Home
           </button>
+          {showScoreDetails ? (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4">
+              <div className="w-full max-w-xl rounded-2xl bg-white p-5 shadow-xl">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-semibold text-slate-900">Score details by chapter</div>
+                  <button
+                    className="text-xs font-semibold text-slate-500 hover:text-slate-700"
+                    onClick={() => setShowScoreDetails(false)}
+                    type="button"
+                  >
+                    Close
+                  </button>
+                </div>
+                <div className="mt-3 space-y-3 text-sm">
+                  {Object.entries(scoreBreakdown).length === 0 ? (
+                    <div className="text-slate-500">No data yet.</div>
+                  ) : (
+                    Object.entries(scoreBreakdown).map(([key, val]) => {
+                      const wrong = Math.max(0, val.total - val.correct);
+                      return (
+                        <div key={key} className="flex items-center justify-between rounded-lg border px-3 py-2">
+                          <div className="text-slate-700">{key.replace(":", " · ")}</div>
+                          <div className="text-slate-700">
+                            {val.correct}/{val.total} <span className="text-slate-400">({wrong} wrong)</span>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : null}
         </div>
       </div>
     );
@@ -657,10 +737,10 @@ export default function Page() {
                 <div className="p-6">
                   <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Reading passage</div>
                   <div className="mt-4 rounded-xl border border-slate-200 bg-white p-5 text-sm leading-6 text-slate-700 min-h-[320px] whitespace-pre-wrap">
-                    {currentQ.image_url ? (
+                    {resolvedQuestionImageUrl ? (
                       <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 overflow-hidden">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={currentQ.image_url} alt="question" className="w-full max-h-[240px] object-contain" />
+                        <img src={resolvedQuestionImageUrl} alt="question" className="w-full max-h-[240px] object-contain" />
                       </div>
                     ) : null}
                     {currentQ.passage || "No passage."}
@@ -750,7 +830,19 @@ export default function Page() {
                             >
                               {c.label}
                             </span>
-                            <span className="flex-1">{c.content}</span>
+                            <span className="flex-1">
+                              {c.content}
+                              {c.image_url ? (
+                                <div className="mt-2">
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img
+                                    src={resolveChoiceImage(c.image_url) || ""}
+                                    alt={`Choice ${c.label}`}
+                                    className="max-h-40 rounded-md border border-slate-200 object-contain"
+                                  />
+                                </div>
+                              ) : null}
+                            </span>
                             {reviewMode && isCorrect ? (
                               <span className="text-[10px] font-semibold uppercase text-emerald-600">Correct</span>
                             ) : null}
@@ -785,10 +877,10 @@ export default function Page() {
                   </button>
                 </div>
 
-                {currentQ.image_url ? (
+                {resolvedQuestionImageUrl ? (
                   <div className="rounded-xl border border-slate-200 bg-slate-50 overflow-hidden">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={currentQ.image_url} alt="question" className="w-full max-h-[320px] object-contain" />
+                    <img src={resolvedQuestionImageUrl} alt="question" className="w-full max-h-[320px] object-contain" />
                   </div>
                 ) : null}
 
@@ -856,7 +948,19 @@ export default function Page() {
                           >
                             {c.label}
                           </span>
-                          <span className="flex-1">{renderChoiceContent(c.content, true)}</span>
+                          <span className="flex-1">
+                            {renderChoiceContent(c.content, true)}
+                            {c.image_url ? (
+                              <div className="mt-2">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                  src={resolveChoiceImage(c.image_url) || ""}
+                                  alt={`Choice ${c.label}`}
+                                  className="max-h-40 rounded-md border border-slate-200 object-contain"
+                                />
+                              </div>
+                            ) : null}
+                          </span>
                           {reviewMode && isCorrect ? (
                             <span className="text-[10px] font-semibold uppercase text-emerald-600">Correct</span>
                           ) : null}

@@ -357,9 +357,10 @@ export default function Page() {
             attemptsLoading={attemptsLoading}
             attemptsError={attemptsError}
             loadAttempts={loadAttempts}
-            onReviewAttempt={(practiceId, attemptId) =>
-              router.push(`/practice/modules/${practiceId}?review_attempt=${attemptId}`)
-            }
+            onReviewAttempt={(practiceId, attemptId, showScoreDetails) => {
+              const extra = showScoreDetails ? "&score_details=1" : "";
+              router.push(`/practice/modules/${practiceId}?review_attempt=${attemptId}${extra}`);
+            }}
           />
         </section>
         
@@ -401,7 +402,7 @@ function ExamSection({
   attemptsLoading: Record<string, boolean>;
   attemptsError: Record<string, string | null>;
   loadAttempts: (practiceId: string) => void;
-  onReviewAttempt: (practiceId: string, attemptId: string) => void;
+  onReviewAttempt: (practiceId: string, attemptId: string, showScoreDetails?: boolean) => void;
 }) {
   const [retakeDraft, setRetakeDraft] = useState<Record<string, string>>({});
   const [attemptsOpen, setAttemptsOpen] = useState<Record<string, boolean>>({});
@@ -541,17 +542,25 @@ function ExamSection({
                               ) : null}
                             </div>
                             <div className="mt-2">
-                              <button
-                                className="rounded-md border border-slate-900 px-3 py-1 text-[11px] font-semibold text-slate-900 disabled:opacity-60"
-                                type="button"
-                                disabled={!p.results_published}
-                                onClick={() => onReviewAttempt(p.id, attempt.id)}
-                              >
-                                {p.results_published ? "Review attempt" : "Results hidden"}
-                              </button>
+                                <button
+                                  className="rounded-md border border-slate-900 px-3 py-1 text-[11px] font-semibold text-slate-900 disabled:opacity-60"
+                                  type="button"
+                                  disabled={!p.results_published}
+                                  onClick={() => onReviewAttempt(p.id, attempt.id)}
+                                >
+                                  {p.results_published ? "Review attempt" : "Results hidden"}
+                                </button>
+                                <button
+                                  className="rounded-md border px-3 py-1 text-[11px] font-semibold text-slate-700 disabled:opacity-60"
+                                  type="button"
+                                  disabled={!p.results_published}
+                                  onClick={() => onReviewAttempt(p.id, attempt.id, true)}
+                                >
+                                  {p.results_published ? "Score details" : "Results hidden"}
+                                </button>
+                              </div>
                             </div>
-                          </div>
-                        ))}
+                          ))}
                       </div>
                     )}
                   </div>
@@ -567,15 +576,24 @@ function ExamSection({
                 >
                   Start mock exam
                 </button>
-                {p.results_published && p.attempt?.id ? (
-                  <button
-                    className="rounded-xl border px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                    onClick={() => onReviewAttempt(p.id, p.attempt!.id)}
-                    type="button"
-                  >
-                    Review latest attempt
-                  </button>
-                ) : null}
+                  {p.results_published && p.attempt?.id ? (
+                    <button
+                      className="rounded-xl border px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                      onClick={() => onReviewAttempt(p.id, p.attempt!.id)}
+                      type="button"
+                    >
+                      Review latest attempt
+                    </button>
+                  ) : null}
+                  {p.results_published && p.attempt?.id ? (
+                    <button
+                      className="rounded-xl border px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                      onClick={() => onReviewAttempt(p.id, p.attempt!.id, true)}
+                      type="button"
+                    >
+                      Score details
+                    </button>
+                  ) : null}
                 {canManage ? (
                   <div className="flex flex-wrap gap-2">
                     <button

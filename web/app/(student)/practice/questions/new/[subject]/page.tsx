@@ -5,7 +5,13 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { subjects } from "@/lib/questionBank/topics";
 import { typesetMath } from "@/lib/mathjax";
 
-type Choice = { label: string; content: string; is_correct: boolean };
+type Choice = {
+  label: string;
+  content: string;
+  is_correct: boolean;
+  image_url?: string | null;
+  image_file?: File | null;
+};
 
 function isStaff(role?: string | null, is_admin?: boolean | null) {
   const r = (role ?? "").toLowerCase();
@@ -35,6 +41,7 @@ export default function NewQuestionPage() {
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [choiceUploading, setChoiceUploading] = useState<Record<string, boolean>>({});
   const [choices, setChoices] = useState<Choice[]>([
     { label: "A", content: "", is_correct: true },
     { label: "B", content: "", is_correct: false },
@@ -109,6 +116,22 @@ export default function NewQuestionPage() {
     if (subject != "math") typesetMath(passagePreviewRef.current);
   }, [passage, subject]);
 
+  async function uploadChoiceImage(file: File) {
+    const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
+    if (!token) throw new Error("Missing session");
+    const fd = new FormData();
+    fd.append("file", file);
+    const uploadRes = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/questions/upload/`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: fd,
+    }).catch(() => null);
+    if (!uploadRes) throw new Error("Could not upload image");
+    const uploadJson = await uploadRes.json();
+    if (!uploadRes.ok) throw new Error(uploadJson?.error || "Image upload failed");
+    return uploadJson.url || uploadJson.path;
+  }
+
   async function handleSubmit() {
     setError(null);
     if (!isStaffUser) {
@@ -149,6 +172,28 @@ export default function NewQuestionPage() {
       imageUrl = uploadJson.url || uploadJson.path;
     }
 
+    let preparedChoices: Choice[] = choices;
+    if (!isOpenEnded && subject === "math") {
+      setUploading(true);
+      try {
+        preparedChoices = await Promise.all(
+          choices.map(async (c) => {
+            if (c.image_file) {
+              const url = await uploadChoiceImage(c.image_file);
+              return { ...c, image_url: url, image_file: null };
+            }
+            return c;
+          })
+        );
+      } catch (e: any) {
+        setError(e?.message ?? "Image upload failed");
+        setUploading(false);
+        return;
+      } finally {
+        setUploading(false);
+      }
+    }
+
     const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/questions/`, {
       method: "POST",
       headers: {
@@ -167,7 +212,14 @@ export default function NewQuestionPage() {
         published,
         is_open_ended: isOpenEnded,
         correct_answer: isOpenEnded ? correctAnswer.trim() || null : null,
-        choices: isOpenEnded ? [] : choices.map((c) => ({ label: c.label, content: c.content, is_correct: c.is_correct })),
+        choices: isOpenEnded
+          ? []
+          : preparedChoices.map((c) => ({
+              label: c.label,
+              content: c.content,
+              is_correct: c.is_correct,
+              image_url: c.image_url || null,
+            })),
       }),
     });
     const json = await res.json();
@@ -447,6 +499,40 @@ export default function NewQuestionPage() {
                       className="flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
                       placeholder={`Choice ${c.label}`}
                     />
+                    {subject === "math" ? (
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-slate-500">
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+                              setChoiceUploading((prev) => ({ ...prev, [c.label]: true }));
+                              setChoices((prev) => {
+                                const next = [...prev];
+                                next[idx] = { ...next[idx], image_file: file };
+                                return next;
+                              });
+                              setChoiceUploading((prev) => ({ ...prev, [c.label]: false }));
+                            }}
+                          />
+                          <span className="cursor-pointer rounded-lg border px-2 py-1 text-[11px] font-semibold text-slate-600">
+                            Image
+                          </span>
+                        </label>
+                        {c.image_file ? (
+                          <img
+                            src={URL.createObjectURL(c.image_file)}
+                            alt={`Choice ${c.label}`}
+                            className="h-10 w-10 rounded-md border object-cover"
+                          />
+                        ) : c.image_url ? (
+                          <img src={c.image_url} alt={`Choice ${c.label}`} className="h-10 w-10 rounded-md border object-cover" />
+                        ) : null}
+                      </div>
+                    ) : null}
                     <label className="flex items-center gap-1 text-xs font-semibold text-slate-600">
                       <input
                         type="radio"

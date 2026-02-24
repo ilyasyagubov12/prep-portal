@@ -11,7 +11,7 @@ type Question = {
   id: string;
   stem: string;
   passage?: string | null;
-  choices: { label: string; content: string; is_correct: boolean }[];
+  choices: { label: string; content: string; is_correct: boolean; image_url?: string | null }[];
   explanation?: string | null;
   image_url?: string | null;
   is_open_ended?: boolean | null;
@@ -201,6 +201,10 @@ export default function TopicQuestionsPage() {
   const resolvedImageUrl = imageUrl && imageUrl.startsWith('/')
     ? `${process.env.NEXT_PUBLIC_API_BASE}${imageUrl}`
     : imageUrl;
+  const resolveChoiceImage = (url?: string | null) => {
+    if (!url) return null;
+    return url.startsWith("/") ? `${process.env.NEXT_PUBLIC_API_BASE}${url}` : url;
+  };
   const passage = currentQ?.passage;
   const total = questions.length;
 
@@ -494,7 +498,7 @@ export default function TopicQuestionsPage() {
                               >
                                 {c.label}
                               </button>
-                              <button
+                              <div
                                 className="text-neutral-900 text-left flex-1 min-w-0 break-words break-all"
                                 onClick={() => (isCross ? null : selectChoice(currentQ.id, c.label))}
                               >
@@ -503,7 +507,17 @@ export default function TopicQuestionsPage() {
                               ) : (
                                 c.content
                               )}
-                              </button>
+                              {c.image_url ? (
+                                <div className="mt-2">
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img
+                                    src={resolveChoiceImage(c.image_url) || ""}
+                                    alt={`Choice ${c.label}`}
+                                    className="max-h-40 rounded-md border border-slate-200 object-contain"
+                                  />
+                                </div>
+                              ) : null}
+                              </div>
                               {isCross ? (
                                 <button
                                   className="ml-2 rounded-full border border-slate-200 bg-white p-1"
@@ -598,7 +612,6 @@ export default function TopicQuestionsPage() {
                     ) : (
                       passageSections.map((section, idx) => (
                         <div key={idx} className="mb-6">
-                          <div className="font-semibold text-slate-900 mb-2">Text {idx + 1}</div>
                           <div dangerouslySetInnerHTML={{ __html: section.replace(/\n/g, "<br/>") }} />
                         </div>
                       ))
@@ -641,7 +654,7 @@ export default function TopicQuestionsPage() {
                               >
                                 {c.label}
                               </button>
-                              <button
+                              <div
                                 className="text-neutral-900 text-left flex-1 min-w-0 break-words break-all"
                                 onClick={() => (isCross ? null : selectChoice(currentQ.id, c.label))}
                               >
@@ -654,7 +667,17 @@ export default function TopicQuestionsPage() {
                                 ) : (
                                   c.content
                                 )}
-                              </button>
+                                {c.image_url ? (
+                                  <div className="mt-2">
+                                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                                    <img
+                                      src={resolveChoiceImage(c.image_url) || ""}
+                                      alt={`Choice ${c.label}`}
+                                      className="max-h-40 rounded-md border border-slate-200 object-contain"
+                                    />
+                                  </div>
+                                ) : null}
+                              </div>
                               {isCross ? (
                                 <button
                                   className="ml-2 rounded-full border border-slate-200 bg-white p-1"

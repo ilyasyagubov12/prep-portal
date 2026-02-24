@@ -11,7 +11,7 @@ type QuizQuestion = {
   subtopic?: string | null;
   stem: string;
   passage?: string | null;
-  choices?: { label: string; content: string }[];
+  choices?: { label: string; content: string; image_url?: string | null }[];
   is_open_ended?: boolean | null;
   image_url?: string | null;
 };
@@ -112,6 +112,10 @@ export default function Page() {
   const imageUrl = currentQ?.image_url;
   const resolvedImageUrl =
     imageUrl && imageUrl.startsWith("/") ? `${process.env.NEXT_PUBLIC_API_BASE}${imageUrl}` : imageUrl;
+  const resolveChoiceImage = (url?: string | null) => {
+    if (!url) return null;
+    return url.startsWith("/") ? `${process.env.NEXT_PUBLIC_API_BASE}${url}` : url;
+  };
 
   const stemHtml = useMemo(() => {
     if (!currentQ) return "";
@@ -221,6 +225,16 @@ export default function Page() {
                           {c.label}
                         </span>
                         <MathContent html={formatMathHtml(c.content || "").replace(/\n/g, "<br/>")} />
+                        {c.image_url ? (
+                          <div className="mt-2">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={resolveChoiceImage(c.image_url) || ""}
+                              alt={`Choice ${c.label}`}
+                              className="max-h-40 rounded-md border border-slate-200 object-contain"
+                            />
+                          </div>
+                        ) : null}
                       </button>
                     ))}
                   </div>
@@ -260,6 +274,16 @@ export default function Page() {
                         {c.label}
                       </span>
                       {c.content}
+                      {c.image_url ? (
+                        <div className="mt-2">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={resolveChoiceImage(c.image_url) || ""}
+                            alt={`Choice ${c.label}`}
+                            className="max-h-40 rounded-md border border-slate-200 object-contain"
+                          />
+                        </div>
+                      ) : null}
                     </button>
                   ))}
                 </div>

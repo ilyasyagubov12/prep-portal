@@ -22,7 +22,7 @@ type QuizQuestion = {
   subtopic?: string | null;
   stem: string;
   passage?: string | null;
-  choices?: { label: string; content: string; is_correct?: boolean }[];
+  choices?: { label: string; content: string; is_correct?: boolean; image_url?: string | null }[];
   is_open_ended?: boolean | null;
   correct_answer?: string | null;
   image_url?: string | null;
@@ -134,6 +134,7 @@ export default function Page() {
   const search = useSearchParams();
   const practiceId = params.practiceId;
   const reviewAttemptParam = search.get("review_attempt");
+  const scoreDetailsParam = search.get("score_details");
 
   const examParam = (search.get("exam") || "").toLowerCase();
   const examLabel = examParam === "act" ? "ACT" : "SAT";
@@ -153,6 +154,7 @@ export default function Page() {
   const [mapOpen, setMapOpen] = useState(false);
   const [reviewMode, setReviewMode] = useState(false);
   const [resultsReview, setResultsReview] = useState(false);
+  const [showScoreDetails, setShowScoreDetails] = useState(false);
   const [reviewFlags, setReviewFlags] = useState<Record<string, boolean>>({});
   const [breakMode, setBreakMode] = useState(false);
   const [breakSeconds, setBreakSeconds] = useState(0);
@@ -270,6 +272,7 @@ export default function Page() {
       setCurrentModule(0);
       setCurrentQuestion(0);
       setResultsReview(true);
+      if (scoreDetailsParam) setShowScoreDetails(true);
       setReviewMode(false);
       setBreakMode(false);
       setTimeExpired(false);
@@ -661,6 +664,10 @@ export default function Page() {
   const imageUrl = currentQ?.image_url;
   const resolvedImageUrl =
     imageUrl && imageUrl.startsWith("/") ? `${API_BASE}${imageUrl}` : imageUrl;
+  const resolveChoiceImage = (url?: string | null) => {
+    if (!url) return null;
+    return url.startsWith("/") ? `${API_BASE}${url}` : url;
+  };
 
   function renderChoiceContent(content: string) {
     const safe = content || "";
@@ -743,6 +750,28 @@ export default function Page() {
     return { outcomes, correct, wrong, unanswered };
   }, [resultsReview, questions, answers]);
 
+  const scoreBreakdown = useMemo(() => {
+    const groups: Record<string, { correct: number; total: number }> = {};
+    for (const m of modules) {
+      for (const q of m.questions || []) {
+        const key = `${m.subject}:${q.subtopic || q.topic || "Uncategorized"}`;
+        if (!groups[key]) groups[key] = { correct: 0, total: 0 };
+        groups[key].total += 1;
+        const answer = answers[q.id];
+        let isCorrect = false;
+        if (q.is_open_ended) {
+          const expected = (q.correct_answer || "").trim().toLowerCase();
+          isCorrect = expected && String(answer || "").trim().toLowerCase() === expected;
+        } else {
+          const correctLabel = (q.choices || []).find((c) => c.is_correct)?.label;
+          isCorrect = !!correctLabel && answer === correctLabel;
+        }
+        if (isCorrect) groups[key].correct += 1;
+      }
+    }
+    return groups;
+  }, [modules, answers]);
+
   if (introMode) {
     return (
       <div className="min-h-screen bg-[#f7f7fb]">
@@ -800,10 +829,46 @@ export default function Page() {
           >
             {loading ? "Starting..." : "Start test"}
           </button>
+          </div>
+          {showScoreDetails ? (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4">
+              <div className="w-full max-w-xl rounded-2xl bg-white p-5 shadow-xl">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-semibold text-slate-900">Score details by chapter</div>
+                  <button
+                    className="text-xs font-semibold text-slate-500 hover:text-slate-700"
+                    onClick={() => setShowScoreDetails(false)}
+                    type="button"
+                  >
+                    Close
+                  </button>
+                </div>
+                <div className="mt-3 space-y-3 text-sm">
+                  {Object.entries(scoreBreakdown).length === 0 ? (
+                    <div className="text-slate-500">No data yet.</div>
+                  ) : (
+                    Object.entries(scoreBreakdown).map(([key, val]) => {
+                      const [subject, chapter] = key.split(":");
+                      const wrong = Math.max(0, val.total - val.correct);
+                      return (
+                        <div key={key} className="flex items-center justify-between rounded-lg border px-3 py-2">
+                          <div className="text-slate-700">
+                            <span className="font-semibold">{subject.toUpperCase()}</span> · {chapter}
+                          </div>
+                          <div className="text-slate-700">
+                            {val.correct}/{val.total} <span className="text-slate-400">({wrong} wrong)</span>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : null}
         </div>
-      </div>
-    );
-  }
+      );
+    }
 
   if (loading) return <div className="p-6 text-sm text-slate-500">Loading mock exam...</div>;
   if (error) return <div className="p-6 text-sm text-red-600">Error: {error}</div>;
@@ -984,22 +1049,31 @@ export default function Page() {
           ) : (
             <div className="mt-3 text-sm text-slate-600">Results will be available after the teacher publishes them.</div>
           )}
-          {result.results_released ? (
+            {result.results_released ? (
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  className="rounded-lg border border-slate-900 px-4 py-2 text-sm font-semibold text-slate-900"
+                  onClick={() => loadReview(attemptId)}
+                  type="button"
+                >
+                  Review answers
+                </button>
+                <button
+                  className="rounded-lg border px-4 py-2 text-sm font-semibold text-slate-700"
+                  onClick={() => setShowScoreDetails(true)}
+                  type="button"
+                >
+                  Score details
+                </button>
+              </div>
+            ) : null}
             <button
-              className="mt-4 rounded-lg border border-slate-900 px-4 py-2 text-sm font-semibold text-slate-900"
-              onClick={() => loadReview(attemptId)}
+              className="mt-4 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
+              onClick={() => router.push("/practice/modules")}
               type="button"
             >
-              Review answers
+              Back to module practice
             </button>
-          ) : null}
-          <button
-            className="mt-4 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
-            onClick={() => router.push("/practice/modules")}
-            type="button"
-          >
-            Back to module practice
-          </button>
         </div>
       </div>
     );
@@ -1185,6 +1259,16 @@ export default function Page() {
                           <span className={!isMath && isEliminated ? "line-through" : ""}>
                             {renderChoiceContent(c.content || "")}
                           </span>
+                          {c.image_url ? (
+                            <div className="mt-2">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={resolveChoiceImage(c.image_url) || ""}
+                                alt={`Choice ${choiceLabel}`}
+                                className="max-h-40 rounded-md border border-slate-200 object-contain"
+                              />
+                            </div>
+                          ) : null}
                         </span>
                         {resultsReview && isCorrect ? (
                           <span className="text-[10px] font-semibold uppercase text-emerald-600">Correct</span>
@@ -1540,6 +1624,42 @@ export default function Page() {
                   </button>
                 );
               })}
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {showScoreDetails ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4">
+          <div className="w-full max-w-xl rounded-2xl bg-white p-5 shadow-xl">
+            <div className="flex items-center justify-between">
+              <div className="text-sm font-semibold text-slate-900">Score details by chapter</div>
+              <button
+                className="text-xs font-semibold text-slate-500 hover:text-slate-700"
+                onClick={() => setShowScoreDetails(false)}
+                type="button"
+              >
+                Close
+              </button>
+            </div>
+            <div className="mt-3 space-y-3 text-sm">
+              {Object.entries(scoreBreakdown).length === 0 ? (
+                <div className="text-slate-500">No data yet.</div>
+              ) : (
+                Object.entries(scoreBreakdown).map(([key, val]) => {
+                  const [subject, chapter] = key.split(":");
+                  const wrong = Math.max(0, val.total - val.correct);
+                  return (
+                    <div key={key} className="flex items-center justify-between rounded-lg border px-3 py-2">
+                      <div className="text-slate-700">
+                        <span className="font-semibold">{subject.toUpperCase()}</span> · {chapter}
+                      </div>
+                      <div className="text-slate-700">
+                        {val.correct}/{val.total} <span className="text-slate-400">({wrong} wrong)</span>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
             </div>
           </div>
         </div>

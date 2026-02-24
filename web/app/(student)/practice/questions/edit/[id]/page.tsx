@@ -5,7 +5,13 @@ import { useParams, useRouter } from "next/navigation";
 import { subjects } from "@/lib/questionBank/topics";
 import { typesetMath } from "@/lib/mathjax";
 
-type Choice = { label: string; content: string; is_correct: boolean };
+type Choice = {
+  label: string;
+  content: string;
+  is_correct: boolean;
+  image_url?: string | null;
+  image_file?: File | null;
+};
 
 export default function EditQuestionPage() {
   const { id } = useParams<{ id: string }>();
@@ -180,6 +186,20 @@ export default function EditQuestionPage() {
     return uploadJson.url || uploadJson.path;
   }
 
+  async function uploadChoiceImage(access: string, file: File) {
+    const fd = new FormData();
+    fd.append("file", file);
+    const uploadRes = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/questions/upload/`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${access}` },
+      body: fd,
+    }).catch(() => null);
+    if (!uploadRes) throw new Error("Could not upload image");
+    const uploadJson = await uploadRes.json();
+    if (!uploadRes.ok) throw new Error(uploadJson?.error || "Image upload failed");
+    return uploadJson.url || uploadJson.path;
+  }
+
   async function save() {
     setSaving(true);
     setError(null);
@@ -191,6 +211,18 @@ export default function EditQuestionPage() {
     }
     try {
       const uploadedUrl = await uploadImage(access);
+      let preparedChoices: Choice[] = choices;
+      if (!isOpenEnded && subject === "math") {
+        preparedChoices = await Promise.all(
+          choices.map(async (c) => {
+            if (c.image_file) {
+              const url = await uploadChoiceImage(access, c.image_file);
+              return { ...c, image_url: url, image_file: null };
+            }
+            return c;
+          })
+        );
+      }
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/questions/${id}/`, {
         method: "PATCH",
         headers: {
@@ -209,7 +241,14 @@ export default function EditQuestionPage() {
           image_url: uploadedUrl || null,
           is_open_ended: isOpenEnded,
           correct_answer: isOpenEnded ? correctAnswer.trim() || null : null,
-          choices: isOpenEnded ? [] : choices,
+          choices: isOpenEnded
+            ? []
+            : preparedChoices.map((c) => ({
+                label: c.label,
+                content: c.content,
+                is_correct: c.is_correct,
+                image_url: c.image_url || null,
+              })),
         }),
       });
       const json = await res.json();
@@ -459,6 +498,34 @@ export default function EditQuestionPage() {
                       className="flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
                       placeholder={`Choice ${c.label}`}
                     />
+                    {subject === "math" ? (
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-slate-500">
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+                              updateChoice(idx, { image_file: file });
+                            }}
+                          />
+                          <span className="cursor-pointer rounded-lg border px-2 py-1 text-[11px] font-semibold text-slate-600">
+                            Image
+                          </span>
+                        </label>
+                        {c.image_file ? (
+                          <img
+                            src={URL.createObjectURL(c.image_file)}
+                            alt={`Choice ${c.label}`}
+                            className="h-10 w-10 rounded-md border object-cover"
+                          />
+                        ) : c.image_url ? (
+                          <img src={c.image_url} alt={`Choice ${c.label}`} className="h-10 w-10 rounded-md border object-cover" />
+                        ) : null}
+                      </div>
+                    ) : null}
                     <label className="flex items-center gap-1 text-xs font-semibold text-slate-600">
                       <input
                         type="radio"
