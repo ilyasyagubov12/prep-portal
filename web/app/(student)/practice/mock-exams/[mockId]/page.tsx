@@ -274,7 +274,7 @@ export default function Page() {
       let isCorrect = false;
       if (q.is_open_ended) {
         const expected = (q.correct_answer || "").trim().toLowerCase();
-        isCorrect = expected && String(answer || "").trim().toLowerCase() === expected;
+        isCorrect = expected.length > 0 && String(answer || "").trim().toLowerCase() === expected;
       } else {
         const correctLabel = (q.choices || []).find((c) => c.is_correct)?.label;
         isCorrect = !!correctLabel && answer === correctLabel;

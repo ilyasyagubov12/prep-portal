@@ -643,8 +643,9 @@ class ModulePracticeQuestionImportView(APIView):
     """
     CSV import endpoint for module practice questions.
     Expected columns:
-    subject, module, chapter (optional), stem, passage (optional), A, B, C, D, answer
-    Optional extra columns: difficulty, explanation, image_url
+    subject, module, chapter, stem, passage (optional),
+    choice_a, choice_b, choice_c, choice_d, correct
+    Optional extra columns: difficulty, explanation, image_url, published
     """
 
     permission_classes = [permissions.IsAuthenticated]
@@ -750,10 +751,17 @@ class ModulePracticeQuestionImportView(APIView):
                 correct_letter = (row.get("answer") or row.get("correct") or "").strip().upper()
 
                 choices = []
+                choice_map = {
+                    "A": row.get("A") or row.get("choice_a"),
+                    "B": row.get("B") or row.get("choice_b"),
+                    "C": row.get("C") or row.get("choice_c"),
+                    "D": row.get("D") or row.get("choice_d"),
+                }
                 for letter in ["A", "B", "C", "D"]:
-                    if letter in row and row[letter]:
+                    val = choice_map.get(letter)
+                    if val:
                         choices.append(
-                            {"label": letter, "content": row[letter], "is_correct": letter == correct_letter}
+                            {"label": letter, "content": val, "is_correct": letter == correct_letter}
                         )
 
                 if not question_text:
@@ -765,7 +773,7 @@ class ModulePracticeQuestionImportView(APIView):
 
                 if is_open_ended:
                     if not correct_answer:
-                        correct_answer = (row.get("answer") or "").strip() or None
+                        correct_answer = (row.get("correct") or row.get("answer") or "").strip() or None
                 else:
                     if len(choices) < 2:
                         raise ValueError("At least two choices required")
