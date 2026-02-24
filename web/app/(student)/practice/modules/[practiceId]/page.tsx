@@ -370,6 +370,12 @@ export default function Page() {
   }, [breakMode]);
 
   useEffect(() => {
+    if (!breakMode) return;
+    if (breakSeconds !== 0) return;
+    resumeAfterBreak();
+  }, [breakMode, breakSeconds]);
+
+  useEffect(() => {
     const current = modules[currentModule];
     if (resultsReview || current?.subject !== "verbal") {
       setHighlightMode(false);
