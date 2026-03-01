@@ -463,7 +463,7 @@ export default function TopicQuestionsPage() {
             {isMath ? (
               <div className="px-4 sm:px-6 py-6 sm:py-8 min-h-0">
                 <div className="mx-auto max-w-3xl space-y-6 min-h-0">
-                  {imageUrl ? (
+                  {resolvedImageUrl ? (
                     <div className="rounded-xl border border-slate-200 bg-slate-50 overflow-hidden">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
@@ -603,7 +603,7 @@ export default function TopicQuestionsPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 min-h-0">
                 <div className="md:border-r border-slate-200 bg-white px-4 sm:px-6 py-6 min-h-0">
                   <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Reading passages</div>
-                  {imageUrl ? (
+                  {resolvedImageUrl ? (
                     <div className="mt-4 rounded-xl border border-slate-200 bg-white overflow-hidden">
                       <img
                         src={resolvedImageUrl}
