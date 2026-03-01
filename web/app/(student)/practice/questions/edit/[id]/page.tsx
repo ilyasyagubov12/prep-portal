@@ -49,7 +49,13 @@ export default function EditQuestionPage() {
     return group?.subtopics?.map((s) => s.title) ?? [];
   }, [subject, topic]);
 
+  const skipSubtopicResetRef = useRef(false);
+
   useEffect(() => {
+    if (skipSubtopicResetRef.current) {
+      skipSubtopicResetRef.current = false;
+      return;
+    }
     setSubtopic("");
   }, [topic]);
 
@@ -90,6 +96,7 @@ export default function EditQuestionPage() {
         if (!res.ok) throw new Error(json?.error || "Failed to load");
         const q = json.question;
         setSubject(q.subject);
+        skipSubtopicResetRef.current = true;
         setTopic(q.topic);
         setSubtopic(q.subtopic ?? "");
         setStem(q.stem ?? "");

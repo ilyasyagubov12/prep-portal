@@ -18,6 +18,11 @@ type PracticeModule = {
 type Profile = {
   role: string | null;
   is_admin?: boolean | null;
+  user?: {
+    is_staff?: boolean | null;
+    is_superuser?: boolean | null;
+    username?: string | null;
+  } | null;
 };
 
 type QuizQuestion = {
@@ -107,7 +112,13 @@ function getPracticeAttemptKey(practiceId: string) {
 function isTeacherOrAdmin(p: Profile | null) {
   if (!p) return false;
   const role = (p.role ?? "").toLowerCase();
-  return role === "teacher" || role === "admin" || !!p.is_admin;
+  return (
+    role === "teacher" ||
+    role === "admin" ||
+    !!p.is_admin ||
+    !!p.user?.is_staff ||
+    !!p.user?.is_superuser
+  );
 }
 
 function loadAttemptState(attemptId: string) {
@@ -178,6 +189,7 @@ export default function Page() {
   const [highlightMode, setHighlightMode] = useState(false);
   const [autoResumeChecked, setAutoResumeChecked] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [showTimer, setShowTimer] = useState(true);
   const lastQuestionRefresh = useRef(0);
 
   useEffect(() => {
@@ -187,13 +199,15 @@ export default function Page() {
         const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
         if (!cancelled) setHasToken(!!token);
         if (!token) return;
-        const res = await fetch(`${API_BASE}/api/me/`, {
+        const res = await fetch(`${API_BASE}/api/auth/me/`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (!res.ok) return;
         const json = await res.json();
         if (!cancelled) {
-          setProfile({ role: json?.role ?? null, is_admin: json?.is_admin ?? false });
+          const isAdmin =
+            json?.is_admin ?? json?.user?.is_staff ?? json?.user?.is_superuser ?? false;
+          setProfile({ role: json?.role ?? null, is_admin: isAdmin, user: json?.user ?? null });
         }
       } catch {
         // ignore
@@ -704,8 +718,8 @@ export default function Page() {
   const isMarkedForReview = currentQ ? !!reviewFlags[currentQ.id] : false;
   const eliminatedForCurrent = currentQ ? eliminations[currentQ.id] || {} : {};
   const imageUrl = currentQ?.image_url;
-  const canEditQuestions = profile ? isTeacherOrAdmin(profile) : hasToken;
-  const showEditButton = canEditQuestions || hasToken;
+  const canEditQuestions = profile ? isTeacherOrAdmin(profile) : false;
+  const showEditButton = canEditQuestions;
 
   async function refreshCurrentQuestion() {
     if (!canEditQuestions || !currentQ) return;
@@ -939,27 +953,41 @@ export default function Page() {
               <div className="text-xs uppercase tracking-[0.2em] text-slate-400">
                 {module ? `${module.subject.toUpperCase()} Module ${module.module_index}` : "Mock exam"}
               </div>
-              <div className="text-center text-sm font-semibold text-slate-900">{formatTime(timeLeft)}</div>
-                <div className="flex items-center justify-end gap-4 text-xs text-slate-600">
-                  {showEditButton && currentQ ? (
-                    <button
-                      className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-[11px] font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
-                      onClick={() =>
-                        window.open(
-                          `/practice/modules/${practiceId}/questions/${currentQ.id}/edit`,
-                          "_blank"
-                        )
-                      }
-                      type="button"
-                    >
-                      <PenLine size={14} />
-                      Edit question
-                    </button>
-                  ) : null}
-                  {module?.subject === "verbal" ? (
-                    <button className="inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[11px] font-semibold text-slate-700">
-                      <PenLine size={14} />
+              <div className="flex flex-col items-center justify-center gap-1">
+                <div className="text-sm font-semibold text-slate-900">
+                  {showTimer ? formatTime(timeLeft) : "—"}
+                </div>
+                <button
+                  className="inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-semibold text-slate-700"
+                  onClick={() => setShowTimer((v) => !v)}
+                  type="button"
+                >
+                  <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border bg-white text-[9px] font-bold leading-none text-slate-700">
+                    ||
+                  </span>
+                  {showTimer ? "Hide" : "Show"}
+                </button>
+              </div>
+              <div className="flex items-center justify-end gap-4 text-xs text-slate-600">
+                {module?.subject === "verbal" ? (
+                  <button className="inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[11px] font-semibold text-slate-700">
+                    <PenLine size={14} />
                     Highlight
+                  </button>
+                ) : null}
+                {showEditButton && currentQ ? (
+                  <button
+                    className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+                    onClick={() =>
+                      window.open(
+                        `/practice/modules/${practiceId}/questions/${currentQ.id}/edit`,
+                        "_blank"
+                      )
+                    }
+                    type="button"
+                  >
+                    <PenLine size={14} />
+                    Edit question
                   </button>
                 ) : null}
                 <button className="text-slate-500" onClick={() => router.push("/practice/modules")}>
@@ -1164,10 +1192,55 @@ export default function Page() {
             <div className="text-xs uppercase tracking-[0.2em] text-slate-400">
               {module ? `${module.subject.toUpperCase()} Module ${module.module_index}` : "Mock exam"}
             </div>
-              <div className="text-center text-sm font-semibold text-slate-900">
-                {resultsReview ? "Review" : formatTime(timeLeft)}
+              <div className="flex flex-col items-center justify-center gap-1">
+                <div className="text-sm font-semibold text-slate-900">
+                  {resultsReview ? "Review" : showTimer ? formatTime(timeLeft) : "—"}
+                </div>
+                {!resultsReview ? (
+                  <button
+                    className="inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-semibold text-slate-700"
+                    onClick={() => setShowTimer((v) => !v)}
+                    type="button"
+                  >
+                    <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border bg-white text-[9px] font-bold leading-none text-slate-700">
+                      ||
+                    </span>
+                    {showTimer ? "Hide" : "Show"}
+                  </button>
+                ) : null}
               </div>
               <div className="flex items-center justify-end gap-4 text-xs text-slate-600">
+                {module?.subject === "math" && !resultsReview ? (
+                  <div className="flex items-center gap-2">
+                    <button
+                      className="inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[11px] font-semibold text-slate-700"
+                      onClick={() => setSheetOpen(true)}
+                      type="button"
+                    >
+                      Reference
+                    </button>
+                    <button
+                      className="inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[11px] font-semibold text-slate-700"
+                      onClick={openDesmosPopup}
+                      type="button"
+                    >
+                      <Calculator size={14} />
+                      Calculator
+                    </button>
+                  </div>
+                ) : null}
+                {module?.subject === "verbal" && !resultsReview ? (
+                  <button
+                    className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[11px] font-semibold ${
+                      highlightMode ? "border-slate-900 text-slate-900" : "text-slate-700"
+                    }`}
+                    onClick={() => setHighlightMode((v) => !v)}
+                    type="button"
+                  >
+                    <PenLine size={14} />
+                    {highlightMode ? "Highlighting" : "Highlight"}
+                  </button>
+                ) : null}
                 {showEditButton && currentQ ? (
                   <button
                     className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
@@ -1183,38 +1256,10 @@ export default function Page() {
                     Edit question
                   </button>
                 ) : null}
-                {module?.subject === "math" && !resultsReview ? (
-                  <div className="flex items-center gap-2">
-                    <button
-                    className="inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[11px] font-semibold text-slate-700"
-                    onClick={() => setSheetOpen(true)}
-                  >
-                    Reference
-                  </button>
-                  <button
-                    className="inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[11px] font-semibold text-slate-700"
-                    onClick={openDesmosPopup}
-                  >
-                    <Calculator size={14} />
-                    Calculator
-                  </button>
-                </div>
-              ) : null}
-              {module?.subject === "verbal" && !resultsReview ? (
-                <button
-                  className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[11px] font-semibold ${
-                    highlightMode ? "border-slate-900 text-slate-900" : "text-slate-700"
-                  }`}
-                  onClick={() => setHighlightMode((v) => !v)}
-                >
-                  <PenLine size={14} />
-                  {highlightMode ? "Highlighting" : "Highlight"}
+                <button className="text-slate-500" onClick={() => router.push("/practice/modules")}>
+                  Exit
                 </button>
-              ) : null}
-              <button className="text-slate-500" onClick={() => router.push("/practice/modules")}>
-                Exit
-              </button>
-            </div>
+              </div>
           </div>
         </header>
 

@@ -198,13 +198,14 @@ export default function TopicQuestionsPage() {
   const currentQ = questions[current];
   const isOpenEnded = !!(currentQ as any)?.is_open_ended;
   const imageUrl = (currentQ as any)?.image_url || (currentQ as any)?.imageUrl || (currentQ as any)?.image || null;
-  const resolvedImageUrl = imageUrl && imageUrl.startsWith('/')
-    ? `${process.env.NEXT_PUBLIC_API_BASE}${imageUrl}`
-    : imageUrl;
-  const resolveChoiceImage = (url?: string | null) => {
+  const resolveImageUrl = (url?: string | null) => {
     if (!url) return null;
-    return url.startsWith("/") ? `${process.env.NEXT_PUBLIC_API_BASE}${url}` : url;
+    if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("data:")) return url;
+    const normalized = url.startsWith("/") ? url : `/${url}`;
+    return `${process.env.NEXT_PUBLIC_API_BASE}${normalized}`;
   };
+  const resolvedImageUrl = resolveImageUrl(imageUrl);
+  const resolveChoiceImage = (url?: string | null) => resolveImageUrl(url);
   const passage = currentQ?.passage;
   const total = questions.length;
 
@@ -419,6 +420,14 @@ export default function TopicQuestionsPage() {
             >
               Highlight
             </button>
+            {isStaff && currentQ ? (
+              <button
+                className="rounded-full border border-slate-900 bg-slate-900 px-3 py-1.5 text-white hover:bg-slate-800"
+                onClick={() => router.push(`/practice/questions/edit/${currentQ.id}`)}
+              >
+                Edit question
+              </button>
+            ) : null}
             <button className="rounded-full border border-slate-200 bg-white px-3 py-1.5" onClick={toggleFullscreen}>
               Fullscreen
             </button>

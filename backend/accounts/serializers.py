@@ -64,6 +64,15 @@ class ProfileSerializer(serializers.ModelSerializer):
             "parent_phone",
         ]
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # Ensure admin visibility for staff/superuser accounts even if profile flags are stale.
+        if getattr(instance.user, "is_superuser", False) or getattr(instance.user, "is_staff", False):
+            data["is_admin"] = True
+            if data.get("role") in (None, "", "student"):
+                data["role"] = "admin"
+        return data
+
     def get_avatar(self, obj):
         url = obj.avatar
         if not url:

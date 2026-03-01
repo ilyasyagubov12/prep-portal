@@ -64,6 +64,7 @@ export default function Page() {
   const [timeLeft, setTimeLeft] = useState(20 * 60);
   const [showNavigator, setShowNavigator] = useState(false);
   const submittedRef = useRef(false);
+  const [isStaff, setIsStaff] = useState(false);
 
   useEffect(() => {
     if (!subject || !topic) {
@@ -74,6 +75,16 @@ export default function Page() {
     (async () => {
       try {
         const access = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
+        if (access) {
+          const me = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/auth/me/`, {
+            headers: { Authorization: `Bearer ${access}` },
+          }).catch(() => null);
+          if (me && me.ok) {
+            const prof = await me.json().catch(() => null);
+            const role = (prof?.role ?? "").toLowerCase();
+            setIsStaff(!!prof?.is_admin || role === "admin" || role === "teacher");
+          }
+        }
         const url = new URL(`${process.env.NEXT_PUBLIC_API_BASE}/api/questions/quiz/`);
         url.searchParams.set("subject", subject);
         url.searchParams.set("topic", topic);
@@ -174,8 +185,18 @@ export default function Page() {
             </div>
             <div className="text-xs text-slate-500">20 min</div>
           </div>
-          <div className="text-xs uppercase tracking-[0.2em] text-slate-400">
-            {subject} {subtopic ? "subtopic quiz" : "topic quiz"}
+          <div className="flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-slate-400">
+            <span>
+              {subject} {subtopic ? "subtopic quiz" : "topic quiz"}
+            </span>
+            {isStaff && currentQ ? (
+              <button
+                className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold tracking-normal text-slate-700 hover:bg-slate-50"
+                onClick={() => router.push(`/practice/questions/edit/${currentQ.id}`)}
+              >
+                Edit question
+              </button>
+            ) : null}
           </div>
         </div>
       </div>

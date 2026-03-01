@@ -44,5 +44,7 @@ urlpatterns = [
     path("api/admin/users/<uuid:user_id>/delete/", AdminDeleteUserView.as_view(), name="alias_admin_users_delete"),
 ]
 
-if settings.DEBUG or os.getenv("SERVE_MEDIA", "True") == "True":
+# Always serve local MEDIA files when a media root is configured.
+# This keeps localhost images (avatars/question images) working even if DEBUG is false.
+if settings.MEDIA_URL and settings.MEDIA_ROOT:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
