@@ -83,13 +83,14 @@ function buildReport(questions: ExamQuestion[], answers: Record<string, string>)
     const total = Array.from(map.values()).reduce((acc, val) => acc + val.total, 0);
     const categories: Category[] = Array.from(map.entries())
       .map(([key, val]) => {
-        const pct = val.total ? val.correct / val.total : 0;
-        const weight = total ? Math.round((val.total / total) * 100) : 0;
+        const totalCount = val.total ?? 0;
+        const pct = totalCount ? val.correct / totalCount : 0;
+        const weight = total ? Math.round((totalCount / total) * 100) : 0;
         return {
           key,
           name: key,
           weightPercent: weight,
-          questionRange: [val.total, val.total],
+          questionRange: [totalCount, totalCount] as [number, number],
           scoreRange: toScoreRange(pct),
           performancePct: pct,
         };
