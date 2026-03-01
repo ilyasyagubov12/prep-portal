@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { Manrope } from "next/font/google";
@@ -71,6 +71,7 @@ export default function HomePage() {
   const [streakDone, setStreakDone] = useState(false);
   const [streakTimeLeft, setStreakTimeLeft] = useState(0);
   const [streakLoaded, setStreakLoaded] = useState(false);
+  const [streakRefreshing, setStreakRefreshing] = useState(false);
   const [practiceTests, setPracticeTests] = useState<PracticeTest[]>([]);
   const [loadingPractices, setLoadingPractices] = useState(false);
   const [practiceError, setPracticeError] = useState<string | null>(null);
@@ -78,11 +79,29 @@ export default function HomePage() {
   const [courseGrades, setCourseGrades] = useState<Record<string, GradePreviewItem[]>>({});
   const [coursesLoading, setCoursesLoading] = useState(false);
   const [coursesError, setCoursesError] = useState<string | null>(null);
+  const courseSliderRef = useRef<HTMLDivElement | null>(null);
+  const [courseSliderOverflow, setCourseSliderOverflow] = useState(false);
+  const [courseCanScrollLeft, setCourseCanScrollLeft] = useState(false);
+  const [courseCanScrollRight, setCourseCanScrollRight] = useState(false);
 
   useEffect(() => {
     const id = window.setInterval(() => setNow(new Date()), 60_000);
     return () => window.clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    const updateSlider = () => {
+      const el = courseSliderRef.current;
+      if (!el) return;
+      const overflow = el.scrollWidth > el.clientWidth + 4;
+      setCourseSliderOverflow(overflow);
+      setCourseCanScrollLeft(el.scrollLeft > 4);
+      setCourseCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 4);
+    };
+    updateSlider();
+    window.addEventListener("resize", updateSlider);
+    return () => window.removeEventListener("resize", updateSlider);
+  }, [courses, courseGrades]);
 
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -91,6 +110,24 @@ export default function HomePage() {
     return () => window.clearInterval(id);
   }, []);
 
+
+  async function fetchStreakStatus(access: string) {
+    const streakRes = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/streak/status/`, {
+      headers: {
+        Authorization: `Bearer ${access}`,
+        "X-TZ-Offset": String(new Date().getTimezoneOffset()),
+      },
+    }).catch(() => null);
+    if (streakRes && streakRes.ok) {
+      const streakJson = await streakRes.json().catch(() => null);
+      setStreakCount(streakJson?.streak_count ?? 0);
+      setStreakMath(streakJson?.today?.math_count ?? 0);
+      setStreakVerbal(streakJson?.today?.verbal_count ?? 0);
+      setStreakDone(!!streakJson?.today?.completed);
+      setStreakTimeLeft(streakJson?.time_left_seconds ?? 0);
+      setStreakLoaded(true);
+    }
+  }
 
   useEffect(() => {
     (async () => {
@@ -122,21 +159,7 @@ export default function HomePage() {
             if (prof?.university_icon) setUniPreview(prof.university_icon);
           }
 
-          const streakRes = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/streak/status/`, {
-            headers: {
-              Authorization: `Bearer ${access}`,
-              "X-TZ-Offset": String(new Date().getTimezoneOffset()),
-            },
-          }).catch(() => null);
-          if (streakRes && streakRes.ok) {
-            const streakJson = await streakRes.json().catch(() => null);
-            setStreakCount(streakJson?.streak_count ?? 0);
-            setStreakMath(streakJson?.today?.math_count ?? 0);
-            setStreakVerbal(streakJson?.today?.verbal_count ?? 0);
-            setStreakDone(!!streakJson?.today?.completed);
-            setStreakTimeLeft(streakJson?.time_left_seconds ?? 0);
-            setStreakLoaded(true);
-          }
+          await fetchStreakStatus(access);
         }
 
         const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/exam-dates/`, {
@@ -159,6 +182,14 @@ export default function HomePage() {
       }
     })();
   }, []);
+
+  useEffect(() => {
+    if (!streakLoaded || streakTimeLeft > 0 || streakRefreshing) return;
+    const access = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
+    if (!access) return;
+    setStreakRefreshing(true);
+    fetchStreakStatus(access).finally(() => setStreakRefreshing(false));
+  }, [streakLoaded, streakTimeLeft, streakRefreshing]);
 
   useEffect(() => {
     (async () => {
@@ -429,14 +460,14 @@ export default function HomePage() {
   }
 
   return (
-    <div className={`${uiFont.className} min-h-screen bg-[#f6f7fb] text-slate-900`}>
-      <div className="mx-auto max-w-none px-4 py-6 sm:px-6 sm:py-8">
+    <div className={`${uiFont.className} min-h-screen bg-[#f6f7fb] text-slate-900 overflow-x-hidden`}>
+      <div className="mx-auto max-w-none px-0 py-6 sm:px-6 sm:py-8">
         {/* Greeting */}
         <div className="mt-2 flex items-center gap-2 text-lg font-semibold">
           <span>👋</span>
           <span>Hi {displayName}</span>
         </div>
-        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <div className="mt-3 grid grid-cols-2 gap-2 sm:gap-3">
           {[
             { label: "Math", value: mathLevel, accent: "from-emerald-400 via-teal-400 to-indigo-500" },
             { label: "Verbal", value: verbalLevel, accent: "from-amber-400 via-rose-400 to-purple-500" },
@@ -446,7 +477,7 @@ export default function HomePage() {
             return (
               <div
                 key={item.label}
-                className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm"
+                className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-sm sm:px-4 sm:py-3"
               >
                 <div className="absolute right-0 top-0 h-16 w-16 -translate-y-6 translate-x-6 rounded-full bg-slate-100/70 blur-2xl" />
                 <div className="flex items-center justify-between">
@@ -628,15 +659,45 @@ export default function HomePage() {
                   <div className="text-sm text-slate-600">Course Gradebook</div>
                   <div className="text-xs text-slate-500">Latest scores from your classes.</div>
                 </div>
-                <button
-                  className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700"
-                  onClick={() => router.push("/courses")}
-                >
-                  View all
-                </button>
+                <div className="flex items-center gap-2">
+                  {courseSliderOverflow ? (
+                    <div className="flex items-center gap-1 rounded-full border border-slate-200 bg-white p-1">
+                      <button
+                        className={`h-7 w-7 rounded-full ${
+                          courseCanScrollLeft ? "text-slate-500 hover:bg-slate-100" : "text-slate-300"
+                        }`}
+                        onClick={() =>
+                          courseSliderRef.current?.scrollBy({ left: -320, behavior: "smooth" })
+                        }
+                        aria-label="Scroll courses left"
+                        disabled={!courseCanScrollLeft}
+                      >
+                        ←
+                      </button>
+                      <button
+                        className={`h-7 w-7 rounded-full ${
+                          courseCanScrollRight ? "text-slate-500 hover:bg-slate-100" : "text-slate-300"
+                        }`}
+                        onClick={() =>
+                          courseSliderRef.current?.scrollBy({ left: 320, behavior: "smooth" })
+                        }
+                        aria-label="Scroll courses right"
+                        disabled={!courseCanScrollRight}
+                      >
+                        →
+                      </button>
+                    </div>
+                  ) : null}
+                  <button
+                    className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700"
+                    onClick={() => router.push("/courses")}
+                  >
+                    View all
+                  </button>
+                </div>
               </div>
 
-              <div className="mt-5 space-y-4 max-h-[22rem] overflow-auto pr-1">
+              <div className="mt-5 max-w-full">
                 {coursesLoading ? (
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">
                     Loading course grades...
@@ -650,76 +711,87 @@ export default function HomePage() {
                     No courses assigned yet.
                   </div>
                 ) : (
-                  courses.map((course) => {
-                    const grades = courseGrades[course.id] ?? [];
-                    return (
-                      <div
-                        key={course.id}
-                        className="rounded-2xl border border-slate-200 bg-slate-50/60 px-4 py-4"
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <div className="text-sm font-semibold text-slate-900">{course.title}</div>
-                            {course.description ? (
-                              <div className="mt-1 text-xs text-slate-500 line-clamp-2">
-                                {course.description}
-                              </div>
+                  <div className="max-w-full overflow-hidden">
+                    <div
+                      ref={courseSliderRef}
+                      className="flex w-full min-w-0 max-w-full gap-3 sm:gap-4 overflow-x-auto pb-2 pr-1 snap-x snap-mandatory"
+                      onScroll={() => {
+                        const el = courseSliderRef.current;
+                        if (!el) return;
+                        setCourseCanScrollLeft(el.scrollLeft > 4);
+                        setCourseCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 4);
+                      }}
+                    >
+                      {courses.map((course) => {
+                        const grades = courseGrades[course.id] ?? [];
+                        return (
+                          <div
+                            key={course.id}
+                            className="w-[calc(50%-0.5rem)] min-w-[200px] max-w-[360px] flex-shrink-0 snap-start rounded-2xl border border-slate-200 bg-slate-50/60 px-4 py-4"
+                          >
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className="text-sm font-semibold text-slate-900">{course.title}</div>
+                              {course.description ? (
+                                <div className="mt-1 text-xs text-slate-500 line-clamp-2">
+                                  {course.description}
+                                </div>
+                              ) : null}
+                            </div>
+                            {course.slug ? (
+                              <button
+                                className="text-xs font-semibold text-blue-600"
+                                onClick={() => router.push(`/courses/${course.slug}`)}
+                              >
+                                Open →
+                              </button>
                             ) : null}
                           </div>
-                          {course.slug ? (
-                            <button
-                              className="text-xs font-semibold text-blue-600"
-                              onClick={() => router.push(`/courses/${course.slug}`)}
-                            >
-                              Open →
-                            </button>
-                          ) : null}
-                        </div>
 
-                        <div className="mt-3 grid gap-2">
-                          {grades.length === 0 ? (
-                            <div className="rounded-lg border border-dashed border-slate-200 bg-white px-3 py-3 text-xs text-slate-500">
-                              No graded work yet.
-                            </div>
-                          ) : (
-                            grades.map((item) => {
-                              const label =
-                                item.kind === "quiz"
-                                  ? "Quiz"
-                                  : item.kind === "offline"
-                                  ? "Offline grade"
-                                  : "Assignment";
-                              const dateLabel = item.graded_at
-                                ? new Date(item.graded_at).toLocaleDateString("en-US", {
-                                    month: "short",
-                                    day: "numeric",
-                                  })
-                                : null;
-                              return (
-                                <div
-                                  key={`${course.id}-${item.id}`}
-                                  className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2"
-                                >
-                                  <div>
+                          <div className="mt-3 grid gap-2">
+                            {grades.length === 0 ? (
+                              <div className="rounded-lg border border-dashed border-slate-200 bg-white px-3 py-3 text-xs text-slate-500">
+                                No graded work yet.
+                              </div>
+                            ) : (
+                              grades.slice(0, 5).map((item) => {
+                                const label =
+                                  item.kind === "quiz"
+                                    ? "Quiz"
+                                    : item.kind === "offline"
+                                    ? "Offline grade"
+                                    : "Assignment";
+                                const dateLabel = item.graded_at
+                                  ? new Date(item.graded_at).toLocaleDateString("en-US", {
+                                      month: "short",
+                                      day: "numeric",
+                                    })
+                                  : null;
+                                return (
+                                  <div
+                                    key={`${course.id}-${item.id}`}
+                                    className="rounded-lg border border-slate-200 bg-white px-3 py-2"
+                                  >
                                     <div className="text-xs font-semibold text-slate-700">{item.title}</div>
-                                    <div className="text-[11px] text-slate-500">
+                                    <div className="mt-1 text-[11px] text-slate-500">
                                       {label}
                                       {dateLabel ? ` • ${dateLabel}` : ""}
                                     </div>
+                                    <div className="mt-2 text-xs font-semibold text-slate-900">
+                                      {gradeBadge(item.score, item.max_score) ?? (
+                                        item.max_score != null ? `${item.score}/${item.max_score}` : item.score
+                                      )}
+                                    </div>
                                   </div>
-                                  <div className="text-xs font-semibold text-slate-900">
-                                    {gradeBadge(item.score, item.max_score) ?? (
-                                      item.max_score != null ? `${item.score}/${item.max_score}` : item.score
-                                    )}
-                                  </div>
-                                </div>
-                              );
-                            })
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })
+                                );
+                              })
+                            )}
+                          </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
                 )}
               </div>
             </div>

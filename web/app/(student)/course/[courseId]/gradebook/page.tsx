@@ -274,14 +274,19 @@ export default function GradebookPage() {
 
   return (
     <div className="p-4 space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold">Gradebook</h1>
           <p className="text-sm text-neutral-500">Your submissions and grades for this course.</p>
         </div>
-        <Link className="text-sm underline" href={`/course/${courseId}/assignment`}>
-          Create assignment
-        </Link>
+        <div className="flex flex-wrap items-center gap-3">
+          <Link className="text-sm underline" href={`/practice/mock-exams?course_id=${courseId}`}>
+            {staff ? "Manage mock quizzes" : "Mock quizzes"}
+          </Link>
+          <Link className="text-sm underline" href={`/course/${courseId}/assignment`}>
+            Create assignment
+          </Link>
+        </div>
       </div>
 
       {loading ? (
@@ -315,7 +320,7 @@ export default function GradebookPage() {
                   <div className="space-y-1">
                     <div className="font-medium">{a.title}</div>
                     <Link className="underline text-xs" href={openHref}>
-                      {isQuiz ? "Open quiz" : "Open"}
+                      {isQuiz ? (staff ? "Manage quiz" : "Open quiz") : "Open"}
                     </Link>
                     {isQuiz && submission && a.results_published ? (
                       <div>

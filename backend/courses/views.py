@@ -200,6 +200,32 @@ class CoursesListView(APIView):
         return Response(data)
 
 
+class CourseUpdateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request):
+        course_id = request.data.get("course_id") or request.data.get("id")
+        if not course_id:
+            return Response({"error": "course_id required"}, status=400)
+
+        try:
+            course = Course.objects.get(id=course_id)
+        except Course.DoesNotExist:
+            return Response({"error": "Course not found"}, status=404)
+
+        user = request.user
+        is_teacher = CourseTeacher.objects.filter(course=course, teacher=user).exists()
+        if not (_require_admin(user) or is_teacher):
+            return Response({"error": "Forbidden"}, status=403)
+
+        serializer = CourseSerializer(course, data=request.data, partial=True)
+        if not serializer.is_valid():
+            return Response({"error": serializer.errors}, status=400)
+        serializer.save()
+        return Response({"ok": True, "course": serializer.data})
+
+
 class CoursePeopleView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -236,6 +262,8 @@ class CoursePeopleView(APIView):
             return {
                 "user_id": str(u.id),
                 "username": getattr(u, "username", None),
+                "first_name": getattr(u, "first_name", None),
+                "last_name": getattr(u, "last_name", None),
                 "nickname": getattr(p, "nickname", None),
                 "role": getattr(p, "role", None),
                 "is_admin": getattr(p, "is_admin", False),

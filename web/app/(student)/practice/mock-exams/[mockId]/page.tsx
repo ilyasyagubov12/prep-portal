@@ -155,7 +155,6 @@ export default function Page() {
   const [result, setResult] = useState<MockResult | null>(null);
   const [autoResumeChecked, setAutoResumeChecked] = useState(false);
   const [reviewMode, setReviewMode] = useState(false);
-  const [showScoreDetails, setShowScoreDetails] = useState(false);
   const [lastSectionIndex, setLastSectionIndex] = useState<{ verbal: number | null; math: number | null }>({
     verbal: null,
     math: null,
@@ -586,10 +585,17 @@ export default function Page() {
                 <div className="mt-4">
                   <button
                     className="rounded-lg border px-4 py-2 text-sm font-semibold text-slate-700"
-                    onClick={() => setShowScoreDetails(true)}
+                    onClick={() => {
+                      if (!attemptId) return;
+                      router.push(
+                        `/score-report?source=mock&mock_id=${encodeURIComponent(
+                          mockId
+                        )}&attempt_id=${encodeURIComponent(attemptId)}`
+                      );
+                    }}
                     type="button"
                   >
-                    Score details
+                    View score report
                   </button>
                 </div>
               ) : null}
@@ -637,40 +643,7 @@ export default function Page() {
           >
             Back to Home
           </button>
-          {showScoreDetails ? (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4">
-              <div className="w-full max-w-xl rounded-2xl bg-white p-5 shadow-xl">
-                <div className="flex items-center justify-between">
-                  <div className="text-sm font-semibold text-slate-900">Score details by chapter</div>
-                  <button
-                    className="text-xs font-semibold text-slate-500 hover:text-slate-700"
-                    onClick={() => setShowScoreDetails(false)}
-                    type="button"
-                  >
-                    Close
-                  </button>
-                </div>
-                <div className="mt-3 space-y-3 text-sm">
-                  {Object.entries(scoreBreakdown).length === 0 ? (
-                    <div className="text-slate-500">No data yet.</div>
-                  ) : (
-                    Object.entries(scoreBreakdown).map(([key, val]) => {
-                      const wrong = Math.max(0, val.total - val.correct);
-                      return (
-                        <div key={key} className="flex items-center justify-between rounded-lg border px-3 py-2">
-                          <div className="text-slate-700">{key.replace(":", " · ")}</div>
-                          <div className="text-slate-700">
-                            {val.correct}/{val.total} <span className="text-slate-400">({wrong} wrong)</span>
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-            </div>
-          ) : null}
-        </div>
+                  </div>
       </div>
     );
   }

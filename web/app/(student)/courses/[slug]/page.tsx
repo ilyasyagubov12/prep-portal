@@ -613,7 +613,50 @@ export default function CourseDetailPage() {
   }
 
   async function loadAssignmentDueEvents(_courseId: string) {
-    setAssignmentEvents([]);
+    if (!accessToken) {
+      setAssignmentEvents([]);
+      return;
+    }
+    try {
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_BASE}/api/grades/me/?course_id=${_courseId}`,
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      ).catch(() => null);
+      if (!res) throw new Error("No response from gradebook API");
+      let json: any = null;
+      try {
+        json = await res.json();
+      } catch {
+        throw new Error(`Gradebook API returned non-JSON (status ${res.status})`);
+      }
+      if (!res.ok) throw new Error(json?.error || `Failed to load gradebook (status ${res.status})`);
+
+      const dueEvents: AssignmentDueEvent[] = (json.assignments ?? [])
+        .filter((row: any) => row.kind !== "quiz")
+        .filter((row: any) => !!row.due_at)
+        .map((row: any) => {
+          const start = new Date(row.due_at);
+          if (Number.isNaN(start.getTime())) return null;
+          // Short block so it shows the time without occupying the whole hour.
+          const end = new Date(start.getTime() + 5 * 60 * 1000);
+          return {
+            id: `assign-${row.id}`,
+            course_id: _courseId,
+            title: row.title ? `Assignment due: ${row.title}` : "Assignment due",
+            description: null,
+            starts_at: start.toISOString(),
+            ends_at: end.toISOString(),
+            repeat_weekly: false,
+            repeat_until: null,
+          } as AssignmentDueEvent;
+        })
+        .filter(Boolean) as AssignmentDueEvent[];
+
+      setAssignmentEvents(dueEvents);
+    } catch (e) {
+      console.error(e);
+      setAssignmentEvents([]);
+    }
   }
 
   useEffect(() => {
@@ -1352,9 +1395,7 @@ async function getSignedUrl(storage_path: string, storage_url?: string | null) {
             </div>
           </div>
 
-          <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-3">
-            <StatCard label="Students" value={students.length} accent="from-sky-500 to-blue-500" />
-            <StatCard label="Tutors" value={teachers.length} accent="from-emerald-500 to-green-500" />
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
             <StatCard
               label="Upcoming deadline"
               value={formatDeadline(upcomingDeadline?.due)}
@@ -1383,13 +1424,16 @@ async function getSignedUrl(storage_path: string, storage_url?: string | null) {
             />
           </div>
 
-          <div className="border rounded-2xl p-5 bg-white shadow-sm">
-            <div className="flex items-center justify-between">
+          <div className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-sm backdrop-blur">
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <div className="text-sm uppercase tracking-[0.15em] text-neutral-500">People</div>
-                <div className="text-lg font-semibold mt-1">Who’s in this course</div>
+                <div className="text-xs uppercase tracking-[0.25em] text-slate-400">People</div>
+                <div className="text-lg font-semibold mt-1 text-slate-900">Who’s in this course</div>
+                <div className="mt-1 text-xs text-slate-500">
+                  {teachers.length} tutors • {students.length} students
+                </div>
               </div>
-              {peopleLoading ? <div className="text-xs text-neutral-500">Loading…</div> : null}
+              {peopleLoading ? <div className="text-xs text-slate-500">Loading…</div> : null}
             </div>
             {peopleError ? (
               <div className="text-sm text-red-600 mt-2">Error: {peopleError}</div>
@@ -2061,13 +2105,15 @@ async function getSignedUrl(storage_path: string, storage_url?: string | null) {
                       </div>
 
                       <div className="mt-1 text-xs text-neutral-600">
-                        {fmtTime(ev.occ_start)} – {fmtTime(ev.occ_end)}
+                        {ev.id.startsWith("assign-")
+                          ? fmtTime(ev.occ_start)
+                          : `${fmtTime(ev.occ_start)} - ${fmtTime(ev.occ_end)}`}
                         {ev.repeat_weekly ? (
                           <span className="ml-2 text-neutral-500">(weekly)</span>
                         ) : null}
                       </div>
 
-                      {canManage ? (
+                      {canManage && !ev.id.startsWith("assign-") ? (
                         <button
                           className="mt-2 text-xs font-semibold text-neutral-600 hover:text-red-600 underline underline-offset-2 transition"
                           type="button"
@@ -2104,6 +2150,18 @@ async function getSignedUrl(storage_path: string, storage_url?: string | null) {
             Your submissions and grades for this course.
           </div>
         </div>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <button
+          className="h-10 px-4 rounded-xl border border-neutral-200 bg-white text-xs font-semibold text-neutral-700 shadow-sm hover:bg-neutral-50 transition"
+          type="button"
+          onClick={() =>
+            router.push(`/practice/mock-exams?course_id=${course?.id}`)
+          }
+        >
+          {canManage ? "Manage mock quizzes" : "Mock quizzes"}
+        </button>
       </div>
 
       {/* Teacher controls */}
@@ -2412,28 +2470,63 @@ function ChipList({
   limit = 50,
 }: {
   title: string;
-  items: { user_id: string; username?: string | null; nickname?: string | null }[];
+  items: {
+    user_id: string;
+    username?: string | null;
+    nickname?: string | null;
+    first_name?: string | null;
+    last_name?: string | null;
+  }[];
   emptyLabel: string;
   limit?: number;
 }) {
   const subset = items.slice(0, limit);
+  const displayName = (p: {
+    user_id: string;
+    username?: string | null;
+    nickname?: string | null;
+    first_name?: string | null;
+    last_name?: string | null;
+  }) =>
+    [p.first_name, p.last_name].filter(Boolean).join(" ").trim() ||
+    p.nickname?.trim() ||
+    p.username?.trim() ||
+    p.user_id.slice(0, 6);
+  const initials = (name: string) =>
+    name
+      .split(" ")
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase())
+      .join("");
   return (
-    <div className="rounded-xl border p-3 bg-neutral-50">
-      <div className="text-sm font-semibold mb-2">{title}</div>
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-semibold text-slate-800">{title}</div>
+        <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-500">
+          {items.length}
+        </span>
+      </div>
       {subset.length === 0 ? (
-        <div className="text-sm text-neutral-500">{emptyLabel}</div>
+        <div className="mt-3 text-sm text-slate-500">{emptyLabel}</div>
       ) : (
-        <div className="flex flex-wrap gap-2">
-          {subset.map((p) => (
-            <span
-              key={p.user_id}
-              className="px-3 py-1 rounded-full bg-white border text-xs text-neutral-800 shadow-sm"
-            >
-              {p.username || p.nickname || p.user_id.slice(0, 6)}
-            </span>
-          ))}
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          {subset.map((p) => {
+            const name = displayName(p);
+            return (
+              <div
+                key={p.user_id}
+                className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2"
+              >
+                <div className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-900 text-[11px] font-semibold text-white">
+                  {initials(name) || "?"}
+                </div>
+                <div className="text-xs font-semibold text-slate-700">{name}</div>
+              </div>
+            );
+          })}
           {items.length > limit ? (
-            <span className="text-xs text-neutral-500 px-2 py-1">+{items.length - limit} more</span>
+            <div className="text-xs text-slate-500 px-2 py-1">+{items.length - limit} more</div>
           ) : null}
         </div>
       )}

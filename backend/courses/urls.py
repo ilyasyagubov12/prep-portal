@@ -7,6 +7,7 @@ from .views import (
     AdminMembershipsListView,
     AdminMembershipsSetView,
     CoursesListView,
+    CourseUpdateView,
     CoursePeopleView,
     CourseCoverUploadView,
     CourseNodesListView,
@@ -21,6 +22,7 @@ from .views import (
 
 urlpatterns = [
     path("courses/", CoursesListView.as_view(), name="courses_list"),
+    path("courses/update/", CourseUpdateView.as_view(), name="courses_update"),
     path("courses/people/", CoursePeopleView.as_view(), name="courses_people"),
     path("courses/cover-upload/", CourseCoverUploadView.as_view(), name="courses_cover_upload"),
     path("course-nodes/list/", CourseNodesListView.as_view(), name="course_nodes_list"),

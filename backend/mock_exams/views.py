@@ -12,6 +12,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.models import User, Profile
+from courses.models import Enrollment, Course
 from question_bank.models import Question
 from .models import MockExam, MockExamAttempt, MockExamAccess
 
@@ -412,14 +413,18 @@ class MockExamListView(APIView):
             has_access = True
             if not staff:
                 if exam.course_id:
-                    from courses.models import Enrollment
-
                     if not Enrollment.objects.filter(course_id=exam.course_id, user=user).exists():
                         continue
+                course_access = False
+                if exam.allowed_courses.exists():
+                    course_ids = exam.allowed_courses.values_list("id", flat=True)
+                    course_access = Enrollment.objects.filter(course_id__in=course_ids, user=user).exists()
                 if access_qs.exists():
-                    has_access = access_qs.filter(student=user).exists()
+                    has_access = access_qs.filter(student=user).exists() or course_access
                 elif exam.allowed_students.exists():
-                    has_access = exam.allowed_students.filter(id=user.id).exists()
+                    has_access = exam.allowed_students.filter(id=user.id).exists() or course_access
+                elif exam.allowed_courses.exists():
+                    has_access = course_access
                 else:
                     has_access = True
                 if not has_access:
@@ -457,6 +462,11 @@ class MockExamListView(APIView):
                 else:
                     allowed_ids = list(exam.allowed_students.values_list("id", flat=True))
                     allowed_count = exam.allowed_students.count()
+            allowed_course_ids = None
+            allowed_course_count = None
+            if staff:
+                allowed_course_ids = list(exam.allowed_courses.values_list("id", flat=True))
+                allowed_course_count = exam.allowed_courses.count()
             access_limit = None
             if access_qs.exists():
                 access_row = access_qs.filter(student=user).first()
@@ -484,6 +494,8 @@ class MockExamListView(APIView):
                     "question_count": len(exam.question_ids or []),
                     "allowed_student_ids": allowed_ids,
                     "allowed_student_count": allowed_count,
+                    "allowed_course_ids": allowed_course_ids,
+                    "allowed_course_count": allowed_course_count,
                     "question_ids": exam.question_ids if staff else None,
                     "attempt": attempt_summary,
                     "attempts_count": attempts_count,
@@ -1010,6 +1022,7 @@ class MockExamAccessSetView(APIView):
         exam_id = request.data.get("mock_exam_id")
         student_ids = request.data.get("student_ids") or []
         student_limits = request.data.get("student_limits") or {}
+        course_ids = request.data.get("course_ids") or []
         if not exam_id:
             return Response({"error": "mock_exam_id required"}, status=400)
 
@@ -1020,8 +1033,13 @@ class MockExamAccessSetView(APIView):
 
         if not isinstance(student_ids, list):
             return Response({"error": "student_ids must be list"}, status=400)
+        if not isinstance(course_ids, list):
+            return Response({"error": "course_ids must be list"}, status=400)
         if not isinstance(student_limits, dict):
             return Response({"error": "student_limits must be dict"}, status=400)
+
+        courses = Course.objects.filter(id__in=course_ids)
+        exam.allowed_courses.set(courses)
 
         students = User.objects.filter(id__in=student_ids)
         exam.allowed_students.set(students)
@@ -1587,16 +1605,21 @@ class MockExamStartView(APIView):
         access_qs = MockExamAccess.objects.filter(mock_exam=exam, is_active=True)
         if not staff:
             if exam.course_id:
-                from courses.models import Enrollment
-
                 if not Enrollment.objects.filter(course_id=exam.course_id, user=request.user).exists():
                     return Response({"error": "No access"}, status=403)
+            course_access = False
+            if exam.allowed_courses.exists():
+                course_ids = exam.allowed_courses.values_list("id", flat=True)
+                course_access = Enrollment.objects.filter(course_id__in=course_ids, user=request.user).exists()
             if access_qs.exists():
                 access = access_qs.filter(student=request.user).first()
-                if not access:
+                if not access and not course_access:
                     return Response({"error": "No access"}, status=403)
             elif exam.allowed_students.exists():
-                if not exam.allowed_students.filter(id=request.user.id).exists():
+                if not (exam.allowed_students.filter(id=request.user.id).exists() or course_access):
+                    return Response({"error": "No access"}, status=403)
+            elif exam.allowed_courses.exists():
+                if not course_access:
                     return Response({"error": "No access"}, status=403)
 
         user = request.user

@@ -455,6 +455,8 @@ class QuestionQuizSubmitView(APIView):
 
                 # update level based on completed subtopics
                 completed = SubtopicProgress.objects.filter(user=request.user, subject=subject, passed=True).count()
+                if subject == "verbal":
+                    completed = completed * 2
                 current_level = _parse_level(
                     request.user.profile.math_level if subject == "math" else request.user.profile.verbal_level
                 )

@@ -9,6 +9,7 @@ import io
 import random
 
 from accounts.models import User, Profile
+from courses.models import Enrollment, Course
 from .models import (
     ModulePractice,
     ModulePracticeModule,
@@ -23,6 +24,13 @@ def _is_staff(user: User) -> bool:
     role = (getattr(prof, "role", None) or "").lower()
     is_admin = getattr(prof, "is_admin", False)
     return user.is_superuser or is_admin or role in ("admin", "teacher")
+
+
+def _has_course_access(practice: ModulePractice, user: User) -> bool:
+    if not practice.allowed_courses.exists():
+        return False
+    course_ids = practice.allowed_courses.values_list("id", flat=True)
+    return Enrollment.objects.filter(course_id__in=course_ids, user=user).exists()
 
 
 def _serialize_question_for_student(q: ModulePracticeQuestion, choice_order: list | None = None):
@@ -237,6 +245,7 @@ class ModulePracticeListView(APIView):
             )
             access_qs = ModulePracticeAccess.objects.filter(practice=p, is_active=True)
             access = access_qs.filter(student=user).first()
+            course_access = _has_course_access(p, user)
             locked = not staff
             expires_at = None
             if staff:
@@ -244,12 +253,15 @@ class ModulePracticeListView(APIView):
             else:
                 if not p.is_active:
                     locked = True
-                elif not access:
+                elif not access and not course_access:
                     locked = True
                 else:
-                    expires_at = access.expires_at
-                    if access.expires_at and access.expires_at < now:
-                        locked = True
+                    if access:
+                        expires_at = access.expires_at
+                        if access.expires_at and access.expires_at < now:
+                            locked = True
+                        else:
+                            locked = False
                     else:
                         locked = False
 
@@ -295,6 +307,8 @@ class ModulePracticeListView(APIView):
                     "attempt": attempt_summary,
                     "allowed_student_ids": list(access_qs.values_list("student_id", flat=True)) if staff else None,
                     "allowed_student_count": access_qs.count() if staff else None,
+                    "allowed_course_ids": list(p.allowed_courses.values_list("id", flat=True)) if staff else None,
+                    "allowed_course_count": p.allowed_courses.count() if staff else None,
                 }
             )
 
@@ -1116,6 +1130,7 @@ class ModulePracticeAccessSetView(APIView):
         pid = request.data.get("practice_id")
         student_ids = request.data.get("student_ids") or []
         student_limits = request.data.get("student_limits") or {}
+        course_ids = request.data.get("course_ids") or []
         if not pid:
             return Response({"error": "practice_id required"}, status=400)
 
@@ -1126,8 +1141,13 @@ class ModulePracticeAccessSetView(APIView):
 
         if not isinstance(student_ids, list):
             return Response({"error": "student_ids must be list"}, status=400)
+        if not isinstance(course_ids, list):
+            return Response({"error": "course_ids must be list"}, status=400)
         if not isinstance(student_limits, dict):
             return Response({"error": "student_limits must be dict"}, status=400)
+
+        courses = Course.objects.filter(id__in=course_ids)
+        practice.allowed_courses.set(courses)
 
         ModulePracticeAccess.objects.filter(practice=practice).delete()
         students = User.objects.filter(id__in=student_ids)
@@ -1176,13 +1196,14 @@ class ModulePracticeStartView(APIView):
 
         user = request.user
         staff = _is_staff(user)
+        course_access = _has_course_access(practice, user)
         if not staff:
             if not practice.is_active:
                 return Response({"error": "Locked"}, status=403)
             access = ModulePracticeAccess.objects.filter(practice=practice, student=user, is_active=True).first()
-            if not access:
+            if not access and not course_access:
                 return Response({"error": "Locked"}, status=403)
-            if access.expires_at and access.expires_at < timezone.now():
+            if access and access.expires_at and access.expires_at < timezone.now():
                 return Response({"error": "Access expired"}, status=403)
 
         if not staff:

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { Lock, Unlock } from "lucide-react";
 import { typesetMath } from "@/lib/mathjax";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE;
@@ -84,6 +85,8 @@ type Practice = {
   access_expires_at: string | null;
   allowed_student_ids?: string[] | null;
   allowed_student_count?: number | null;
+  allowed_course_ids?: string[] | null;
+  allowed_course_count?: number | null;
   modules: PracticeModule[];
   attempt?: PracticeAttempt | null;
 };
@@ -98,6 +101,12 @@ type Student = {
   avatar?: string | null;
   attempts_count?: number | null;
   access_limit?: number | null;
+};
+
+type Course = {
+  id: string;
+  title: string;
+  slug?: string | null;
 };
 
 function isTeacherOrAdmin(p: Profile | null) {
@@ -169,8 +178,8 @@ export default function Page() {
     setManageId(null);
   }, [searchParams]);
 
-  async function loadPractices(token: string) {
-    setLoading(true);
+  async function loadPractices(token: string, opts?: { silent?: boolean }) {
+    if (!opts?.silent) setLoading(true);
     setError(null);
     try {
       const res = await fetch(`${API_BASE}/api/module-practice/list/`, {
@@ -182,7 +191,7 @@ export default function Page() {
     } catch (e: any) {
       setError(e?.message ?? "Failed to load practices");
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }
 
@@ -227,7 +236,7 @@ export default function Page() {
       if (!res.ok) throw new Error(json?.error || "Failed to create practice");
       setNewTitle("");
       setNewDesc("");
-      await loadPractices(accessToken);
+      await loadPractices(accessToken, { silent: true });
       const nextId = json.practice_id ?? null;
       if (nextId) {
         setManageId(nextId);
@@ -262,7 +271,7 @@ export default function Page() {
     });
     const json = await res.json();
     if (!res.ok) throw new Error(json?.error || "Failed to update practice");
-    await loadPractices(accessToken);
+    await loadPractices(accessToken, { silent: true });
   }
 
   async function deletePractice(practiceId: string) {
@@ -280,7 +289,7 @@ export default function Page() {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || "Failed to delete");
-      await loadPractices(accessToken);
+    await loadPractices(accessToken, { silent: true });
     } catch (e: any) {
       setError(e?.message ?? "Failed to delete");
     }
@@ -307,13 +316,13 @@ export default function Page() {
         {error ? <div className="text-sm text-red-600">{error}</div> : null}
 
         {canManage ? (
-          <section className="rounded-2xl border bg-white p-5 shadow-sm">
+          <section className="rounded-3xl border border-slate-200/70 bg-white p-6 shadow-sm">
             <div className="text-lg font-semibold">Create new mock exam</div>
             <div className="mt-3 grid gap-3 md:grid-cols-[2fr_3fr_auto] items-end">
               <label className="grid gap-1 text-sm">
                 <span className="text-xs uppercase tracking-wide text-slate-400">Title</span>
                 <input
-                  className="rounded-xl border px-3 py-2 text-sm"
+                  className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm shadow-sm focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"
                   value={newTitle}
                   onChange={(e) => setNewTitle(e.target.value)}
                   placeholder="SAT Mock Exam - February"
@@ -322,14 +331,14 @@ export default function Page() {
               <label className="grid gap-1 text-sm">
                 <span className="text-xs uppercase tracking-wide text-slate-400">Description</span>
                 <input
-                  className="rounded-xl border px-3 py-2 text-sm"
+                  className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm shadow-sm focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"
                   value={newDesc}
                   onChange={(e) => setNewDesc(e.target.value)}
                   placeholder="Timed practice across all modules"
                 />
               </label>
               <button
-                className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+                className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-60"
                 onClick={createPractice}
                 disabled={creating}
                 type="button"
@@ -352,14 +361,17 @@ export default function Page() {
             togglePractice={togglePractice}
             deletePractice={deletePractice}
             accessToken={accessToken}
-            refresh={() => accessToken && loadPractices(accessToken)}
+            refresh={() => accessToken && loadPractices(accessToken, { silent: true })}
             attemptsByPractice={attemptsByPractice}
             attemptsLoading={attemptsLoading}
             attemptsError={attemptsError}
             loadAttempts={loadAttempts}
             onReviewAttempt={(practiceId, attemptId, showScoreDetails) => {
-              const extra = showScoreDetails ? "&score_details=1" : "";
-              router.push(`/practice/modules/${practiceId}?review_attempt=${attemptId}${extra}`);
+              if (showScoreDetails) {
+                router.push(`/score-report?source=practice&practice_id=${practiceId}&attempt_id=${attemptId}`);
+                return;
+              }
+              router.push(`/practice/modules/${practiceId}?review_attempt=${attemptId}`);
             }}
           />
         </section>
@@ -442,7 +454,7 @@ function ExamSection({
       </div>
 
       {practices.length === 0 ? (
-        <div className="rounded-2xl border border-dashed bg-white px-5 py-6 text-sm text-slate-500">
+        <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-5 py-6 text-sm text-slate-500">
           No mock exams yet.
         </div>
       ) : (
@@ -452,42 +464,52 @@ function ExamSection({
             return (
               <div
                 key={p.id}
-                className={`rounded-2xl border bg-white p-5 shadow-sm transition-all ${
+                className={`rounded-3xl border border-slate-200/70 bg-white p-6 shadow-sm transition-shadow hover:shadow-md ${
                   manageId === p.id ? "lg:col-span-2" : ""
-                }`}
+                } ${p.locked ? "grayscale opacity-70" : ""}`}
               >
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <div className="text-xs uppercase tracking-[0.3em] text-slate-400">Mock exam</div>
-                  <div className="mt-2 text-xl font-semibold text-slate-900">{p.title}</div>
-                  <div className="mt-1 text-sm text-slate-600">{p.description || "No description"}</div>
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="text-xs uppercase tracking-[0.3em] text-slate-400">Mock exam</div>
+                    <div className="mt-2 text-xl font-semibold text-slate-900">{p.title}</div>
+                    <div className="mt-1 text-sm text-slate-600">{p.description || "No description"}</div>
+
+                  </div>
+                  <div className="flex flex-col items-end gap-2">
+                    {p.locked ? (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500">
+                        <Lock size={12} />
+                        Locked
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
+                        <Unlock size={12} />
+                        Unlocked
+                      </span>
+                    )}
+                    {p.results_published ? (
+                      <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-700">Results live</span>
+                    ) : (
+                      <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700">Results hidden</span>
+                    )}
+                  </div>
                 </div>
-                <div className="flex flex-col items-end gap-2">
-                  {p.locked ? (
-                    <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500">Locked</span>
-                  ) : (
-                    <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">Unlocked</span>
-                  )}
-                  {p.results_published ? (
-                    <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-700">Results live</span>
-                  ) : (
-                    <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700">Results hidden</span>
-                  )}
-                </div>
-              </div>
 
               
 
-              <div className="mt-4">
+              <div className="mt-5">
                 <button
-                  className="rounded-lg border px-3 py-1.5 text-xs font-semibold text-slate-700"
+                  className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
                   type="button"
                   onClick={() => toggleAttempts(p.id)}
                 >
                   {attemptsOpen[p.id] ? "Hide attempts" : "View my attempts"}
+                  <span className="rounded-full bg-white px-2 py-0.5 text-[10px] text-slate-500">
+                    {(attemptsByPractice[p.id] || []).length}
+                  </span>
                 </button>
                 {attemptsOpen[p.id] ? (
-                  <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3 text-sm">
+                  <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm">
                     {!canManage && !p.results_published ? (
                       <div className="text-xs text-slate-500">Results are hidden for this test.</div>
                     ) : attemptsLoading[p.id] ? (
@@ -501,7 +523,7 @@ function ExamSection({
                         {(attemptsByPractice[p.id] || []).map((attempt, idx) => (
                           <div
                             key={attempt.id}
-                            className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2"
+                            className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm"
                           >
                             <div className="flex items-center justify-between gap-3">
                               <div className="text-xs font-semibold text-slate-700">
@@ -528,7 +550,7 @@ function ExamSection({
                                     return (
                                       <span
                                         key={key}
-                                        className="rounded-full bg-white px-3 py-1 text-[11px] font-semibold text-slate-700"
+                                        className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-700"
                                       >
                                         {label}: {val.correct}/{total}
                                       </span>
@@ -538,29 +560,29 @@ function ExamSection({
                               {p.results_published &&
                               typeof attempt.correct === "number" &&
                               typeof attempt.total === "number" ? (
-                                <span className="rounded-full bg-white px-3 py-1 text-[11px] font-semibold text-slate-700">
+                                <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-700">
                                   Total: {attempt.correct}/{attempt.total}
                                 </span>
                               ) : null}
                             </div>
-                            <div className="mt-2">
-                                <button
-                                  className="rounded-md border border-slate-900 px-3 py-1 text-[11px] font-semibold text-slate-900 disabled:opacity-60"
-                                  type="button"
-                                  disabled={!p.results_published}
-                                  onClick={() => onReviewAttempt(p.id, attempt.id)}
-                                >
-                                  {p.results_published ? "Review attempt" : "Results hidden"}
-                                </button>
-                                <button
-                                  className="rounded-md border px-3 py-1 text-[11px] font-semibold text-slate-700 disabled:opacity-60"
-                                  type="button"
-                                  disabled={!p.results_published}
-                                  onClick={() => onReviewAttempt(p.id, attempt.id, true)}
-                                >
-                                  {p.results_published ? "Score details" : "Results hidden"}
-                                </button>
-                              </div>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              <button
+                                className="rounded-full border border-slate-900 px-3 py-1 text-[11px] font-semibold text-slate-900 hover:bg-slate-50 disabled:opacity-60"
+                                type="button"
+                                disabled={!p.results_published}
+                                onClick={() => onReviewAttempt(p.id, attempt.id)}
+                              >
+                                {p.results_published ? "Review attempt" : "Results hidden"}
+                              </button>
+                              <button
+                                className="rounded-full border px-3 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                                type="button"
+                                disabled={!p.results_published}
+                                onClick={() => onReviewAttempt(p.id, attempt.id, true)}
+                              >
+                                {p.results_published ? "View score report" : "Results hidden"}
+                              </button>
+                            </div>
                             </div>
                           ))}
                       </div>
@@ -578,24 +600,6 @@ function ExamSection({
                 >
                   Start mock exam
                 </button>
-                  {p.results_published && p.attempt?.id ? (
-                    <button
-                      className="rounded-xl border px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                      onClick={() => onReviewAttempt(p.id, p.attempt!.id)}
-                      type="button"
-                    >
-                      Review latest attempt
-                    </button>
-                  ) : null}
-                  {p.results_published && p.attempt?.id ? (
-                    <button
-                      className="rounded-xl border px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                      onClick={() => onReviewAttempt(p.id, p.attempt!.id, true)}
-                      type="button"
-                    >
-                      Score details
-                    </button>
-                  ) : null}
                 {canManage ? (
                   <div className="flex flex-wrap gap-2">
                     <button
@@ -669,21 +673,21 @@ function ExamSection({
 
               {canManage && manageId === p.id && activePanel === "access" ? (
                 <div className="mt-5 space-y-4 border-t pt-4">
-                  <div className="flex flex-wrap gap-3">
-                    <button
-                      className="rounded-lg border px-3 py-2 text-xs font-semibold"
-                      type="button"
-                      onClick={() => togglePractice(p.id, { results_published: !p.results_published })}
-                    >
-                      {p.results_published ? "Hide results" : "Publish results"}
-                    </button>
-                    <button
-                      className="rounded-lg border px-3 py-2 text-xs font-semibold"
-                      type="button"
-                      onClick={() => togglePractice(p.id, { is_active: !p.is_active })}
-                    >
-                      {p.is_active ? "Disable access" : "Enable access"}
-                    </button>
+                  <div className="flex flex-wrap items-center gap-6">
+                    <ToggleSwitch
+                      checked={!!p.results_published}
+                      onChange={() => togglePractice(p.id, { results_published: !p.results_published })}
+                      label="Results"
+                      onLabel="Published"
+                      offLabel="Hidden"
+                    />
+                    <ToggleSwitch
+                      checked={!!p.is_active}
+                      onChange={() => togglePractice(p.id, { is_active: !p.is_active })}
+                      label="Access"
+                      onLabel="Enabled"
+                      offLabel="Disabled"
+                    />
                     <button
                       className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700"
                       type="button"
@@ -802,10 +806,71 @@ function PracticeAccessManager({
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [courseQuery, setCourseQuery] = useState("");
+  const [selectedCourseIds, setSelectedCourseIds] = useState<string[]>([]);
+  const [expandedCourses, setExpandedCourses] = useState<Record<string, boolean>>({});
+  const [courseMembers, setCourseMembers] = useState<Record<string, Student[]>>({});
+  const [courseMembersLoading, setCourseMembersLoading] = useState<Record<string, boolean>>({});
+  const [courseMembersError, setCourseMembersError] = useState<Record<string, string | null>>({});
 
   useEffect(() => {
     setSelectedIds(practice.allowed_student_ids ?? []);
   }, [practice.allowed_student_ids]);
+
+  useEffect(() => {
+    setSelectedCourseIds(practice.allowed_course_ids ?? []);
+  }, [practice.allowed_course_ids]);
+
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/courses/`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const json = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(json?.error || "Failed to load courses");
+        const list = Array.isArray(json) ? json : json?.courses || [];
+        if (!cancelled) setCourses(list);
+      } catch {
+        if (!cancelled) setCourses([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  async function loadCourseMembers(courseId: string) {
+    if (!token) return;
+    setCourseMembersLoading((prev) => ({ ...prev, [courseId]: true }));
+    setCourseMembersError((prev) => ({ ...prev, [courseId]: null }));
+    try {
+      const res = await fetch(`${API_BASE}/api/courses/people/?course_id=${courseId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(json?.error || "Failed to load members");
+      setCourseMembers((prev) => ({ ...prev, [courseId]: json?.students ?? [] }));
+    } catch (e: any) {
+      setCourseMembersError((prev) => ({ ...prev, [courseId]: e?.message ?? "Failed to load members" }));
+      setCourseMembers((prev) => ({ ...prev, [courseId]: [] }));
+    } finally {
+      setCourseMembersLoading((prev) => ({ ...prev, [courseId]: false }));
+    }
+  }
+
+  function toggleCourseMembers(courseId: string) {
+    setExpandedCourses((prev) => {
+      const next = !prev[courseId];
+      if (next && !courseMembers[courseId] && !courseMembersLoading[courseId]) {
+        loadCourseMembers(courseId);
+      }
+      return { ...prev, [courseId]: next };
+    });
+  }
 
   useEffect(() => {
     if (!token) return;
@@ -889,6 +954,20 @@ function PracticeAccessManager({
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   }
 
+  const filteredCourses = useMemo(() => {
+    const q = courseQuery.trim().toLowerCase();
+    if (!q) return courses;
+    return courses.filter((c) => {
+      const title = (c.title || "").toLowerCase();
+      const slug = (c.slug || "").toLowerCase();
+      return title.includes(q) || slug.includes(q);
+    });
+  }, [courses, courseQuery]);
+
+  function toggleCourse(id: string) {
+    setSelectedCourseIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
+
   async function saveAccess() {
     if (!token) return;
     setLoading(true);
@@ -911,7 +990,12 @@ function PracticeAccessManager({
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ practice_id: practice.id, student_ids: selectedIds, student_limits }),
+        body: JSON.stringify({
+          practice_id: practice.id,
+          student_ids: selectedIds,
+          student_limits,
+          course_ids: selectedCourseIds,
+        }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || "Failed to save access");
@@ -928,7 +1012,8 @@ function PracticeAccessManager({
     <div className="rounded-xl border border-slate-200 bg-white p-4">
       <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Access control</div>
       <div className="mt-2 text-xs text-slate-500">
-        Choose which students can take this practice test. If none are selected, all students can access it.
+        Choose which students or course groups can take this practice test. If none are selected, all students can
+        access it.
       </div>
 
       {error ? <div className="mt-2 text-xs text-red-600">{error}</div> : null}
@@ -1043,6 +1128,120 @@ function PracticeAccessManager({
                 );
               })
             )}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 rounded-lg border bg-slate-50 p-3">
+        <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Course groups</div>
+        <div className="mt-1 text-xs text-slate-500">
+          Grant access to all students enrolled in selected courses.
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <input
+            className="min-w-[220px] flex-1 rounded-lg border px-3 py-2 text-xs"
+            placeholder="Filter courses by name or slug"
+            value={courseQuery}
+            onChange={(e) => setCourseQuery(e.target.value)}
+          />
+          <div className="text-[10px] text-slate-400">{filteredCourses.length} courses</div>
+        </div>
+
+        <div className="mt-3 grid gap-3 lg:grid-cols-2">
+          <div className="rounded-lg border border-slate-200 bg-white p-3">
+            <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Available courses</div>
+            <div className="mt-2 grid gap-2 max-h-[200px] overflow-y-auto">
+              {filteredCourses.length === 0 ? (
+                <div className="text-xs text-slate-500">No courses found.</div>
+              ) : (
+                filteredCourses.map((c) => {
+                  const picked = selectedCourseIds.includes(c.id);
+                  const open = !!expandedCourses[c.id];
+                  const members = courseMembers[c.id] || [];
+                  return (
+                    <div
+                      key={c.id}
+                      className={`rounded-lg border px-3 py-2 text-left text-xs ${
+                        picked ? "border-blue-500 bg-blue-50" : "border-slate-200 bg-white"
+                      }`}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => toggleCourse(c.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          toggleCourse(c.id);
+                        }
+                      }}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className="font-semibold text-slate-700">{c.title}</div>
+                          <div className="text-[10px] text-slate-400">{c.slug || c.id}</div>
+                        </div>
+                        <button
+                          className="rounded-full border px-2 py-1 text-[10px] font-semibold text-slate-600 hover:bg-slate-50"
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleCourseMembers(c.id);
+                          }}
+                        >
+                          {open ? "Hide members" : "View members"}
+                        </button>
+                      </div>
+                      {open ? (
+                        <div className="mt-2 rounded-md border border-slate-100 bg-slate-50 px-2 py-2 text-[10px] text-slate-600">
+                          {courseMembersLoading[c.id] ? (
+                            <div>Loading members...</div>
+                          ) : courseMembersError[c.id] ? (
+                            <div className="text-red-600">{courseMembersError[c.id]}</div>
+                          ) : members.length === 0 ? (
+                            <div>No students enrolled.</div>
+                          ) : (
+                            <div className="flex flex-wrap gap-2">
+                              {members.slice(0, 20).map((m) => (
+                                <span key={m.user_id} className="rounded-full bg-white px-2 py-0.5">
+                                  {m.nickname ||
+                                    `${m.first_name ?? ""} ${m.last_name ?? ""}`.trim() ||
+                                    m.username ||
+                                    m.user_id}
+                                </span>
+                              ))}
+                              {members.length > 20 ? (
+                                <span className="text-[10px] text-slate-400">+{members.length - 20} more</span>
+                              ) : null}
+                            </div>
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-slate-200 bg-white p-3">
+            <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Selected courses</div>
+            <div className="mt-2 grid gap-2 max-h-[200px] overflow-y-auto">
+              {selectedCourseIds.length === 0 ? (
+                <div className="text-xs text-slate-500">No courses selected.</div>
+              ) : (
+                selectedCourseIds.map((id) => {
+                  const c = courses.find((course) => course.id === id);
+                  return (
+                    <div key={id} className="rounded-lg border border-slate-200 px-3 py-2 text-xs">
+                      <div className="font-semibold text-slate-700">{c?.title || id}</div>
+                      <div className="text-[10px] text-slate-400">{c?.slug || id}</div>
+                      <button className="mt-1 text-[10px] text-red-600" type="button" onClick={() => toggleCourse(id)}>
+                        Remove
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -1264,6 +1463,39 @@ function PracticeResultsPanel({
             </div>
           ))
         )}
+      </div>
+    </div>
+  );
+}
+
+function ToggleSwitch({
+  checked,
+  onChange,
+  label,
+  onLabel,
+  offLabel,
+}: {
+  checked: boolean;
+  onChange: () => void;
+  label: string;
+  onLabel?: string;
+  offLabel?: string;
+}) {
+  return (
+    <div className="flex items-center gap-3">
+      <div className="text-xs font-semibold text-slate-700">{label}</div>
+      <button
+        type="button"
+        onClick={onChange}
+        aria-pressed={checked}
+        className={`flex h-[26px] w-[52px] items-center rounded-full border p-[2px] transition ${
+          checked ? "border-sky-500 bg-sky-500 justify-end" : "border-slate-300 bg-slate-400 justify-start"
+        }`}
+      >
+        <span className="h-[22px] w-[22px] rounded-full bg-white shadow-sm transition" />
+      </button>
+      <div className="text-[12px] font-medium text-slate-500">
+        {checked ? onLabel : offLabel}
       </div>
     </div>
   );

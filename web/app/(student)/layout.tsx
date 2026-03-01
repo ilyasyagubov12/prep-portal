@@ -138,11 +138,11 @@ export default function StudentLayout({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="min-h-screen md:flex">
+    <div className="min-h-screen lg:flex">
       {isMockExam ? null : <Sidebar mobileOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />}
       {!isMockExam && sidebarOpen ? (
         <div
-          className="fixed inset-0 bg-black/30 z-40 md:hidden"
+          className="fixed inset-0 bg-black/30 z-40 lg:hidden"
           onClick={() => setSidebarOpen(false)}
         />
       ) : null}
@@ -151,7 +151,7 @@ export default function StudentLayout({ children }: { children: ReactNode }) {
       </main>
       {/* Mobile bottom navigation */}
       {isMockExam ? null : (
-        <div className="fixed inset-x-0 bottom-0 z-40 md:hidden">
+        <div className="fixed inset-x-0 bottom-0 z-40 lg:hidden">
         <div className="mx-3 mb-3 rounded-2xl border border-slate-200 bg-white/95 px-2 py-2 shadow-[0_10px_30px_rgba(15,23,42,0.18)] backdrop-blur">
           <div className="grid grid-cols-5 items-center gap-1">
             <button

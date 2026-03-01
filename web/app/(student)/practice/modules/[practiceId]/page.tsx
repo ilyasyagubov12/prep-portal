@@ -145,7 +145,6 @@ export default function Page() {
   const search = useSearchParams();
   const practiceId = params.practiceId;
   const reviewAttemptParam = search.get("review_attempt");
-  const scoreDetailsParam = search.get("score_details");
 
   const examParam = (search.get("exam") || "").toLowerCase();
   const examLabel = examParam === "act" ? "ACT" : "SAT";
@@ -167,7 +166,6 @@ export default function Page() {
   const [mapOpen, setMapOpen] = useState(false);
   const [reviewMode, setReviewMode] = useState(false);
   const [resultsReview, setResultsReview] = useState(false);
-  const [showScoreDetails, setShowScoreDetails] = useState(false);
   const [reviewFlags, setReviewFlags] = useState<Record<string, boolean>>({});
   const [breakMode, setBreakMode] = useState(false);
   const [breakSeconds, setBreakSeconds] = useState(0);
@@ -311,7 +309,6 @@ export default function Page() {
       setCurrentModule(0);
       setCurrentQuestion(0);
       setResultsReview(true);
-      if (scoreDetailsParam) setShowScoreDetails(true);
       setReviewMode(false);
       setBreakMode(false);
       setTimeExpired(false);
@@ -865,27 +862,6 @@ export default function Page() {
     return { outcomes, correct, wrong, unanswered };
   }, [resultsReview, questions, answers]);
 
-  const scoreBreakdown = useMemo(() => {
-    const groups: Record<string, { correct: number; total: number }> = {};
-    for (const m of modules) {
-      for (const q of m.questions || []) {
-        const key = `${m.subject}:${q.subtopic || q.topic || "Uncategorized"}`;
-        if (!groups[key]) groups[key] = { correct: 0, total: 0 };
-        groups[key].total += 1;
-        const answer = answers[q.id];
-        let isCorrect = false;
-        if (q.is_open_ended) {
-          const expected = (q.correct_answer || "").trim().toLowerCase();
-        isCorrect = expected.length > 0 && String(answer || "").trim().toLowerCase() === expected;
-        } else {
-          const correctLabel = (q.choices || []).find((c) => c.is_correct)?.label;
-          isCorrect = !!correctLabel && answer === correctLabel;
-        }
-        if (isCorrect) groups[key].correct += 1;
-      }
-    }
-    return groups;
-  }, [modules, answers]);
 
   if (introMode) {
     return (
@@ -945,43 +921,7 @@ export default function Page() {
             {loading ? "Starting..." : "Start test"}
           </button>
           </div>
-          {showScoreDetails ? (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4">
-              <div className="w-full max-w-xl rounded-2xl bg-white p-5 shadow-xl">
-                <div className="flex items-center justify-between">
-                  <div className="text-sm font-semibold text-slate-900">Score details by chapter</div>
-                  <button
-                    className="text-xs font-semibold text-slate-500 hover:text-slate-700"
-                    onClick={() => setShowScoreDetails(false)}
-                    type="button"
-                  >
-                    Close
-                  </button>
-                </div>
-                <div className="mt-3 space-y-3 text-sm">
-                  {Object.entries(scoreBreakdown).length === 0 ? (
-                    <div className="text-slate-500">No data yet.</div>
-                  ) : (
-                    Object.entries(scoreBreakdown).map(([key, val]) => {
-                      const [subject, chapter] = key.split(":");
-                      const wrong = Math.max(0, val.total - val.correct);
-                      return (
-                        <div key={key} className="flex items-center justify-between rounded-lg border px-3 py-2">
-                          <div className="text-slate-700">
-                            <span className="font-semibold">{subject.toUpperCase()}</span> · {chapter}
-                          </div>
-                          <div className="text-slate-700">
-                            {val.correct}/{val.total} <span className="text-slate-400">({wrong} wrong)</span>
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-            </div>
-          ) : null}
-        </div>
+                  </div>
       );
     }
 
@@ -1190,10 +1130,17 @@ export default function Page() {
                 </button>
                 <button
                   className="rounded-lg border px-4 py-2 text-sm font-semibold text-slate-700"
-                  onClick={() => setShowScoreDetails(true)}
+                  onClick={() => {
+                    if (!attemptId) return;
+                    router.push(
+                      `/score-report?source=practice&practice_id=${encodeURIComponent(
+                        practiceId
+                      )}&attempt_id=${encodeURIComponent(attemptId)}`
+                    );
+                  }}
                   type="button"
                 >
-                  Score details
+                  View score report
                 </button>
               </div>
             ) : null}
@@ -1772,42 +1719,6 @@ export default function Page() {
           </div>
         </div>
       ) : null}
-      {showScoreDetails ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4">
-          <div className="w-full max-w-xl rounded-2xl bg-white p-5 shadow-xl">
-            <div className="flex items-center justify-between">
-              <div className="text-sm font-semibold text-slate-900">Score details by chapter</div>
-              <button
-                className="text-xs font-semibold text-slate-500 hover:text-slate-700"
-                onClick={() => setShowScoreDetails(false)}
-                type="button"
-              >
-                Close
-              </button>
-            </div>
-            <div className="mt-3 space-y-3 text-sm">
-              {Object.entries(scoreBreakdown).length === 0 ? (
-                <div className="text-slate-500">No data yet.</div>
-              ) : (
-                Object.entries(scoreBreakdown).map(([key, val]) => {
-                  const [subject, chapter] = key.split(":");
-                  const wrong = Math.max(0, val.total - val.correct);
-                  return (
-                    <div key={key} className="flex items-center justify-between rounded-lg border px-3 py-2">
-                      <div className="text-slate-700">
-                        <span className="font-semibold">{subject.toUpperCase()}</span> · {chapter}
-                      </div>
-                      <div className="text-slate-700">
-                        {val.correct}/{val.total} <span className="text-slate-400">({wrong} wrong)</span>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
           </div>
-        </div>
-      ) : null}
-    </div>
   );
 }

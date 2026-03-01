@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE;
@@ -33,6 +33,8 @@ type MockExam = {
   question_ids?: string[] | null;
   allowed_student_ids?: string[] | null;
   allowed_student_count?: number | null;
+  allowed_course_ids?: string[] | null;
+  allowed_course_count?: number | null;
   attempt?: {
     id: string;
     status: string;
@@ -53,6 +55,12 @@ type Student = {
   avatar?: string | null;
   attempts_count?: number | null;
   access_limit?: number | null;
+};
+
+type Course = {
+  id: string;
+  title: string;
+  slug?: string | null;
 };
 
 type AttemptReport = {
@@ -765,10 +773,38 @@ function MockExamAccessManager({
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [courseQuery, setCourseQuery] = useState("");
+  const [selectedCourseIds, setSelectedCourseIds] = useState<string[]>([]);
 
   useEffect(() => {
     setSelectedIds(exam.allowed_student_ids ?? []);
   }, [exam.allowed_student_ids]);
+
+  useEffect(() => {
+    setSelectedCourseIds(exam.allowed_course_ids ?? []);
+  }, [exam.allowed_course_ids]);
+
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/courses/`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const json = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(json?.error || "Failed to load courses");
+        const list = Array.isArray(json) ? json : json?.courses || [];
+        if (!cancelled) setCourses(list);
+      } catch {
+        if (!cancelled) setCourses([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
 
   useEffect(() => {
     if (!token) return;
@@ -850,6 +886,20 @@ function MockExamAccessManager({
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   }
 
+  const filteredCourses = useMemo(() => {
+    const q = courseQuery.trim().toLowerCase();
+    if (!q) return courses;
+    return courses.filter((c) => {
+      const title = (c.title || "").toLowerCase();
+      const slug = (c.slug || "").toLowerCase();
+      return title.includes(q) || slug.includes(q);
+    });
+  }, [courses, courseQuery]);
+
+  function toggleCourse(id: string) {
+    setSelectedCourseIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
+
   async function saveAccess() {
     if (!token) return;
     setLoading(true);
@@ -872,7 +922,12 @@ function MockExamAccessManager({
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ mock_exam_id: exam.id, student_ids: selectedIds, student_limits }),
+        body: JSON.stringify({
+          mock_exam_id: exam.id,
+          student_ids: selectedIds,
+          student_limits,
+          course_ids: selectedCourseIds,
+        }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || "Failed to save access");
@@ -889,7 +944,7 @@ function MockExamAccessManager({
     <div className="rounded-xl border border-slate-200 bg-white p-4">
       <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Access control</div>
       <div className="mt-2 text-xs text-slate-500">
-        Choose which students can take this mock. If none are selected, all students can access it.
+        Choose which students or course groups can take this mock. If none are selected, all students can access it.
       </div>
 
       {error ? <div className="mt-2 text-xs text-red-600">{error}</div> : null}
@@ -1000,6 +1055,72 @@ function MockExamAccessManager({
                 );
               })
             )}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 rounded-lg border bg-slate-50 p-3">
+        <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Course groups</div>
+        <div className="mt-1 text-xs text-slate-500">
+          Grant access to all students enrolled in selected courses.
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <input
+            className="min-w-[220px] flex-1 rounded-lg border px-3 py-2 text-xs"
+            placeholder="Filter courses by name or slug"
+            value={courseQuery}
+            onChange={(e) => setCourseQuery(e.target.value)}
+          />
+          <div className="text-[10px] text-slate-400">{filteredCourses.length} courses</div>
+        </div>
+
+        <div className="mt-3 grid gap-3 lg:grid-cols-2">
+          <div className="rounded-lg border border-slate-200 bg-white p-3">
+            <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Available courses</div>
+            <div className="mt-2 grid gap-2 max-h-[200px] overflow-y-auto">
+              {filteredCourses.length === 0 ? (
+                <div className="text-xs text-slate-500">No courses found.</div>
+              ) : (
+                filteredCourses.map((c) => {
+                  const picked = selectedCourseIds.includes(c.id);
+                  return (
+                    <button
+                      key={c.id}
+                      className={`rounded-lg border px-3 py-2 text-left text-xs ${
+                        picked ? "border-indigo-500 bg-indigo-50" : "border-slate-200"
+                      }`}
+                      type="button"
+                      onClick={() => toggleCourse(c.id)}
+                    >
+                      <div className="font-semibold text-slate-700">{c.title}</div>
+                      <div className="text-[10px] text-slate-400">{c.slug || c.id}</div>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-slate-200 bg-white p-3">
+            <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Selected courses</div>
+            <div className="mt-2 grid gap-2 max-h-[200px] overflow-y-auto">
+              {selectedCourseIds.length === 0 ? (
+                <div className="text-xs text-slate-500">No courses selected.</div>
+              ) : (
+                selectedCourseIds.map((id) => {
+                  const c = courses.find((course) => course.id === id);
+                  return (
+                    <div key={id} className="rounded-lg border border-slate-200 px-3 py-2 text-xs">
+                      <div className="font-semibold text-slate-700">{c?.title || id}</div>
+                      <div className="text-[10px] text-slate-400">{c?.slug || id}</div>
+                      <button className="mt-1 text-[10px] text-red-600" type="button" onClick={() => toggleCourse(id)}>
+                        Remove
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
           </div>
         </div>
       </div>

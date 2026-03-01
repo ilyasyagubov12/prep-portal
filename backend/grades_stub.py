@@ -2,6 +2,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.utils import timezone
+from django.contrib.auth import get_user_model
 from courses.models import Course, CourseTeacher, Enrollment
 from assignments.models import Assignment, Submission, Grade, OfflineUnit, OfflineGrade
 from mock_exams.models import MockExam, MockExamAttempt
@@ -131,7 +132,117 @@ def grades_me(request):
     return Response({"assignments": result, "offline_units": offline_rows})
 
 
-@api_view(["GET"])
+@api_view(["GET", "POST"])
 @permission_classes([IsAuthenticated])
 def grades_offline(request):
-    return Response({"units": []})
+    course_id = request.query_params.get("course_id") or request.data.get("course_id")
+    if not course_id:
+        return Response({"error": "course_id required"}, status=400)
+
+    try:
+        course = Course.objects.get(id=course_id)
+    except Course.DoesNotExist:
+        return Response({"error": "Course not found"}, status=404)
+
+    user = request.user
+    if not _is_teacher_or_admin(user, course):
+        return Response({"error": "Forbidden"}, status=403)
+
+    if request.method == "POST":
+        data = request.data or {}
+        student_id = data.get("student_id")
+        title = (data.get("title") or "Offline grade").strip()
+        score = data.get("score", None)
+        max_score = data.get("max_score", None)
+        feedback = data.get("feedback", None)
+
+        if not student_id:
+            return Response({"error": "student_id required"}, status=400)
+
+        User = get_user_model()
+        try:
+            student = User.objects.get(id=student_id)
+        except User.DoesNotExist:
+            return Response({"error": "Student not found"}, status=404)
+
+        unit = OfflineUnit.objects.filter(course=course, title=title).order_by("-created_at").first()
+        if not unit:
+            unit = OfflineUnit.objects.create(
+                course=course,
+                title=title,
+                max_score=max_score if max_score is not None else None,
+                created_by=user,
+            )
+        else:
+            if max_score is not None and unit.max_score != max_score:
+                unit.max_score = max_score
+                unit.save(update_fields=["max_score"])
+
+        grade, _ = OfflineGrade.objects.get_or_create(unit=unit, student=student)
+        grade.score = score
+        grade.feedback = feedback
+        grade.graded_at = timezone.now()
+        grade.save()
+
+        return Response(
+            {
+                "ok": True,
+                "grade": {
+                    "id": str(grade.id),
+                    "student_id": str(student.id),
+                    "title": unit.title,
+                    "max_score": unit.max_score,
+                    "score": grade.score,
+                    "feedback": grade.feedback,
+                    "graded_at": grade.graded_at,
+                },
+                "unit": {
+                    "id": str(unit.id),
+                    "title": unit.title,
+                    "max_score": unit.max_score,
+                    "publish_at": unit.publish_at,
+                    "created_at": unit.created_at,
+                },
+            }
+        )
+
+    units = OfflineUnit.objects.filter(course=course).order_by("-created_at")
+    unit_rows = [
+        {
+            "id": str(u.id),
+            "title": u.title,
+            "max_score": u.max_score,
+            "publish_at": u.publish_at,
+            "created_at": u.created_at,
+        }
+        for u in units
+    ]
+
+    enrollments = Enrollment.objects.filter(course=course).select_related("user", "user__profile")
+    students = []
+    for e in enrollments:
+        prof = getattr(e.user, "profile", None)
+        students.append(
+            {
+                "user_id": str(e.user.id),
+                "username": getattr(e.user, "username", None),
+                "nickname": getattr(prof, "nickname", None) if prof else None,
+            }
+        )
+
+    grades = OfflineGrade.objects.filter(unit__course=course).select_related("student", "unit")
+    grade_rows = []
+    for g in grades:
+        grade_rows.append(
+            {
+                "id": str(g.id),
+                "student_id": str(g.student_id),
+                "title": g.unit.title,
+                "max_score": g.unit.max_score,
+                "score": g.score,
+                "feedback": g.feedback,
+                "graded_at": g.graded_at,
+            }
+        )
+
+    return Response({"units": unit_rows, "students": students, "grades": grade_rows})

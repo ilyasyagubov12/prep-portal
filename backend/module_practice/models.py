@@ -19,6 +19,11 @@ class ModulePractice(models.Model):
     shuffle_choices = models.BooleanField(default=False)
     allow_retakes = models.BooleanField(default=True)
     retake_limit = models.IntegerField(null=True, blank=True)
+    allowed_courses = models.ManyToManyField(
+        "courses.Course",
+        blank=True,
+        related_name="module_practices_allowed",
+    )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,

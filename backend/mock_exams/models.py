@@ -25,6 +25,11 @@ class MockExam(models.Model):
     results_published = models.BooleanField(default=False)
     question_ids = models.JSONField(default=list)
     question_overrides = models.JSONField(default=dict, blank=True)
+    allowed_courses = models.ManyToManyField(
+        "courses.Course",
+        blank=True,
+        related_name="mock_exams_allowed",
+    )
     allowed_students = models.ManyToManyField(
         settings.AUTH_USER_MODEL,
         blank=True,

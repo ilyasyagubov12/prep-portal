@@ -108,11 +108,11 @@ export default function Sidebar({
 
   return (
     <aside
-      className={`z-50 w-[270px] shrink-0 border-r border-white/10 bg-gradient-to-b from-[#0b2f6b] via-[#0d47a1] to-[#2f78ff] text-[#eaf2ff] p-4 shadow-[2px_0_16px_rgba(0,0,0,0.18)] transition-transform duration-200
+      className={`z-50 w-[270px] shrink-0 border-r border-white/10 bg-gradient-to-b from-[#0b2f6b] via-[#0d47a1] to-[#2f78ff] text-[#eaf2ff] p-4 shadow-[2px_0_16px_rgba(0,0,0,0.18)] transition-transform duration-200 flex flex-col
         fixed inset-y-0 left-0 ${mobileOpen ? "translate-x-0" : "-translate-x-full"}
-        md:sticky md:top-0 md:h-screen md:translate-x-0`}
+        lg:sticky lg:top-0 lg:h-screen lg:translate-x-0`}
     >
-      <div className="mb-3 flex items-center justify-between md:hidden">
+      <div className="mb-3 flex items-center justify-between lg:hidden">
         <div className="text-sm font-semibold">Menu</div>
         <button
           className="h-8 w-8 rounded-full border border-white/20 text-white"
@@ -122,21 +122,22 @@ export default function Sidebar({
           X
         </button>
       </div>
-{/* Logo */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <Image
-          src="/Victory1.PNG"
-          alt="Victory College logo"
-          width={48}
-          height={48}
-          style={{ objectFit: "contain" }}
-          priority
-        />
-        <div>
-          <div style={{ fontWeight: 900, fontSize: 18, color: "#eaf2ff" }}>Victory College</div>
-          <div style={{ color: "#c8ddff", fontSize: 12 }}>Prep Platform</div>
+      <div className="flex-1 overflow-y-auto pr-1">
+        {/* Logo */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <Image
+            src="/Victory1.PNG"
+            alt="Victory College logo"
+            width={48}
+            height={48}
+            style={{ objectFit: "contain" }}
+            priority
+          />
+          <div>
+            <div style={{ fontWeight: 900, fontSize: 18, color: "#eaf2ff" }}>Victory College</div>
+            <div style={{ color: "#c8ddff", fontSize: 12 }}>Prep Platform</div>
+          </div>
         </div>
-      </div>
 
       {/* Profile */}
       <div
@@ -196,85 +197,63 @@ export default function Sidebar({
         </a>
       </div>
 
-      {/* Nav */}
-      <nav style={{ marginTop: 14, display: "grid", gap: 6 }}>
-        {items.map((item, i) => {
-          if ("section" in item) {
+        {/* Nav */}
+        <nav style={{ marginTop: 14, display: "grid", gap: 6 }}>
+          {items.map((item, i) => {
+            if ("section" in item) {
+              return (
+                <div
+                  key={`section-${i}`}
+                  style={{
+                    marginTop: 10,
+                    marginBottom: 4,
+                    fontSize: 12,
+                    color: "rgba(255,255,255,0.7)",
+                    textTransform: "uppercase",
+                    letterSpacing: 0.8,
+                  }}
+                >
+                  {item.section}
+                </div>
+              );
+            }
+
+            const active = pathname === item.href || pathname.startsWith(item.href + "/");
+            const Icon = item.icon;
+
             return (
-              <div
-                key={`section-${i}`}
+              <Link
+                key={item.href}
+                href={item.href}
                 style={{
-                  marginTop: 10,
-                  marginBottom: 4,
-                  fontSize: 12,
-                  color: "rgba(255,255,255,0.7)",
-                  textTransform: "uppercase",
-                  letterSpacing: 0.8,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  padding: "10px 10px",
+                  borderRadius: 10,
+                  textDecoration: "none",
+                  color: active ? "#0d47a1" : "#e8f0ff",
+                  background: active ? "#e0f2fe" : "rgba(255,255,255,0.06)",
+                  border: active ? "1px solid #b6e0ff" : "1px solid transparent",
+                  boxShadow: active ? "0 6px 14px rgba(0,0,0,0.2)" : "none",
                 }}
               >
-                {item.section}
-              </div>
+                <Icon size={18} />
+                <span style={{ fontWeight: active ? 700 : 500 }}>{item.label}</span>
+              </Link>
             );
-          }
-
-          const active = pathname === item.href || pathname.startsWith(item.href + "/");
-          const Icon = item.icon;
-
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-                padding: "10px 10px",
-                borderRadius: 10,
-                textDecoration: "none",
-                color: active ? "#0d47a1" : "#e8f0ff",
-                background: active ? "#e0f2fe" : "rgba(255,255,255,0.06)",
-                border: active ? "1px solid #b6e0ff" : "1px solid transparent",
-                boxShadow: active ? "0 6px 14px rgba(0,0,0,0.2)" : "none",
-              }}
-            >
-              <Icon size={18} />
-              <span style={{ fontWeight: active ? 700 : 500 }}>{item.label}</span>
-            </Link>
-          );
-        })}
-      </nav>
+          })}
+        </nav>
+      </div>
 
       {/* Logout */}
       <div
         style={{
-          position: "absolute",
-          bottom: 16,
-          left: 16,
-          right: 16,
           display: "grid",
           gap: 8,
+          marginTop: 12,
         }}
       >
-        {isStaff ? (
-          <Link
-            href="/practice/mock-exams"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              padding: 10,
-              borderRadius: 10,
-              textDecoration: "none",
-              border: "1px solid rgba(255,255,255,0.25)",
-              background: "rgba(255,255,255,0.08)",
-              color: "#eaf2ff",
-              fontWeight: 600,
-            }}
-          >
-            <Medal size={18} />
-            Mock Exams (Admin)
-          </Link>
-        ) : null}
         <button
           onClick={logout}
           style={{
