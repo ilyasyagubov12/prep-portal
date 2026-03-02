@@ -17,6 +17,29 @@ import {
   LogOut,
 } from "lucide-react";
 
+function resolveMediaUrl(raw: string | null | undefined) {
+  if (!raw) return "";
+  const trimmed = raw.trim();
+  const base = (process.env.NEXT_PUBLIC_API_BASE || "").replace(/\/$/, "");
+  const origin =
+    base || (typeof window !== "undefined" ? window.location.origin : "");
+  if (/^https?:\/\//i.test(trimmed)) {
+    if (origin) {
+      try {
+        const url = new URL(trimmed);
+        if (url.hostname === "127.0.0.1" || url.hostname === "localhost") {
+          return `${origin}${url.pathname}${url.search}${url.hash}`;
+        }
+      } catch {
+        return trimmed;
+      }
+    }
+    return trimmed;
+  }
+  if (!origin) return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  return trimmed.startsWith("/") ? `${origin}${trimmed}` : `${origin}/${trimmed}`;
+}
+
 type NavItem =
   | { section: string }
   | { label: string; href: string; icon: React.ComponentType<{ size?: number }> };
@@ -166,7 +189,7 @@ export default function Sidebar({
             {avatarUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={avatarUrl}
+                src={resolveMediaUrl(avatarUrl)}
                 alt="avatar"
                 style={{ width: "100%", height: "100%", objectFit: "cover" }}
               />

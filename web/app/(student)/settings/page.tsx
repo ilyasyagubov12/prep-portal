@@ -3,6 +3,29 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 
+function resolveMediaUrl(raw: string | null | undefined) {
+  if (!raw) return "";
+  const trimmed = raw.trim();
+  const base = (process.env.NEXT_PUBLIC_API_BASE || "").replace(/\/$/, "");
+  const origin =
+    base || (typeof window !== "undefined" ? window.location.origin : "");
+  if (/^https?:\/\//i.test(trimmed)) {
+    if (origin) {
+      try {
+        const url = new URL(trimmed);
+        if (url.hostname === "127.0.0.1" || url.hostname === "localhost") {
+          return `${origin}${url.pathname}${url.search}${url.hash}`;
+        }
+      } catch {
+        return trimmed;
+      }
+    }
+    return trimmed;
+  }
+  if (!origin) return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  return trimmed.startsWith("/") ? `${origin}${trimmed}` : `${origin}/${trimmed}`;
+}
+
 export default function SettingsPage() {
   const [loading, setLoading] = useState(false);
   const [nickname, setNickname] = useState("");
@@ -164,7 +187,7 @@ export default function SettingsPage() {
                 {avatarUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
-                    src={`${avatarUrl}?v=${avatarVersion}`}
+                    src={`${resolveMediaUrl(avatarUrl)}?v=${avatarVersion}`}
                     alt="avatar"
                     className="h-full w-full object-cover"
                   />
