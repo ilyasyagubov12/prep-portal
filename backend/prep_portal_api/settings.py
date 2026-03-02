@@ -17,10 +17,10 @@ from dotenv import load_dotenv
 from datetime import timedelta
 from corsheaders.defaults import default_headers
 
-load_dotenv()
-
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+# Always load the backend .env regardless of the working directory.
+load_dotenv(BASE_DIR / ".env")
 
 
 # Quick-start development settings - unsuitable for production
