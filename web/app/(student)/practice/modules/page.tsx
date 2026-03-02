@@ -197,6 +197,7 @@ export default function Page() {
 
   async function loadAttempts(practiceId: string) {
     if (!accessToken) return;
+    if (attemptsLoading[practiceId] || attemptsByPractice[practiceId]) return;
     setAttemptsLoading((prev) => ({ ...prev, [practiceId]: true }));
     setAttemptsError((prev) => ({ ...prev, [practiceId]: null }));
     try {
@@ -436,6 +437,15 @@ function ExamSection({
     });
   }, [manageId, canManage]);
 
+  useEffect(() => {
+    if (!accessToken || practices.length === 0) return;
+    practices.forEach((p) => {
+      if (!attemptsByPractice[p.id] && !attemptsLoading[p.id]) {
+        loadAttempts(p.id);
+      }
+    });
+  }, [accessToken, practices, attemptsByPractice, attemptsLoading, loadAttempts]);
+
   function toggleAttempts(practiceId: string) {
     const next = !attemptsOpen[practiceId];
     setAttemptsOpen((prev) => ({ ...prev, [practiceId]: next }));
@@ -461,6 +471,8 @@ function ExamSection({
         <div className="grid gap-5 lg:grid-cols-2">
           {practices.map((p) => {
             const activePanel = activePanels[p.id] ?? null;
+            const attemptsCount =
+              attemptsByPractice[p.id]?.length ?? (typeof p.attempts_count === "number" ? p.attempts_count : 0);
             return (
               <div
                 key={p.id}
@@ -505,7 +517,7 @@ function ExamSection({
                 >
                   {attemptsOpen[p.id] ? "Hide attempts" : "View my attempts"}
                   <span className="rounded-full bg-white px-2 py-0.5 text-[10px] text-slate-500">
-                    {(attemptsByPractice[p.id] || []).length}
+                    {attemptsLoading[p.id] ? "…" : attemptsCount}
                   </span>
                 </button>
                 {attemptsOpen[p.id] ? (
