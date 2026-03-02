@@ -75,6 +75,16 @@ function isTeacherOrAdmin(p: Profile | null) {
   return role === "teacher" || role === "admin" || !!p.is_admin;
 }
 
+function resolveMediaUrl(raw: string | null | undefined, base: string) {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) return trimmed;
+  const prefix = base ? base.replace(/\/$/, "") : "";
+  if (!prefix) return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  return trimmed.startsWith("/") ? `${prefix}${trimmed}` : `${prefix}/${trimmed}`;
+}
+
 /**
  * Visibility rule:
  * - visible if manual published OR publish_at time has passed
@@ -577,12 +587,12 @@ export default function CourseDetailPage() {
     }
     const base = process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") || "";
     if (course.cover_url) {
-      setCoverUrl(course.cover_url);
+      setCoverUrl(resolveMediaUrl(course.cover_url, base));
     } else if (course.cover_path) {
       if (course.cover_path.startsWith("http://") || course.cover_path.startsWith("https://")) {
         setCoverUrl(course.cover_path);
       } else {
-        setCoverUrl(`${base}/media/${course.cover_path}`);
+        setCoverUrl(resolveMediaUrl(`/media/${course.cover_path}`, base));
       }
     }
   }, [course?.cover_path]);
@@ -1314,7 +1324,10 @@ async function getSignedUrl(storage_path: string, storage_url?: string | null) {
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || "Cover upload failed");
 
-      if (json.cover_url) setCoverUrl(json.cover_url);
+      if (json.cover_url) {
+        const base = process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") || "";
+        setCoverUrl(resolveMediaUrl(json.cover_url, base));
+      }
       if (json.cover_path) {
         setCourse((prev) => (prev ? { ...prev, cover_path: json.cover_path } : prev));
       }

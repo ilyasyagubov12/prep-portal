@@ -12,6 +12,16 @@ type Course = {
   cover_url?: string | null; // optional absolute url from API
 };
 
+function resolveMediaUrl(raw: string | null | undefined, base: string) {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) return trimmed;
+  const prefix = base ? base.replace(/\/$/, "") : "";
+  if (!prefix) return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  return trimmed.startsWith("/") ? `${prefix}${trimmed}` : `${prefix}/${trimmed}`;
+}
+
 export default function CoursesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -55,11 +65,14 @@ export default function CoursesPage() {
       const mapped = (data || []).map((c) => ({
         ...c,
         cover_url:
-          c.cover_url ||
+          resolveMediaUrl(c.cover_url, base) ||
           (c.cover_path
-            ? c.cover_path.startsWith("http://") || c.cover_path.startsWith("https://")
-              ? c.cover_path
-              : `${base}/media/${c.cover_path}`
+            ? resolveMediaUrl(
+                c.cover_path.startsWith("http://") || c.cover_path.startsWith("https://")
+                  ? c.cover_path
+                  : `/media/${c.cover_path}`,
+                base
+              )
             : null),
       }));
       setCourses(mapped);
