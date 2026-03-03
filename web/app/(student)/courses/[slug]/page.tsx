@@ -104,12 +104,16 @@ function isVisible(node: CourseNode) {
   return t <= Date.now();
 }
 
-function guessPreviewType(path: string, mimeType?: string | null): "pdf" | "image" | "other" {
+function guessPreviewType(
+  path: string,
+  mimeType?: string | null
+): "pdf" | "image" | "video" | "other" {
   const mime = (mimeType || "").toLowerCase();
   if (mime === "application/pdf") return "pdf";
   if (mime.startsWith("image/")) return "image";
+  if (mime.startsWith("video/")) return "video";
   const p = path.toLowerCase();
-  if (p.endsWith(".pdf")) return "pdf";
+  if (p.endsWith(".pdf") || p.includes(".pdf?") || p.includes(".pdf#")) return "pdf";
   if (
     p.endsWith(".png") ||
     p.endsWith(".jpg") ||
@@ -118,6 +122,20 @@ function guessPreviewType(path: string, mimeType?: string | null): "pdf" | "imag
     p.endsWith(".gif")
   ) {
     return "image";
+  }
+  if (
+    p.endsWith(".mp4") ||
+    p.endsWith(".webm") ||
+    p.endsWith(".ogg") ||
+    p.endsWith(".mov") ||
+    p.endsWith(".m4v") ||
+    p.includes(".mp4?") ||
+    p.includes(".webm?") ||
+    p.includes(".ogg?") ||
+    p.includes(".mov?") ||
+    p.includes(".m4v?")
+  ) {
+    return "video";
   }
   return "other";
 }
@@ -381,7 +399,7 @@ export default function CourseDetailPage() {
 
   // Preview
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [previewType, setPreviewType] = useState<"pdf" | "image" | "other" | null>(null);
+  const [previewType, setPreviewType] = useState<"pdf" | "image" | "video" | "other" | null>(null);
   const [previewTitle, setPreviewTitle] = useState<string | null>(null);
   const [previewNodeId, setPreviewNodeId] = useState<string | null>(null);
 
@@ -881,7 +899,8 @@ async function getSignedUrl(storage_path: string, storage_url?: string | null) {
     if (!node.storage_path) return;
     try {
       const url = await getSignedUrl(node.storage_path, (node as any).storage_url);
-      const t = guessPreviewType(node.storage_path, node.mime_type);
+      const hint = node.mime_type ? node.storage_path : url || node.storage_path;
+      const t = guessPreviewType(hint, node.mime_type);
       setPreviewType(t);
       setPreviewUrl(url);
       setPreviewTitle(node.name);
@@ -1852,9 +1871,11 @@ async function getSignedUrl(storage_path: string, storage_url?: string | null) {
                             <button className="px-3 py-2 text-sm rounded border bg-white" onClick={() => onPreview(n)} type="button" disabled={!canManage && !visible}>
                               Preview
                             </button>
-                            <button className="px-3 py-2 text-sm rounded border bg-white" onClick={() => onDownload(n)} type="button" disabled={!canManage && !visible}>
-                              Download
-                            </button>
+                            {!(guessPreviewType(n.storage_path || "", n.mime_type) === "video" && !canManage) ? (
+                              <button className="px-3 py-2 text-sm rounded border bg-white" onClick={() => onDownload(n)} type="button" disabled={!canManage && !visible}>
+                                Download
+                              </button>
+                            ) : null}
                             {canManage ? (
                               <>
                                 <button className="px-3 py-2 text-sm rounded border bg-white" onClick={() => togglePublished(n)} type="button">
@@ -1882,13 +1903,15 @@ async function getSignedUrl(storage_path: string, storage_url?: string | null) {
                               Preview{previewTitle ? `: ${previewTitle}` : ""}
                             </div>
                             <div className="flex items-center gap-2">
-                              <button
-                                className="text-sm text-sky-700 underline"
-                                type="button"
-                                onClick={() => previewUrl && window.open(previewUrl, "_blank")}
-                              >
-                                Open in new tab
-                              </button>
+                              {previewType !== "video" || canManage ? (
+                                <button
+                                  className="text-sm text-sky-700 underline"
+                                  type="button"
+                                  onClick={() => previewUrl && window.open(previewUrl, "_blank")}
+                                >
+                                  Open in new tab
+                                </button>
+                              ) : null}
                               <button className="text-sm text-slate-600 underline" onClick={closePreview} type="button">
                                 Close
                               </button>
@@ -1899,6 +1922,17 @@ async function getSignedUrl(storage_path: string, storage_url?: string | null) {
                           ) : previewType === "image" ? (
                             // eslint-disable-next-line @next/next/no-img-element
                             <img src={previewUrl} alt="preview" className="max-w-full rounded border" />
+                          ) : previewType === "video" ? (
+                            <video
+                              src={previewUrl}
+                              className="w-full max-h-[60vh] rounded border bg-black"
+                              controls
+                              controlsList="nodownload noremoteplayback"
+                              disablePictureInPicture
+                              playsInline
+                              preload="metadata"
+                              onContextMenu={(e) => e.preventDefault()}
+                            />
                           ) : (
                             <div className="text-sm text-slate-600">
                               Preview not available for this file type. Use the buttons above to view or download.

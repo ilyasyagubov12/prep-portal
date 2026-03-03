@@ -33,6 +33,9 @@ SECRET_KEY = os.getenv("SECRET_KEY")
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv("DEBUG", "True") == "True"
 
+# Allow configuring iframe embedding (e.g., PDF previews in dev).
+X_FRAME_OPTIONS = os.getenv("X_FRAME_OPTIONS", "SAMEORIGIN")
+
 ALLOWED_HOSTS = [
     h.strip()
     for h in os.getenv(
