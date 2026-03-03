@@ -544,7 +544,12 @@ class CourseNodeDeleteView(APIView):
         while to_visit:
             current = to_visit.pop()
             if current.kind == "file" and current.storage_path:
-                _delete_cloudinary_asset(current.storage_path, current.mime_type)
+                deleted_cloud = _delete_cloudinary_asset(current.storage_path, current.mime_type)
+                if not deleted_cloud:
+                    try:
+                        default_storage.delete(current.storage_path)
+                    except Exception:
+                        pass
             if current.kind == "quiz" and current.quiz_id:
                 try:
                     from mock_exams.models import MockExam
