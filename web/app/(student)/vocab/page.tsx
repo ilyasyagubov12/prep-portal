@@ -509,19 +509,31 @@ export default function Page() {
                   </div>
                 </div>
 
+                {(() => {
+                  const shownText = detailRevealed ? selectedWord.definition : selectedWord.term;
+                  const isLong = shownText.length > 140;
+                  return (
                 <button
-                  className="flex h-[360px] w-full items-center justify-center rounded-2xl border border-slate-200 bg-white text-center shadow-sm"
+                  className={`flex h-[360px] w-full rounded-2xl border border-slate-200 bg-white shadow-sm ${
+                    isLong ? "items-start text-left" : "items-center justify-center text-center"
+                  }`}
                   onClick={() => setDetailRevealed((v) => !v)}
                 >
-                  <div>
-                    <div className="text-4xl font-semibold">
-                      {detailRevealed ? selectedWord.definition : selectedWord.term}
+                  <div className={`w-full ${isLong ? "max-h-[250px] overflow-auto pr-2" : ""}`}>
+                    <div
+                      className={`${
+                        isLong ? "text-xl sm:text-2xl leading-relaxed whitespace-pre-wrap" : "text-4xl font-semibold"
+                      }`}
+                    >
+                      {shownText}
                     </div>
-                    <div className="mt-2 text-sm text-slate-500">
+                    <div className={`mt-2 text-sm text-slate-500 ${isLong ? "" : ""}`}>
                       {detailRevealed ? "Tap to hide definition" : "Tap to reveal definition"}
                     </div>
                   </div>
                 </button>
+                  );
+                })()}
 
                 <div className="flex items-center justify-between">
                   <button
