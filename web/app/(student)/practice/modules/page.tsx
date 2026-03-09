@@ -89,6 +89,7 @@ type Practice = {
   allowed_course_count?: number | null;
   modules: PracticeModule[];
   attempt?: PracticeAttempt | null;
+  attempts_count?: number | null;
 };
 
 type Student = {
@@ -1534,7 +1535,11 @@ function ModuleEditor({
   const requiredCount = getRequiredCount(module);
   const remaining = Math.max(requiredCount - moduleQuestions.length, 0);
   const canStart = remaining === 0;
-  const createQuestionUrl = `/practice/modules/${practiceId}/questions/new/${module.subject}?module=${module.module_index}`;
+  const returnTo =
+    typeof window !== "undefined" ? `${window.location.pathname}${window.location.search}` : "";
+  const createQuestionUrl = `/practice/modules/${practiceId}/questions/new/${module.subject}?module=${
+    module.module_index
+  }${returnTo ? `&return=${encodeURIComponent(returnTo)}` : ""}`;
   const subjectLabel = formatModuleLabel(module);
 
   async function fetchQuestions(activeToken: string) {
@@ -1925,7 +1930,14 @@ function ModuleEditor({
                     </button>
                     <button
                       className="text-[11px] font-semibold text-slate-600"
-                      onClick={() => window.open(`/practice/modules/${practiceId}/questions/${q.id}/edit`, "_blank")}
+                      onClick={() => {
+                        const editReturn =
+                          typeof window !== "undefined"
+                            ? `${window.location.pathname}${window.location.search}`
+                            : "";
+                        const suffix = editReturn ? `?return=${encodeURIComponent(editReturn)}` : "";
+                        window.open(`/practice/modules/${practiceId}/questions/${q.id}/edit${suffix}`, "_blank");
+                      }}
                     >
                       Edit
                     </button>

@@ -156,6 +156,7 @@ class AdminCreateUserView(APIView):
         username = (request.data.get("username") or "").strip().lower()
         password = request.data.get("password") or ""
         nickname = (request.data.get("nickname") or "").strip() or None
+        tag = (request.data.get("tag") or "").strip() or None
         role = (request.data.get("role") or "student").lower()
         if not username or not password:
             return Response({"error": "username and password required"}, status=400)
@@ -166,6 +167,7 @@ class AdminCreateUserView(APIView):
         profile = user.profile
         profile.role = role
         profile.nickname = nickname
+        profile.tag = tag
         profile.is_admin = role == "admin"
         profile.save()
         return Response(
@@ -186,21 +188,32 @@ class AdminSearchUsersView(APIView):
 
         q = (request.data.get("q") or "").strip().lower()
         role = (request.data.get("role") or "").lower()
+        tag = (request.data.get("tag") or "").strip()
         limit = int(request.data.get("limit") or 20)
 
         qs = Profile.objects.select_related("user")
         if role:
             qs = qs.filter(role=role)
+        if tag:
+            qs = qs.filter(tag__iexact=tag)
         if q:
             qs = qs.filter(
                 models.Q(nickname__icontains=q)
+                | models.Q(tag__icontains=q)
                 | models.Q(user__username__icontains=q)
                 | models.Q(user__first_name__icontains=q)
                 | models.Q(user__last_name__icontains=q)
                 | models.Q(student_id__icontains=q)
             )
 
-        qs = qs.order_by("nickname")[: max(1, min(limit, 100))]
+        qs = qs.order_by("tag", "nickname", "user__username")[: max(1, min(limit, 100))]
+        tags = list(
+            Profile.objects.exclude(tag__isnull=True)
+            .exclude(tag__exact="")
+            .order_by("tag")
+            .values_list("tag", flat=True)
+            .distinct()
+        )
         data = []
         for p in qs:
             base = get_streak_base(p.user)
@@ -213,6 +226,7 @@ class AdminSearchUsersView(APIView):
                     "first_name": p.user.first_name,
                     "last_name": p.user.last_name,
                     "nickname": p.nickname,
+                    "tag": p.tag,
                     "student_id": p.student_id,
                     "role": p.role,
                     "is_admin": p.is_admin,
@@ -225,7 +239,7 @@ class AdminSearchUsersView(APIView):
                     "avatar": p.avatar,
                 }
             )
-        return Response({"ok": True, "users": data})
+        return Response({"ok": True, "users": data, "tags": tags})
 
 
 class AdminUpdateUserView(APIView):
@@ -279,6 +293,10 @@ class AdminUpdateUserView(APIView):
         nickname = request.data.get("nickname")
         if nickname is not None:
             profile.nickname = str(nickname).strip() or None
+
+        tag = request.data.get("tag")
+        if tag is not None:
+            profile.tag = str(tag).strip() or None
 
         student_id = request.data.get("student_id")
         if student_id is not None:

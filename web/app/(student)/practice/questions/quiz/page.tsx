@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { typesetMath } from "@/lib/mathjax";
 
 type QuizQuestion = {
@@ -51,9 +51,11 @@ function formatTime(seconds: number) {
 export default function Page() {
   const search = useSearchParams();
   const router = useRouter();
+  const pathname = usePathname();
   const subject = (search.get("subject") || "").toLowerCase() as "math" | "verbal";
   const topic = search.get("topic") || "";
   const subtopic = search.get("subtopic") || "";
+  const returnTo = `${pathname}${search.toString() ? `?${search.toString()}` : ""}`;
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -192,7 +194,11 @@ export default function Page() {
             {isStaff && currentQ ? (
               <button
                 className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold tracking-normal text-slate-700 hover:bg-slate-50"
-                onClick={() => router.push(`/practice/questions/edit/${currentQ.id}`)}
+                onClick={() =>
+                  router.push(
+                    `/practice/questions/edit/${currentQ.id}?return=${encodeURIComponent(returnTo)}`
+                  )
+                }
               >
                 Edit question
               </button>

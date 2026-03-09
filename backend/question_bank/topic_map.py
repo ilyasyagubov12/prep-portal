@@ -36,7 +36,6 @@ MATH_GROUPS = [
             "Lines, angles, and triangles",
             "Right triangles and trigonometry",
             "Circles",
-            "Geometry and trigonometry (mixed)",
         ],
     },
 ]

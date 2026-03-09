@@ -25,6 +25,7 @@ class Profile(models.Model):
 
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="profile")
     nickname = models.CharField(max_length=120, blank=True, null=True)
+    tag = models.CharField(max_length=120, blank=True, null=True)
     student_id = models.CharField(max_length=64, blank=True, null=True)
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default="student")
     is_admin = models.BooleanField(default=False)

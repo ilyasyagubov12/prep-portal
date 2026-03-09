@@ -80,7 +80,6 @@ export const mathGroups: TopicGroup[] = [
       { title: "Lines, angles, and triangles", count: 0 },
       { title: "Right triangles and trigonometry", count: 0 },
       { title: "Circles", count: 0 },
-      { title: "Geometry and trigonometry (mixed)", count: 0 },
     ],
   },
 ];

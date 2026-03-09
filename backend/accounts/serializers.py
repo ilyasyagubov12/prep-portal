@@ -49,6 +49,7 @@ class ProfileSerializer(serializers.ModelSerializer):
         fields = [
             "user",
             "nickname",
+            "tag",
             "student_id",
             "role",
             "is_admin",

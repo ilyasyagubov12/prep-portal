@@ -1,11 +1,18 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { subjects } from "@/lib/questionBank/topics";
 import { typesetMath } from "@/lib/mathjax";
 
-type Choice = { label: string; content: string; is_correct: boolean };
+type Choice = {
+  label: string;
+  content: string;
+  is_correct: boolean;
+  image_url?: string | null;
+  image_file?: File | null;
+  image_preview?: string | null;
+};
 
 function splitTopicTag(tag: string) {
   const raw = (tag || "").trim();
@@ -25,6 +32,7 @@ export default function EditModulePracticeQuestionPage() {
   const params = useParams<{ questionId: string; practiceId: string }>();
   const questionId = params.questionId;
   const router = useRouter();
+  const search = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -110,11 +118,22 @@ export default function EditModulePracticeQuestionPage() {
         setImageUrl(q.image_url ?? null);
         setIsOpenEnded(!!q.is_open_ended);
         setCorrectAnswer(q.correct_answer ?? "");
+        const mappedChoices: Choice[] =
+          (q.choices as Choice[])?.map((choice: any) => ({
+            label: choice.label,
+            content: choice.content ?? "",
+            is_correct: !!choice.is_correct,
+            image_url: choice.image_url ?? null,
+            image_preview: choice.image_url ?? null,
+            image_file: null,
+          })) ?? [];
         setChoices(
-          (q.choices as Choice[]) ?? [
-            { label: "A", content: "", is_correct: true },
-            { label: "B", content: "", is_correct: false },
-          ]
+          mappedChoices.length
+            ? mappedChoices
+            : [
+                { label: "A", content: "", is_correct: true, image_url: null, image_preview: null, image_file: null },
+                { label: "B", content: "", is_correct: false, image_url: null, image_preview: null, image_file: null },
+              ]
         );
       } catch (e: any) {
         setError(e?.message ?? "Failed to load");
@@ -178,21 +197,23 @@ export default function EditModulePracticeQuestionPage() {
     return trimmed;
   }
 
-  async function uploadImage(access: string) {
-    if (!imageFile) return imageUrl;
-    setUploading(true);
+  async function uploadFile(access: string, file: File) {
     const fd = new FormData();
-    fd.append("file", imageFile);
+    fd.append("file", file);
     const uploadRes = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/questions/upload/`, {
       method: "POST",
       headers: { Authorization: `Bearer ${access}` },
       body: fd,
     }).catch(() => null);
-    setUploading(false);
     if (!uploadRes) throw new Error("Could not upload image");
     const uploadJson = await uploadRes.json();
     if (!uploadRes.ok) throw new Error(uploadJson?.error || "Image upload failed");
     return uploadJson.url || uploadJson.path;
+  }
+
+  async function uploadImage(access: string) {
+    if (!imageFile) return imageUrl;
+    return uploadFile(access, imageFile);
   }
 
   async function save() {
@@ -205,7 +226,22 @@ export default function EditModulePracticeQuestionPage() {
       return;
     }
     try {
+      setUploading(true);
       const uploadedUrl = await uploadImage(access);
+      const nextChoices = isOpenEnded
+        ? []
+        : await Promise.all(
+            choices.map(async (choice) => {
+              const nextImage =
+                choice.image_file != null ? await uploadFile(access, choice.image_file) : choice.image_url ?? null;
+              return {
+                label: choice.label,
+                content: choice.content,
+                is_correct: choice.is_correct,
+                image_url: nextImage || null,
+              };
+            })
+          );
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/module-practice/questions/update/`, {
         method: "POST",
         headers: {
@@ -222,15 +258,18 @@ export default function EditModulePracticeQuestionPage() {
           image_url: uploadedUrl || null,
           is_open_ended: isOpenEnded,
           correct_answer: isOpenEnded ? correctAnswer.trim() || null : null,
-          choices: isOpenEnded ? [] : choices,
+          choices: nextChoices,
         }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || "Save failed");
-      router.push("/practice/modules");
+      const returnTo = search.get("return");
+      const safeReturn = returnTo && returnTo.startsWith("/") ? returnTo : "/practice/modules";
+      router.push(safeReturn);
     } catch (e: any) {
       setError(e?.message ?? "Save failed");
     } finally {
+      setUploading(false);
       setSaving(false);
     }
   }
@@ -245,7 +284,37 @@ export default function EditModulePracticeQuestionPage() {
 
   function addChoice() {
     const label = String.fromCharCode(65 + choices.length);
-    setChoices((prev) => [...prev, { label, content: "", is_correct: false }]);
+    setChoices((prev) => [
+      ...prev,
+      { label, content: "", is_correct: false, image_url: null, image_preview: null, image_file: null },
+    ]);
+  }
+
+  function updateChoiceImage(idx: number, file: File | null) {
+    setChoices((prev) => {
+      const next = [...prev];
+      const current = next[idx];
+      if (!current) return prev;
+      if (current.image_preview && current.image_preview.startsWith("blob:")) {
+        URL.revokeObjectURL(current.image_preview);
+      }
+      const preview = file ? URL.createObjectURL(file) : current.image_url ?? null;
+      next[idx] = { ...current, image_file: file, image_preview: preview };
+      return next;
+    });
+  }
+
+  function clearChoiceImage(idx: number) {
+    setChoices((prev) => {
+      const next = [...prev];
+      const current = next[idx];
+      if (!current) return prev;
+      if (current.image_preview && current.image_preview.startsWith("blob:")) {
+        URL.revokeObjectURL(current.image_preview);
+      }
+      next[idx] = { ...current, image_file: null, image_preview: null, image_url: null };
+      return next;
+    });
   }
 
   if (loading) return <div className="p-6 text-sm text-neutral-600">Loading...</div>;
@@ -457,18 +526,48 @@ export default function EditModulePracticeQuestionPage() {
                   {choices.map((c, idx) => (
                     <div
                       key={c.label}
-                      className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2"
+                      className="flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3"
                     >
                       <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-sm font-semibold text-slate-700">
                         {c.label}
                       </div>
-                      <input
-                        value={c.content}
-                        onChange={(e) => updateChoice(idx, { content: e.target.value })}
-                        className="flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
-                        placeholder={`Choice ${c.label}`}
-                      />
-                      <label className="flex items-center gap-1 text-xs font-semibold text-slate-600">
+                      <div className="flex-1 space-y-2">
+                        <input
+                          value={c.content}
+                          onChange={(e) => updateChoice(idx, { content: e.target.value })}
+                          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+                          placeholder={`Choice ${c.label}`}
+                        />
+                        <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
+                          <label className="inline-flex items-center gap-2 font-semibold text-slate-600">
+                            <span>Image</span>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={(e) => updateChoiceImage(idx, e.target.files?.[0] ?? null)}
+                              className="text-xs"
+                            />
+                          </label>
+                          {c.image_preview ? (
+                            <div className="flex items-center gap-2">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={c.image_preview}
+                                alt={`Choice ${c.label}`}
+                                className="h-12 w-20 rounded-md border border-slate-200 object-contain bg-white"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => clearChoiceImage(idx)}
+                                className="rounded-full border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-600"
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                      <label className="mt-1 flex items-center gap-1 text-xs font-semibold text-slate-600">
                         <input
                           type="radio"
                           name="correct"

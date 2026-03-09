@@ -43,12 +43,24 @@ def _serialize_question_for_student(q: ModulePracticeQuestion, choice_order: lis
             for idx, raw_idx in enumerate(ordered):
                 c = raw_choices[raw_idx]
                 label = chr(65 + idx)
-                choices.append({"label": label, "content": c.get("content")})
+                choices.append(
+                    {
+                        "label": label,
+                        "content": c.get("content"),
+                        "image_url": c.get("image_url"),
+                    }
+                )
             for raw_idx, c in enumerate(raw_choices):
                 if raw_idx in used:
                     continue
                 label = chr(65 + len(choices))
-                choices.append({"label": label, "content": c.get("content")})
+                choices.append(
+                    {
+                        "label": label,
+                        "content": c.get("content"),
+                        "image_url": c.get("image_url"),
+                    }
+                )
         else:
             by_label = {c.get("label"): c for c in raw_choices if c.get("label")}
             used = set()
@@ -57,17 +69,35 @@ def _serialize_question_for_student(q: ModulePracticeQuestion, choice_order: lis
                 if not c:
                     continue
                 fallback = chr(65 + idx)
-                choices.append({"label": c.get("label") or fallback, "content": c.get("content")})
+                choices.append(
+                    {
+                        "label": c.get("label") or fallback,
+                        "content": c.get("content"),
+                        "image_url": c.get("image_url"),
+                    }
+                )
                 used.add(label)
             for idx, c in enumerate(raw_choices):
                 label = c.get("label") or chr(65 + len(choices))
                 if c.get("label") and c.get("label") in used:
                     continue
-                choices.append({"label": label, "content": c.get("content")})
+                choices.append(
+                    {
+                        "label": label,
+                        "content": c.get("content"),
+                        "image_url": c.get("image_url"),
+                    }
+                )
     else:
         for idx, c in enumerate(raw_choices):
             label = c.get("label") or chr(65 + idx)
-            choices.append({"label": label, "content": c.get("content")})
+            choices.append(
+                {
+                    "label": label,
+                    "content": c.get("content"),
+                    "image_url": c.get("image_url"),
+                }
+            )
     return {
         "id": str(q.id),
         "subject": q.subject,
@@ -98,6 +128,7 @@ def _serialize_question_for_review(q: ModulePracticeQuestion, choice_order: list
                         "label": label,
                         "content": c.get("content"),
                         "is_correct": bool(c.get("is_correct")),
+                        "image_url": c.get("image_url"),
                     }
                 )
             for raw_idx, c in enumerate(raw_choices):
@@ -109,6 +140,7 @@ def _serialize_question_for_review(q: ModulePracticeQuestion, choice_order: list
                         "label": label,
                         "content": c.get("content"),
                         "is_correct": bool(c.get("is_correct")),
+                        "image_url": c.get("image_url"),
                     }
                 )
         else:
@@ -124,6 +156,7 @@ def _serialize_question_for_review(q: ModulePracticeQuestion, choice_order: list
                         "label": c.get("label") or fallback,
                         "content": c.get("content"),
                         "is_correct": bool(c.get("is_correct")),
+                        "image_url": c.get("image_url"),
                     }
                 )
                 used.add(label)
@@ -136,6 +169,7 @@ def _serialize_question_for_review(q: ModulePracticeQuestion, choice_order: list
                         "label": label or chr(65 + len(choices)),
                         "content": c.get("content"),
                         "is_correct": bool(c.get("is_correct")),
+                        "image_url": c.get("image_url"),
                     }
                 )
     else:
@@ -145,6 +179,7 @@ def _serialize_question_for_review(q: ModulePracticeQuestion, choice_order: list
                     "label": c.get("label") or chr(65 + idx),
                     "content": c.get("content"),
                     "is_correct": bool(c.get("is_correct")),
+                    "image_url": c.get("image_url"),
                 }
             )
     return {

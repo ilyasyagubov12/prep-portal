@@ -5,7 +5,14 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { subjects } from "@/lib/questionBank/topics";
 import { typesetMath } from "@/lib/mathjax";
 
-type Choice = { label: string; content: string; is_correct: boolean };
+type Choice = {
+  label: string;
+  content: string;
+  is_correct: boolean;
+  image_url?: string | null;
+  image_file?: File | null;
+  image_preview?: string | null;
+};
 
 function isStaff(role?: string | null, is_admin?: boolean | null) {
   const r = (role ?? "").toLowerCase();
@@ -44,10 +51,10 @@ export default function NewModulePracticeQuestionPage() {
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [choices, setChoices] = useState<Choice[]>([
-    { label: "A", content: "", is_correct: true },
-    { label: "B", content: "", is_correct: false },
-    { label: "C", content: "", is_correct: false },
-    { label: "D", content: "", is_correct: false },
+    { label: "A", content: "", is_correct: true, image_url: null, image_preview: null, image_file: null },
+    { label: "B", content: "", is_correct: false, image_url: null, image_preview: null, image_file: null },
+    { label: "C", content: "", is_correct: false, image_url: null, image_preview: null, image_file: null },
+    { label: "D", content: "", is_correct: false, image_url: null, image_preview: null, image_file: null },
   ]);
   const [loading, setLoading] = useState(true);
   const [isStaffUser, setIsStaffUser] = useState(false);
@@ -117,6 +124,47 @@ export default function NewModulePracticeQuestionPage() {
     if (subject != "math") typesetMath(passagePreviewRef.current);
   }, [passage, subject]);
 
+  async function uploadFile(access: string, file: File) {
+    const fd = new FormData();
+    fd.append("file", file);
+    const uploadRes = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/questions/upload/`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${access}` },
+      body: fd,
+    }).catch(() => null);
+    if (!uploadRes) throw new Error("Could not upload image");
+    const uploadJson = await uploadRes.json();
+    if (!uploadRes.ok) throw new Error(uploadJson?.error || "Image upload failed");
+    return uploadJson.url || uploadJson.path;
+  }
+
+  function updateChoiceImage(idx: number, file: File | null) {
+    setChoices((prev) => {
+      const next = [...prev];
+      const current = next[idx];
+      if (!current) return prev;
+      if (current.image_preview && current.image_preview.startsWith("blob:")) {
+        URL.revokeObjectURL(current.image_preview);
+      }
+      const preview = file ? URL.createObjectURL(file) : current.image_url ?? null;
+      next[idx] = { ...current, image_file: file, image_preview: preview };
+      return next;
+    });
+  }
+
+  function clearChoiceImage(idx: number) {
+    setChoices((prev) => {
+      const next = [...prev];
+      const current = next[idx];
+      if (!current) return prev;
+      if (current.image_preview && current.image_preview.startsWith("blob:")) {
+        URL.revokeObjectURL(current.image_preview);
+      }
+      next[idx] = { ...current, image_file: null, image_preview: null, image_url: null };
+      return next;
+    });
+  }
+
   async function handleSubmit() {
     setError(null);
     if (!isStaffUser) {
@@ -137,57 +185,60 @@ export default function NewModulePracticeQuestionPage() {
     if (!token) return setError("Missing session");
 
     let imageUrl: string | null = null;
-    if (imageFile) {
+    try {
       setUploading(true);
-      const fd = new FormData();
-      fd.append("file", imageFile);
-      const uploadRes = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/questions/upload/`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-        body: fd,
-      }).catch(() => null);
-      setUploading(false);
-      if (!uploadRes) {
-        setError("Could not upload image");
-        return;
+      if (imageFile) {
+        imageUrl = await uploadFile(token, imageFile);
       }
-      const uploadJson = await uploadRes.json();
-      if (!uploadRes.ok) {
-        setError(uploadJson?.error || "Image upload failed");
-        return;
-      }
-      imageUrl = uploadJson.url || uploadJson.path;
-    }
+      const preparedChoices = isOpenEnded
+        ? []
+        : await Promise.all(
+            choices.map(async (choice) => {
+              const nextImage =
+                choice.image_file != null ? await uploadFile(token, choice.image_file) : choice.image_url ?? null;
+              return {
+                label: choice.label,
+                content: choice.content,
+                is_correct: choice.is_correct,
+                image_url: nextImage || null,
+              };
+            })
+          );
 
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/module-practice/questions/create/`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        practice_id: practiceId,
-        subject,
-        module_index: moduleIndex,
-        topic_tag: buildTopicTag(topic, subtopic),
-        question_text: stem,
-        passage: passage || null,
-        explanation: explanation || null,
-        difficulty: difficulty || null,
-        image_url: imageUrl,
-        is_open_ended: isOpenEnded,
-        correct_answer: isOpenEnded ? correctAnswer.trim() || null : null,
-        choices: isOpenEnded
-          ? []
-          : choices.map((c) => ({ label: c.label, content: c.content, is_correct: c.is_correct })),
-      }),
-    });
-    const json = await res.json();
-    if (!res.ok) {
-      setError(json?.error || "Failed to save");
-      return;
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/module-practice/questions/create/`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          practice_id: practiceId,
+          subject,
+          module_index: moduleIndex,
+          topic_tag: buildTopicTag(topic, subtopic),
+          question_text: stem,
+          passage: passage || null,
+          explanation: explanation || null,
+          difficulty: difficulty || null,
+          image_url: imageUrl,
+          is_open_ended: isOpenEnded,
+          correct_answer: isOpenEnded ? correctAnswer.trim() || null : null,
+          choices: preparedChoices,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setError(json?.error || "Failed to save");
+        return;
+      }
+      const returnTo = search.get("return");
+      const safeReturn = returnTo && returnTo.startsWith("/") ? returnTo : "/practice/modules";
+      router.push(safeReturn);
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to save");
+    } finally {
+      setUploading(false);
     }
-    router.push("/practice/modules");
   }
 
   function formatText(target: "stem" | "passage", kind: "bold" | "italic" | "underline" | "highlight") {
@@ -441,24 +492,54 @@ export default function NewModulePracticeQuestionPage() {
                   {choices.map((c, idx) => (
                     <div
                       key={c.label}
-                      className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2"
+                      className="flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3"
                     >
                       <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-sm font-semibold text-slate-700">
                         {c.label}
                       </div>
-                      <input
-                        value={c.content}
-                        onChange={(e) =>
-                          setChoices((prev) => {
-                            const next = [...prev];
-                            next[idx] = { ...next[idx], content: e.target.value };
-                            return next;
-                          })
-                        }
-                        className="flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
-                        placeholder={`Choice ${c.label}`}
-                      />
-                      <label className="flex items-center gap-1 text-xs font-semibold text-slate-600">
+                      <div className="flex-1 space-y-2">
+                        <input
+                          value={c.content}
+                          onChange={(e) =>
+                            setChoices((prev) => {
+                              const next = [...prev];
+                              next[idx] = { ...next[idx], content: e.target.value };
+                              return next;
+                            })
+                          }
+                          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+                          placeholder={`Choice ${c.label}`}
+                        />
+                        <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
+                          <label className="inline-flex items-center gap-2 font-semibold text-slate-600">
+                            <span>Image</span>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={(e) => updateChoiceImage(idx, e.target.files?.[0] ?? null)}
+                              className="text-xs"
+                            />
+                          </label>
+                          {c.image_preview ? (
+                            <div className="flex items-center gap-2">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={c.image_preview}
+                                alt={`Choice ${c.label}`}
+                                className="h-12 w-20 rounded-md border border-slate-200 object-contain bg-white"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => clearChoiceImage(idx)}
+                                className="rounded-full border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-600"
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                      <label className="mt-1 flex items-center gap-1 text-xs font-semibold text-slate-600">
                         <input
                           type="radio"
                           name="correct"

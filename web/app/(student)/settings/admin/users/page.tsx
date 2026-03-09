@@ -11,6 +11,7 @@ type AdminUser = {
   first_name: string;
   last_name: string;
   nickname: string | null;
+  tag: string | null;
   student_id: string | null;
   role: Role;
   is_admin: boolean;
@@ -26,6 +27,7 @@ export default function AdminUsersPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [nickname, setNickname] = useState("");
+  const [tag, setTag] = useState("");
   const [role, setRole] = useState<Role>("student");
 
   const [loading, setLoading] = useState(false);
@@ -33,7 +35,9 @@ export default function AdminUsersPage() {
 
   const [query, setQuery] = useState("");
   const [roleFilter, setRoleFilter] = useState("");
+  const [tagFilter, setTagFilter] = useState("");
   const [users, setUsers] = useState<AdminUser[]>([]);
+  const [availableTags, setAvailableTags] = useState<string[]>([]);
   const [listLoading, setListLoading] = useState(false);
   const [saveId, setSaveId] = useState<string | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
@@ -66,6 +70,7 @@ export default function AdminUsersPage() {
         username: username.trim(),
         password,
         nickname: nickname.trim() ? nickname.trim() : null,
+        tag: tag.trim() ? tag.trim() : null,
         role,
       }),
     });
@@ -77,6 +82,7 @@ export default function AdminUsersPage() {
       setUsername("");
       setPassword("");
       setNickname("");
+      setTag("");
       setRole("student");
       await loadUsers();
     }
@@ -98,6 +104,7 @@ export default function AdminUsersPage() {
       body: JSON.stringify({
         q: query.trim(),
         role: roleFilter || undefined,
+        tag: tagFilter || undefined,
         limit: 200,
       }),
     });
@@ -108,6 +115,7 @@ export default function AdminUsersPage() {
       return;
     }
     setUsers(json.users || []);
+    setAvailableTags(Array.isArray(json.tags) ? json.tags : []);
     setListLoading(false);
   }
 
@@ -134,6 +142,7 @@ export default function AdminUsersPage() {
       first_name: user.first_name,
       last_name: user.last_name,
       nickname: user.nickname,
+      tag: user.tag,
       student_id: user.student_id,
       role: user.role,
       math_level: user.math_level,
@@ -284,6 +293,19 @@ export default function AdminUsersPage() {
         </div>
 
         <div className="space-y-2">
+          <label className="text-sm font-medium text-slate-800">Tag (optional)</label>
+          <input
+            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm shadow-sm focus:border-slate-400 focus:outline-none"
+            placeholder="e.g. SAT 2026"
+            value={tag}
+            onChange={(e) => setTag(e.target.value)}
+          />
+          <div className="text-xs text-neutral-500">
+            Use one group label to make directory filtering faster.
+          </div>
+        </div>
+
+        <div className="space-y-2">
           <label className="text-sm font-medium text-slate-800">Role</label>
           <select
             className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm shadow-sm focus:border-slate-400 focus:outline-none"
@@ -334,6 +356,18 @@ export default function AdminUsersPage() {
               <option value="teacher">teacher</option>
               <option value="admin">admin</option>
             </select>
+            <select
+              className="rounded-xl border border-slate-200 px-3 py-2 text-sm shadow-sm focus:border-slate-400 focus:outline-none"
+              value={tagFilter}
+              onChange={(e) => setTagFilter(e.target.value)}
+            >
+              <option value="">All tags</option>
+              {availableTags.map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
+            </select>
             <button
               onClick={loadUsers}
               className="rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white shadow hover:bg-slate-800"
@@ -365,6 +399,11 @@ export default function AdminUsersPage() {
                       : user.username}
                   </div>
                   <div className="text-xs text-slate-500">User ID: {user.user_id}</div>
+                  {user.tag ? (
+                    <div className="mt-1 inline-flex rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-700">
+                      {user.tag}
+                    </div>
+                  ) : null}
                 </div>
                 <div className="flex items-center gap-2">
                   <select
@@ -430,6 +469,15 @@ export default function AdminUsersPage() {
                     className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm"
                     value={user.nickname || ""}
                     onChange={(e) => updateUserField(user.user_id, "nickname", e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-slate-600">Tag</label>
+                  <input
+                    className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm"
+                    placeholder="SAT 2026"
+                    value={user.tag || ""}
+                    onChange={(e) => updateUserField(user.user_id, "tag", e.target.value)}
                   />
                 </div>
                 <div className="space-y-1">

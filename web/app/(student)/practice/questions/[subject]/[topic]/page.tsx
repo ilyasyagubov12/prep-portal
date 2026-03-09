@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import { useEffect, useMemo, useState, useRef, memo } from "react";
-import { useParams, useSearchParams, useRouter } from "next/navigation";
+import { useParams, useSearchParams, useRouter, usePathname } from "next/navigation";
 import Image from "next/image";
 import { Crimson_Text, Space_Grotesk, Source_Serif_4 } from "next/font/google";
 import { typesetMath } from "@/lib/mathjax";
@@ -79,7 +79,9 @@ export default function TopicQuestionsPage() {
   const params = useParams<{ subject: string; topic: string }>();
   const router = useRouter();
   const search = useSearchParams();
+  const pathname = usePathname();
   const subtopic = search.get("subtopic") || "";
+  const returnTo = `${pathname}${search.toString() ? `?${search.toString()}` : ""}`;
 
   const subject = (params.subject || "").toLowerCase();
   const topic = decodeURIComponent(params.topic || "");
@@ -423,7 +425,11 @@ export default function TopicQuestionsPage() {
             {isStaff && currentQ ? (
               <button
                 className="rounded-full border border-slate-900 bg-slate-900 px-3 py-1.5 text-white hover:bg-slate-800"
-                onClick={() => router.push(`/practice/questions/edit/${currentQ.id}`)}
+              onClick={() =>
+                router.push(
+                  `/practice/questions/edit/${currentQ.id}?return=${encodeURIComponent(returnTo)}`
+                )
+              }
               >
                 Edit question
               </button>

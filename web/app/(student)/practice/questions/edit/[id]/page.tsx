@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { subjects } from "@/lib/questionBank/topics";
 import { typesetMath } from "@/lib/mathjax";
 
@@ -16,6 +16,7 @@ type Choice = {
 export default function EditQuestionPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const search = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -260,7 +261,10 @@ export default function EditQuestionPage() {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || "Save failed");
-      router.push("/practice/questions/manage");
+      const returnTo = search.get("return");
+      const safeReturn =
+        returnTo && returnTo.startsWith("/") ? returnTo : "/practice/questions/manage";
+      router.push(safeReturn);
     } catch (e: any) {
       setError(e?.message ?? "Save failed");
     } finally {

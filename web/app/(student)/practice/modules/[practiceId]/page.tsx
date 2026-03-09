@@ -978,12 +978,17 @@ export default function Page() {
                 {showEditButton && currentQ ? (
                   <button
                     className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
-                    onClick={() =>
+                    onClick={() => {
+                      const returnTo =
+                        typeof window !== "undefined"
+                          ? `${window.location.pathname}${window.location.search}`
+                          : "";
+                      const suffix = returnTo ? `?return=${encodeURIComponent(returnTo)}` : "";
                       window.open(
-                        `/practice/modules/${practiceId}/questions/${currentQ.id}/edit`,
+                        `/practice/modules/${practiceId}/questions/${currentQ.id}/edit${suffix}`,
                         "_blank"
-                      )
-                    }
+                      );
+                    }}
                     type="button"
                   >
                     <PenLine size={14} />
@@ -1244,12 +1249,17 @@ export default function Page() {
                 {showEditButton && currentQ ? (
                   <button
                     className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
-                    onClick={() =>
+                    onClick={() => {
+                      const returnTo =
+                        typeof window !== "undefined"
+                          ? `${window.location.pathname}${window.location.search}`
+                          : "";
+                      const suffix = returnTo ? `?return=${encodeURIComponent(returnTo)}` : "";
                       window.open(
-                        `/practice/modules/${practiceId}/questions/${currentQ.id}/edit`,
+                        `/practice/modules/${practiceId}/questions/${currentQ.id}/edit${suffix}`,
                         "_blank"
-                      )
-                    }
+                      );
+                    }}
                     type="button"
                   >
                     <PenLine size={14} />
@@ -1389,7 +1399,7 @@ export default function Page() {
                         >
                           {choiceLabel}
                         </span>
-                        <span className={`relative flex-1 ${isEliminated ? "text-slate-400" : ""}`}>
+                        <div className={`relative flex-1 ${isEliminated ? "text-slate-400" : ""}`}>
                           {isEliminated && isMath ? (
                             <span className="pointer-events-none absolute left-0 right-0 top-1/2 h-px -translate-y-1/2 bg-slate-400" />
                           ) : null}
@@ -1406,7 +1416,7 @@ export default function Page() {
                               />
                             </div>
                           ) : null}
-                        </span>
+                        </div>
                         {resultsReview && isCorrect ? (
                           <span className="text-[10px] font-semibold uppercase text-emerald-600">Correct</span>
                         ) : null}
@@ -1440,24 +1450,34 @@ export default function Page() {
             ) : (
               <div className="grid gap-0 lg:grid-cols-[1fr_1fr] w-full">
                   <div className="p-6">
-                    <div
-                      ref={passageBoxRef}
-                      className="mt-4 rounded-xl border border-transparent bg-transparent p-5 text-[17px] leading-7 text-slate-700 min-h-[340px] w-full font-serif"
-                    onMouseUp={handleHighlightMouseUp}
-                    onClick={(e) => {
-                      const target = e.target as HTMLElement;
-                      handleHighlightClick("passage", target);
-                    }}
-                  >
-                    {resolvedImageUrl ? (
-                      <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 overflow-hidden">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={resolvedImageUrl} alt="question" className="w-full max-h-[240px] object-contain" />
+                    <div className="mt-4 rounded-xl border border-transparent bg-transparent p-5">
+                      {resolvedImageUrl ? (
+                        <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 overflow-hidden">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={resolvedImageUrl}
+                            alt="question"
+                            className="w-full max-h-[240px] object-contain"
+                          />
+                        </div>
+                      ) : null}
+                      <div
+                        ref={passageBoxRef}
+                        className="text-[17px] leading-7 text-slate-700 min-h-[340px] w-full font-serif"
+                        onMouseUp={handleHighlightMouseUp}
+                        onClick={(e) => {
+                          const target = e.target as HTMLElement;
+                          handleHighlightClick("passage", target);
+                        }}
+                      >
+                        {currentQ.passage ? (
+                          <span dangerouslySetInnerHTML={{ __html: passageHtml }} />
+                        ) : (
+                          "No passage."
+                        )}
                       </div>
-                    ) : null}
-                    {currentQ.passage ? <span dangerouslySetInnerHTML={{ __html: passageHtml }} /> : "No passage."}
+                    </div>
                   </div>
-                </div>
                   <div className="border-l border-slate-200 p-6 w-full">
                     <div className="flex items-center justify-between rounded-xl bg-slate-100 px-3 py-2 text-xs">
                     <div className="flex items-center gap-4">
