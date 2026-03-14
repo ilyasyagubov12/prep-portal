@@ -33,6 +33,16 @@ def _has_course_access(practice: ModulePractice, user: User) -> bool:
     return Enrollment.objects.filter(course_id__in=course_ids, user=user).exists()
 
 
+def _practice_accessible_student_ids(practice: ModulePractice):
+    direct_ids = set(
+        ModulePracticeAccess.objects.filter(practice=practice, is_active=True).values_list("student_id", flat=True)
+    )
+    course_ids = list(practice.allowed_courses.values_list("id", flat=True))
+    if course_ids:
+        direct_ids.update(Enrollment.objects.filter(course_id__in=course_ids).values_list("user_id", flat=True))
+    return direct_ids
+
+
 def _serialize_question_for_student(q: ModulePracticeQuestion, choice_order: list | None = None):
     choices = []
     raw_choices = q.choices or []
@@ -1079,6 +1089,12 @@ class ModulePracticeStudentSearchView(APIView):
             access_limits = {str(r["student_id"]): r["attempt_limit"] for r in access_rows}
 
         qs = Profile.objects.select_related("user").filter(role="student")
+        if practice_id:
+            practice = ModulePractice.objects.filter(id=practice_id).first()
+            if practice:
+                accessible_ids = _practice_accessible_student_ids(practice)
+                if accessible_ids:
+                    qs = qs.filter(user_id__in=accessible_ids)
         if q:
             qs = qs.filter(
                 models.Q(nickname__icontains=q)

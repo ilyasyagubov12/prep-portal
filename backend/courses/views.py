@@ -103,6 +103,18 @@ def _delete_cloudinary_asset(path: str | None, mime_type: str | None = None) -> 
     return False
 
 
+def _delete_storage_asset(path: str | None, mime_type: str | None = None) -> None:
+    if not path:
+        return
+    deleted_cloud = _delete_cloudinary_asset(path, mime_type)
+    if deleted_cloud:
+        return
+    try:
+        default_storage.delete(path)
+    except Exception:
+        pass
+
+
 class AdminCoursesListView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -169,6 +181,22 @@ class AdminCoursesDeleteView(APIView):
             course = Course.objects.get(id=cid)
         except Course.DoesNotExist:
             return Response({"error": "Course not found"}, status=404)
+
+        from assignments.models import AssignmentFile, Submission
+
+        if course.cover_path:
+            _delete_storage_asset(course.cover_path, "image/*")
+
+        for node in CourseNode.objects.filter(course=course).only("kind", "storage_path", "mime_type"):
+            if node.kind == "file" and node.storage_path:
+                _delete_storage_asset(node.storage_path, node.mime_type)
+
+        for file_row in AssignmentFile.objects.filter(assignment__course=course).only("storage_path", "mime_type"):
+            _delete_storage_asset(file_row.storage_path, file_row.mime_type)
+
+        for submission in Submission.objects.filter(assignment__course=course).only("file_path", "mime_type"):
+            _delete_storage_asset(submission.file_path, submission.mime_type)
+
         course.delete()
         return Response({"ok": True})
 
@@ -331,7 +359,7 @@ class CourseNodesListView(APIView):
             qs = qs.filter(parent__isnull=True)
         else:
             qs = qs.filter(parent_id=parent_id)
-        qs = qs.order_by("name")
+        qs = qs.order_by("created_at", "id")
 
         # Preload assignments for assignment nodes to include status/title for visibility logic
         assignment_ids = list(qs.filter(kind="assignment").values_list("assignment_id", flat=True))
@@ -513,9 +541,31 @@ class CourseNodeUpdateView(APIView):
                 node.parent = None
             else:
                 try:
-                    parent = CourseNode.objects.get(id=parent_id, course=node.course)
+                    parent = CourseNode.objects.only("id", "kind", "parent_id").get(id=parent_id, course=node.course)
                 except CourseNode.DoesNotExist:
                     return Response({"error": "Parent not found"}, status=404)
+                if parent.kind != "folder":
+                    return Response({"error": "Destination must be a folder"}, status=400)
+                if str(parent.id) == str(node.id):
+                    return Response({"error": "A folder cannot be moved into itself"}, status=400)
+                if node.kind == "folder":
+                    seen: set[str] = set()
+                    current = parent
+                    while current is not None:
+                        current_id = str(current.id)
+                        if current_id in seen:
+                            return Response({"error": "Invalid folder structure detected"}, status=400)
+                        seen.add(current_id)
+                        if current_id == str(node.id):
+                            return Response({"error": "A folder cannot be moved into one of its subfolders"}, status=400)
+                        if not current.parent_id:
+                            break
+                        try:
+                            current = CourseNode.objects.only("id", "parent_id").get(
+                                id=current.parent_id, course=node.course
+                            )
+                        except CourseNode.DoesNotExist:
+                            current = None
                 node.parent = parent
 
         node.save()

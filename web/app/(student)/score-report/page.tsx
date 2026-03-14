@@ -43,11 +43,15 @@ type ExamReport = {
   math?: SectionReport;
 };
 
-function toScoreRange(pct: number) {
-  const base = 200 + Math.max(0, Math.min(1, pct)) * 600;
-  const low = Math.max(200, Math.round(base - 30));
-  const high = Math.min(800, Math.round(base + 30));
-  return [low, high] as [number, number];
+function getPerformanceBand(pct: number) {
+  const normalized = Math.max(0, Math.min(1, pct));
+  if (normalized < 0.15) return { filled: 1, range: [200, 360] as [number, number] };
+  if (normalized < 0.3) return { filled: 2, range: [370, 410] as [number, number] };
+  if (normalized < 0.45) return { filled: 3, range: [420, 480] as [number, number] };
+  if (normalized < 0.6) return { filled: 4, range: [490, 540] as [number, number] };
+  if (normalized < 0.75) return { filled: 5, range: [550, 600] as [number, number] };
+  if (normalized < 0.9) return { filled: 6, range: [610, 670] as [number, number] };
+  return { filled: 7, range: [680, 800] as [number, number] };
 }
 
 function isCorrect(q: ExamQuestion, answer?: string) {
@@ -86,12 +90,13 @@ function buildReport(questions: ExamQuestion[], answers: Record<string, string>)
         const totalCount = val.total ?? 0;
         const pct = totalCount ? val.correct / totalCount : 0;
         const weight = total ? Math.round((totalCount / total) * 100) : 0;
+        const band = getPerformanceBand(pct);
         return {
           key,
           name: key,
           weightPercent: weight,
           questionRange: [totalCount, totalCount] as [number, number],
-          scoreRange: toScoreRange(pct),
+          scoreRange: band.range,
           performancePct: pct,
         };
       })
@@ -106,7 +111,7 @@ function buildReport(questions: ExamQuestion[], answers: Record<string, string>)
 }
 
 function SegmentedBar({
-  segments = 12,
+  segments = 7,
   performancePct,
   scoreRange,
 }: {
@@ -114,7 +119,7 @@ function SegmentedBar({
   performancePct: number;
   scoreRange: [number, number];
 }) {
-  const filled = Math.round(Math.max(0, Math.min(1, performancePct)) * segments);
+  const filled = getPerformanceBand(performancePct).filled;
   return (
     <div
       className="flex gap-1"

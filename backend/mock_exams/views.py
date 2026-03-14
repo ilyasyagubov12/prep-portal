@@ -24,6 +24,16 @@ def _is_staff(user: User) -> bool:
     return user.is_superuser or is_admin or role in ("admin", "teacher")
 
 
+def _mock_accessible_student_ids(exam: MockExam):
+    direct_ids = set(
+        MockExamAccess.objects.filter(mock_exam=exam, is_active=True).values_list("student_id", flat=True)
+    )
+    course_ids = list(exam.allowed_courses.values_list("id", flat=True))
+    if course_ids:
+        direct_ids.update(Enrollment.objects.filter(course_id__in=course_ids).values_list("user_id", flat=True))
+    return direct_ids
+
+
 def _serialize_question_for_student(q: Question, choice_order: list | None = None):
     choices = []
     raw_choices = q.choices or []
@@ -939,6 +949,12 @@ class MockExamStudentSearchView(APIView):
             access_limits = {str(r["student_id"]): r["attempt_limit"] for r in access_rows}
 
         qs = Profile.objects.select_related("user").filter(role="student")
+        if exam_id:
+            exam = MockExam.objects.filter(id=exam_id).first()
+            if exam:
+                accessible_ids = _mock_accessible_student_ids(exam)
+                if accessible_ids:
+                    qs = qs.filter(user_id__in=accessible_ids)
         if q:
             qs = qs.filter(
                 models.Q(nickname__icontains=q)

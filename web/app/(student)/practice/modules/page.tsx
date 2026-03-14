@@ -678,8 +678,9 @@ function ExamSection({
                   <PracticeResultsPanel
                     practiceId={p.id}
                     token={accessToken}
-                    onReviewAttempt={(attemptId) => onReviewAttempt(p.id, attemptId)}
+                    onReviewAttempt={(attemptId, showScoreDetails) => onReviewAttempt(p.id, attemptId, showScoreDetails)}
                     modules={p.modules}
+                    resultsPublished={!!p.results_published}
                   />
                 </div>
               ) : null}
@@ -1267,11 +1268,13 @@ function PracticeResultsPanel({
   token,
   onReviewAttempt,
   modules,
+  resultsPublished,
 }: {
   practiceId: string;
   token: string | null;
-  onReviewAttempt: (attemptId: string) => void;
+  onReviewAttempt: (attemptId: string, showScoreDetails?: boolean) => void;
   modules: PracticeModule[];
+  resultsPublished: boolean;
 }) {
   const [query, setQuery] = useState("");
   const [students, setStudents] = useState<Student[]>([]);
@@ -1460,13 +1463,23 @@ function PracticeResultsPanel({
                               </span>
                             ) : null}
                           </div>
-                          <button
-                            className="mt-2 rounded-md border border-slate-900 px-3 py-1 text-[11px] font-semibold text-slate-900"
-                            type="button"
-                            onClick={() => onReviewAttempt(attempt.id)}
-                          >
-                            Review attempt
-                          </button>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            <button
+                              className="rounded-md border border-slate-900 px-3 py-1 text-[11px] font-semibold text-slate-900"
+                              type="button"
+                              onClick={() => onReviewAttempt(attempt.id)}
+                            >
+                              Review attempt
+                            </button>
+                            <button
+                              className="rounded-md border border-slate-900 px-3 py-1 text-[11px] font-semibold text-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
+                              type="button"
+                              onClick={() => onReviewAttempt(attempt.id, true)}
+                              disabled={!resultsPublished}
+                            >
+                              {resultsPublished ? "View score report" : "Results hidden"}
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>

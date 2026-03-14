@@ -77,8 +77,17 @@ export default function AssignmentPage() {
   const canManage = isTeacherOrAdmin(profile);
   const mediaUrl = (path: string | null | undefined) => {
     if (!path) return "";
-    if (path.startsWith("http://") || path.startsWith("https://")) return path;
-    return `${API_BASE}/media/${path}`;
+    const trimmed = path.trim();
+    if (!trimmed) return "";
+    if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) return trimmed;
+
+    const prefix = (API_BASE || "").replace(/\/$/, "");
+    if (trimmed.startsWith("/")) {
+      return prefix ? `${prefix}${trimmed}` : trimmed;
+    }
+
+    const normalized = trimmed.replace(/^media\//, "");
+    return prefix ? `${prefix}/media/${normalized}` : `/media/${normalized}`;
   };
 
   // auth + profile

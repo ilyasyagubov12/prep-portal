@@ -430,9 +430,10 @@ export default function CourseDetailPage() {
   const sortedNodes = useMemo(() => {
     const copy = [...nodes];
     copy.sort((a, b) => {
-      if (a.kind !== b.kind) {
-        const order: Record<NodeKind, number> = { folder: 0, quiz: 1, assignment: 2, file: 3 };
-        return order[a.kind] - order[b.kind];
+      const aCreated = Date.parse(a.created_at);
+      const bCreated = Date.parse(b.created_at);
+      if (Number.isFinite(aCreated) && Number.isFinite(bCreated) && aCreated !== bCreated) {
+        return aCreated - bCreated;
       }
       return a.name.localeCompare(b.name);
     });
@@ -1208,7 +1209,7 @@ async function getSignedUrl(storage_path: string, storage_url?: string | null) {
         accessToken,
         {
           node_id: node.id,
-          parent_id: dest.trim() || null,
+          parent_id: dest.trim() || "",
         }
       );
       if (course?.id) await loadNodes(course.id, currentFolderId);
@@ -1222,8 +1223,8 @@ async function getSignedUrl(storage_path: string, storage_url?: string | null) {
 
     const ok = confirm(
       node.kind === "folder"
-        ? `Delete folder "${node.name}" and everything inside?`
-        : `Delete file "${node.name}"?`
+        ? `Warning: Are you sure you want to delete folder "${node.name}"?\n\nEverything inside this folder will also be deleted permanently.`
+        : `Warning: Are you sure you want to delete file "${node.name}"?\n\nThis file will be deleted permanently.`
     );
     if (!ok) return;
 
@@ -2199,17 +2200,19 @@ async function getSignedUrl(storage_path: string, storage_url?: string | null) {
         </div>
       </div>
 
-      <div className="flex items-center gap-2">
-        <button
-          className="h-10 px-4 rounded-xl border border-neutral-200 bg-white text-xs font-semibold text-neutral-700 shadow-sm hover:bg-neutral-50 transition"
-          type="button"
-          onClick={() =>
-            router.push(`/practice/mock-exams?course_id=${course?.id}`)
-          }
-        >
-          {canManage ? "Manage mock quizzes" : "Mock quizzes"}
-        </button>
-      </div>
+      {canManage ? (
+        <div className="flex items-center gap-2">
+          <button
+            className="h-10 px-4 rounded-xl border border-neutral-200 bg-white text-xs font-semibold text-neutral-700 shadow-sm hover:bg-neutral-50 transition"
+            type="button"
+            onClick={() =>
+              router.push(`/practice/mock-exams?course_id=${course?.id}`)
+            }
+          >
+            Manage mock quizzes
+          </button>
+        </div>
+      ) : null}
 
       {/* Teacher controls */}
       {isTeacherOrAdmin(profile) ? (

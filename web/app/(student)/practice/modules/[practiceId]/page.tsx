@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { Bookmark, Calculator, PenLine } from "lucide-react";
+import { Bookmark, Calculator, ChevronDown, Clock3, FileText, PenLine } from "lucide-react";
 import { typesetMath } from "@/lib/mathjax";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE;
@@ -190,6 +190,7 @@ export default function Page() {
   const [autoResumeChecked, setAutoResumeChecked] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [showTimer, setShowTimer] = useState(true);
+  const [directionsOpen, setDirectionsOpen] = useState(false);
   const lastQuestionRefresh = useRef(0);
 
   useEffect(() => {
@@ -720,6 +721,28 @@ export default function Page() {
   const imageUrl = currentQ?.image_url;
   const canEditQuestions = profile ? isTeacherOrAdmin(profile) : false;
   const showEditButton = canEditQuestions;
+  const sectionTitle = module?.subject === "verbal" ? "Reading and Writing" : "Math";
+  const sectionLabel = module?.subject === "verbal" ? "Section I" : "Section II";
+  const moduleHeading = module ? `${sectionLabel}, Module ${module.module_index}: ${sectionTitle}` : "Practice Test";
+  const headerActionButtonClass =
+    "inline-flex items-center gap-2 rounded-md border border-slate-400 bg-white px-4 py-2.5 text-sm font-semibold text-slate-800 shadow-sm transition hover:bg-slate-50";
+  const activeHighlightButtonClass =
+    "inline-flex items-center gap-2 rounded-md border border-slate-900 bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition";
+  const directionsCopy = isVerbal
+    ? "Read each passage and question carefully, then choose the best answer. You may highlight text and mark questions for review."
+    : "Solve each problem and choose the best answer or enter your response. Use the reference sheet or calculator only when helpful.";
+
+  function openQuestionEditor() {
+    if (!currentQ) return;
+    const returnTo =
+      typeof window !== "undefined" ? `${window.location.pathname}${window.location.search}` : "";
+    const suffix = returnTo ? `?return=${encodeURIComponent(returnTo)}` : "";
+    window.open(`/practice/modules/${practiceId}/questions/${currentQ.id}/edit${suffix}`, "_blank");
+  }
+
+  function exitPracticeTest() {
+    router.push("/practice/modules");
+  }
 
   async function refreshCurrentQuestion() {
     if (!canEditQuestions || !currentQ) return;
@@ -943,147 +966,145 @@ export default function Page() {
   if (error) return <div className="p-6 text-sm text-red-600">Error: {error}</div>;
 
   if (reviewMode) {
-    const title =
-      module?.subject === "verbal" ? `Reading and Writing` : `Math`;
     return (
-      <div className="min-h-screen bg-white px-4 py-6 pb-24">
-        <div className="mx-auto max-w-5xl space-y-6 text-center">
-          <header className="rounded-2xl bg-white p-4 shadow-sm text-left">
-            <div className="grid items-center gap-3 md:grid-cols-[1fr_auto_1fr]">
-              <div className="text-xs uppercase tracking-[0.2em] text-slate-400">
-                {module ? `${module.subject.toUpperCase()} Module ${module.module_index}` : "Mock exam"}
-              </div>
-              <div className="flex flex-col items-center justify-center gap-1">
-                <div className="text-sm font-semibold text-slate-900">
-                  {showTimer ? formatTime(timeLeft) : "—"}
+      <div className="min-h-screen bg-white pb-24">
+        <div className="w-full">
+          <header className="w-full border-b-2 border-dashed border-slate-700 bg-[#e9f0ff] px-6 py-5 text-left md:px-10">
+            <div className="grid items-end gap-6 md:grid-cols-[1fr_auto_1fr]">
+              <div>
+                <div className="text-[28px] font-semibold leading-tight tracking-[-0.01em] text-slate-900 md:text-[30px]">
+                  {moduleHeading}
                 </div>
                 <button
-                  className="inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-semibold text-slate-700"
+                  className="mt-3 inline-flex items-center gap-1 text-[22px] font-medium text-slate-700 hover:text-slate-900"
+                  onClick={() => setDirectionsOpen((v) => !v)}
+                  type="button"
+                >
+                  Directions
+                  <ChevronDown
+                    size={16}
+                    className={`transition-transform ${directionsOpen ? "rotate-180" : ""}`}
+                  />
+                </button>
+              </div>
+              <div className="flex flex-col items-center gap-2 self-start">
+                <div className="flex min-h-5 items-center justify-center text-[22px] font-semibold text-slate-900">
+                  {showTimer ? formatTime(timeLeft) : <Clock3 size={18} className="text-slate-500" />}
+                </div>
+                <button
+                  className="rounded-full border border-slate-400 bg-white px-6 py-2 text-base font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
                   onClick={() => setShowTimer((v) => !v)}
                   type="button"
                 >
-                  <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border bg-white text-[9px] font-bold leading-none text-slate-700">
-                    ||
-                  </span>
                   {showTimer ? "Hide" : "Show"}
                 </button>
               </div>
-              <div className="flex items-center justify-end gap-4 text-xs text-slate-600">
-                {module?.subject === "verbal" ? (
-                  <button className="inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[11px] font-semibold text-slate-700">
-                    <PenLine size={14} />
-                    Highlight
-                  </button>
-                ) : null}
+              <div className="flex flex-wrap items-center justify-end gap-3 text-xs text-slate-700">
                 {showEditButton && currentQ ? (
-                  <button
-                    className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
-                    onClick={() => {
-                      const returnTo =
-                        typeof window !== "undefined"
-                          ? `${window.location.pathname}${window.location.search}`
-                          : "";
-                      const suffix = returnTo ? `?return=${encodeURIComponent(returnTo)}` : "";
-                      window.open(
-                        `/practice/modules/${practiceId}/questions/${currentQ.id}/edit${suffix}`,
-                        "_blank"
-                      );
-                    }}
-                    type="button"
-                  >
+                  <button className={headerActionButtonClass} onClick={openQuestionEditor} type="button">
                     <PenLine size={14} />
                     Edit question
                   </button>
                 ) : null}
-                <button className="text-slate-500" onClick={() => router.push("/practice/modules")}>
+                <button className={headerActionButtonClass} onClick={exitPracticeTest} type="button">
+                  <FileText size={14} />
                   Exit
                 </button>
               </div>
             </div>
+            {directionsOpen ? (
+              <div className="mt-4 rounded-2xl border border-slate-200 bg-white/90 p-4 text-sm leading-6 text-slate-700">
+                {directionsCopy}
+              </div>
+            ) : null}
           </header>
 
-          <div className="space-y-2">
-            <div className="text-xl font-semibold text-slate-900">Check Your Work</div>
-            <p className="text-sm text-slate-500">
-              You can go back to any question or move on to the next module.
-            </p>
-            {timeExpired ? (
-              <p className="text-sm font-semibold text-slate-700">Time is up for this module. You can only continue to the next module.</p>
-            ) : null}
-          </div>
-
-          <div className="mx-auto max-w-xl rounded-2xl border border-slate-200 bg-white p-5 shadow-sm text-left">
-                <div className="flex items-center justify-between rounded-xl bg-slate-100 px-3 py-2">
-              <div className="text-sm font-semibold text-slate-900">
-                Section 1, Module {module?.module_index}: {title}
-              </div>
-              <div className="flex items-center gap-4 text-xs text-slate-500">
-                <div className="flex items-center gap-1">
-                  <span className="h-3 w-3 rounded-sm border border-slate-300 bg-white" />
-                  Unanswered
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="h-3 w-3 rounded-sm bg-red-200" />
-                  For Review
-                </div>
-              </div>
+          <div className="space-y-6 px-4 py-6 text-center md:px-8">
+            <div className="space-y-2">
+              <div className="text-xl font-semibold text-slate-900">Check Your Work</div>
+              <p className="text-sm text-slate-500">
+                You can go back to any question or move on to the next module.
+              </p>
+              {timeExpired ? (
+                <p className="text-sm font-semibold text-slate-700">Time is up for this module. You can only continue to the next module.</p>
+              ) : null}
             </div>
-            <div className="mt-4 grid grid-cols-9 gap-2">
-              {questions.map((q, idx) => {
-                const answered = Boolean(answers[q.id]);
-                const flagged = Boolean(reviewFlags[q.id]);
-                return (
-                  <button
-                    key={q.id}
-                    className={`h-8 rounded-md text-[11px] font-semibold ${
-                      idx === currentQuestion
-                        ? "bg-slate-900 text-white"
-                        : flagged
-                        ? "bg-red-100 text-red-700"
-                        : answered
-                        ? "bg-emerald-100 text-emerald-700"
-                        : "border border-dashed border-slate-300 text-slate-600"
-                    }`}
-                    onClick={() => {
-                      if (timeExpired) return;
-                      setCurrentQuestion(idx);
-                      setReviewMode(false);
-                    }}
-                    disabled={timeExpired}
-                    type="button"
-                  >
-                    {idx + 1}
-                  </button>
-                );
-              })}
+
+            <div className="mx-auto max-w-xl rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm">
+                  <div className="flex items-center justify-between rounded-xl bg-slate-100 px-3 py-2">
+                <div className="text-sm font-semibold text-slate-900">
+                  {moduleHeading}
+                </div>
+                <div className="flex items-center gap-4 text-xs text-slate-500">
+                  <div className="flex items-center gap-1">
+                    <span className="h-3 w-3 rounded-sm border border-slate-300 bg-white" />
+                    Unanswered
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="h-3 w-3 rounded-sm bg-red-200" />
+                    For Review
+                  </div>
+                </div>
+              </div>
+              <div className="mt-4 grid grid-cols-9 gap-2">
+                {questions.map((q, idx) => {
+                  const answered = Boolean(answers[q.id]);
+                  const flagged = Boolean(reviewFlags[q.id]);
+                  return (
+                    <button
+                      key={q.id}
+                      className={`h-8 rounded-md text-[11px] font-semibold ${
+                        idx === currentQuestion
+                          ? "bg-slate-900 text-white"
+                          : flagged
+                          ? "bg-red-100 text-red-700"
+                          : answered
+                          ? "bg-emerald-100 text-emerald-700"
+                          : "border border-dashed border-slate-300 text-slate-600"
+                      }`}
+                      onClick={() => {
+                        if (timeExpired) return;
+                        setCurrentQuestion(idx);
+                        setReviewMode(false);
+                      }}
+                      disabled={timeExpired}
+                      type="button"
+                    >
+                      {idx + 1}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
         </div>
 
-        <div className="fixed bottom-0 left-0 right-0 border-t bg-white/95 backdrop-blur">
-          <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
+        <div className="fixed bottom-0 left-0 right-0 border-t-2 border-dashed border-slate-500 bg-[#e8f0ff]/95 backdrop-blur">
+          <div className="grid w-full grid-cols-[1fr_auto_1fr] items-center gap-3 px-6 py-3 md:px-10">
+            <div className="flex items-center gap-3 truncate text-left text-sm font-semibold text-slate-800">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/Victory.PNG" alt="Victory College" className="h-9 w-9 rounded-full object-contain" />
+              <span className="truncate">Victory College - Ilyas Yagubov</span>
+            </div>
             <button
-              className={`rounded-lg border px-4 py-2 text-sm ${timeExpired ? "opacity-50 cursor-not-allowed" : ""}`}
-              onClick={() => { if (timeExpired) return; setReviewMode(false); }}
+              className="justify-self-center rounded-xl bg-slate-900 px-5 py-2 text-sm font-semibold text-white shadow-sm"
               type="button"
-              disabled={timeExpired}
+              onClick={() => {
+                if (navLocked) return;
+                setMapOpen((v) => !v);
+              }}
             >
-              Back
+              Question {currentQuestion + 1} of {questions.length || 0}
             </button>
-            <button
-              className="rounded-full border px-5 py-2 text-sm font-semibold text-slate-700"
-              type="button"
-              onClick={() => { if (navLocked) return; setMapOpen((v) => !v); }}
-            >
-              {currentQuestion + 1} of {questions.length || 0}
-            </button>
-            <button
-              className="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white"
-              onClick={goToNextModule}
-              type="button"
-            >
-              Next
-            </button>
+            <div className="justify-self-end">
+              <button
+                className="rounded-full bg-blue-600 px-6 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
+                onClick={goToNextModule}
+                type="button"
+              >
+                Next
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -1100,7 +1121,7 @@ export default function Page() {
           </div>
 
           <div className="max-w-lg text-left space-y-2">
-            <div className="text-lg font-semibold text-slate-900">Practice Test Break</div>
+            <div className="text-[24px] font-semibold leading-[1.35] text-slate-900">Practice Test Break</div>
             <p className="text-sm text-slate-500">
               You can resume this practice test as soon as you're ready to move on. On test day, you'll wait until the
               clock counts down.
@@ -1190,90 +1211,88 @@ export default function Page() {
   }
 
     return (
-      <div className="min-h-screen bg-white px-4 py-6 pb-24">
-      <div className="mx-auto w-full max-w-none px-4 space-y-6">
-        <header className="rounded-2xl bg-white p-4 shadow-sm">
-          <div className="grid items-center gap-3 md:grid-cols-[1fr_auto_1fr]">
-            <div className="text-xs uppercase tracking-[0.2em] text-slate-400">
-              {module ? `${module.subject.toUpperCase()} Module ${module.module_index}` : "Mock exam"}
+      <div className="min-h-screen bg-white pb-24">
+      <div className="w-full">
+        <header className="w-full border-b-2 border-dashed border-slate-700 bg-[#e9f0ff] px-6 py-5 md:px-10">
+          <div className="grid items-end gap-6 md:grid-cols-[1fr_auto_1fr]">
+            <div className="text-left">
+              <div className="text-[28px] font-semibold leading-tight tracking-[-0.01em] text-slate-900 md:text-[30px]">
+                {moduleHeading}
+              </div>
+              <button
+                className="mt-3 inline-flex items-center gap-1 text-[22px] font-medium text-slate-700 hover:text-slate-900"
+                onClick={() => setDirectionsOpen((v) => !v)}
+                type="button"
+              >
+                Directions
+                <ChevronDown
+                  size={16}
+                  className={`transition-transform ${directionsOpen ? "rotate-180" : ""}`}
+                />
+              </button>
             </div>
-              <div className="flex flex-col items-center justify-center gap-1">
-                <div className="text-sm font-semibold text-slate-900">
-                  {resultsReview ? "Review" : showTimer ? formatTime(timeLeft) : "—"}
-                </div>
-                {!resultsReview ? (
-                  <button
-                    className="inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-semibold text-slate-700"
-                    onClick={() => setShowTimer((v) => !v)}
-                    type="button"
-                  >
-                    <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border bg-white text-[9px] font-bold leading-none text-slate-700">
-                      ||
-                    </span>
-                    {showTimer ? "Hide" : "Show"}
-                  </button>
-                ) : null}
+            <div className="flex flex-col items-center gap-2 self-start">
+              <div className="flex min-h-5 items-center justify-center text-[22px] font-semibold text-slate-900">
+                {resultsReview ? "Review" : showTimer ? formatTime(timeLeft) : <Clock3 size={18} className="text-slate-500" />}
               </div>
-              <div className="flex items-center justify-end gap-4 text-xs text-slate-600">
-                {module?.subject === "math" && !resultsReview ? (
-                  <div className="flex items-center gap-2">
-                    <button
-                      className="inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[11px] font-semibold text-slate-700"
-                      onClick={() => setSheetOpen(true)}
-                      type="button"
-                    >
-                      Reference
-                    </button>
-                    <button
-                      className="inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[11px] font-semibold text-slate-700"
-                      onClick={openDesmosPopup}
-                      type="button"
-                    >
-                      <Calculator size={14} />
-                      Calculator
-                    </button>
-                  </div>
-                ) : null}
-                {module?.subject === "verbal" && !resultsReview ? (
-                  <button
-                    className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[11px] font-semibold ${
-                      highlightMode ? "border-slate-900 text-slate-900" : "text-slate-700"
-                    }`}
-                    onClick={() => setHighlightMode((v) => !v)}
-                    type="button"
-                  >
-                    <PenLine size={14} />
-                    {highlightMode ? "Highlighting" : "Highlight"}
-                  </button>
-                ) : null}
-                {showEditButton && currentQ ? (
-                  <button
-                    className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
-                    onClick={() => {
-                      const returnTo =
-                        typeof window !== "undefined"
-                          ? `${window.location.pathname}${window.location.search}`
-                          : "";
-                      const suffix = returnTo ? `?return=${encodeURIComponent(returnTo)}` : "";
-                      window.open(
-                        `/practice/modules/${practiceId}/questions/${currentQ.id}/edit${suffix}`,
-                        "_blank"
-                      );
-                    }}
-                    type="button"
-                  >
-                    <PenLine size={14} />
-                    Edit question
-                  </button>
-                ) : null}
-                <button className="text-slate-500" onClick={() => router.push("/practice/modules")}>
-                  Exit
+              {!resultsReview ? (
+                <button
+                  className="rounded-full border border-slate-400 bg-white px-6 py-2 text-base font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+                  onClick={() => setShowTimer((v) => !v)}
+                  type="button"
+                >
+                  {showTimer ? "Hide" : "Show"}
                 </button>
-              </div>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap items-center justify-end gap-3 text-xs text-slate-700">
+              {module?.subject === "verbal" && !resultsReview ? (
+                <button
+                  className={highlightMode ? activeHighlightButtonClass : headerActionButtonClass}
+                  onClick={() => setHighlightMode((v) => !v)}
+                  type="button"
+                >
+                  <PenLine size={14} />
+                  <span>Highlights</span>
+                </button>
+              ) : null}
+              {module?.subject === "math" && !resultsReview ? (
+                <button
+                  className={headerActionButtonClass}
+                  onClick={() => setSheetOpen(true)}
+                  type="button"
+                >
+                  <FileText size={14} />
+                  Reference
+                </button>
+              ) : null}
+              {module?.subject === "math" && !resultsReview ? (
+                <button className={headerActionButtonClass} onClick={openDesmosPopup} type="button">
+                  <Calculator size={14} />
+                  Calculator
+                </button>
+              ) : null}
+              {showEditButton && currentQ ? (
+                <button className={headerActionButtonClass} onClick={openQuestionEditor} type="button">
+                  <PenLine size={14} />
+                  Edit question
+                </button>
+              ) : null}
+              <button className={headerActionButtonClass} onClick={exitPracticeTest} type="button">
+                <FileText size={14} />
+                Exit
+              </button>
+            </div>
           </div>
+          {directionsOpen ? (
+            <div className="mt-4 rounded-2xl border border-slate-200 bg-white/90 p-4 text-left text-sm leading-6 text-slate-700">
+              {directionsCopy}
+            </div>
+          ) : null}
         </header>
 
-        <div className="relative w-full rounded-2xl bg-transparent shadow-none overflow-hidden">
+        <div className="px-4 py-6 md:px-8">
+        <div className="relative w-full overflow-hidden rounded-2xl bg-transparent shadow-none">
           {navLocked ? (
             <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/90 text-sm font-semibold text-slate-700">
               Time is up. Moving to the next module...
@@ -1326,11 +1345,11 @@ export default function Page() {
                 {resolvedImageUrl ? (
                   <div className="rounded-xl border border-slate-200 bg-slate-50 overflow-hidden">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={resolvedImageUrl} alt="question" className="w-full max-h-[320px] object-contain" />
+                    <img src={resolvedImageUrl} alt="question" className="w-full max-h-[420px] object-contain" />
                   </div>
                 ) : null}
 
-                <div className="text-lg font-semibold text-slate-900">
+                <div className="text-[19px] font-semibold leading-[1.35] text-slate-900 md:text-[20px]">
                   <MathContent html={stemHtml} />
                 </div>
                 {resultsReview && reviewStatus ? (
@@ -1340,22 +1359,42 @@ export default function Page() {
                 ) : null}
 
                 {currentQ.is_open_ended ? (
-                  <div className="space-y-2">
-                    <textarea
-                      className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm min-h-[110px]"
-                      value={answers[currentQ.id] ?? ""}
-                      onChange={(e) => setAnswer(e.target.value)}
-                      placeholder="Type your answer"
-                      readOnly={resultsReview}
-                    />
-                    {resultsReview ? (
-                      <div className="text-xs text-slate-600">
-                        Correct answer:{" "}
-                        <span className="font-semibold text-emerald-700">
-                          {currentQ.correct_answer || "—"}
-                        </span>
+                  <div className="grid gap-4 lg:grid-cols-[300px_1fr]">
+                    {!resultsReview ? (
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-700">
+                        <div className="text-base font-semibold text-slate-900">Student-produced response help</div>
+                        <ul className="mt-3 list-disc space-y-2 pl-5 marker:text-slate-500">
+                          <li>If there is more than one correct answer, enter only one answer. Use the positive answer or the largest answer.</li>
+                          <li>If your answer is a fraction, write it in decimal form.</li>
+                          <li>Round to the next non-zero digit when needed.</li>
+                        </ul>
+                        <div className="mt-4 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Examples</div>
+                        <div className="mt-2 space-y-2 text-sm">
+                          <div><span className="font-semibold text-slate-900">1/2</span> {"->"} <span className="font-semibold text-slate-900">0.5</span></div>
+                          <div><span className="font-semibold text-slate-900">2/3</span> {"->"} <span className="font-semibold text-slate-900">0.67</span></div>
+                          <div><span className="font-semibold text-slate-900">5/4</span> {"->"} <span className="font-semibold text-slate-900">1.25</span></div>
+                          <div><span className="font-semibold text-slate-900">1/3</span> {"->"} <span className="font-semibold text-slate-900">0.33</span></div>
+                          <div><span className="font-semibold text-slate-900">7/222</span> {"->"} <span className="font-semibold text-slate-900">0.032</span></div>
+                        </div>
                       </div>
                     ) : null}
+                    <div className="space-y-2">
+                      <textarea
+                        className="w-full rounded-xl border border-slate-200 px-4 py-3 text-xl min-h-[140px]"
+                        value={answers[currentQ.id] ?? ""}
+                        onChange={(e) => setAnswer(e.target.value)}
+                        placeholder="Type your answer"
+                        readOnly={resultsReview}
+                      />
+                      {resultsReview ? (
+                        <div className="text-xs text-slate-600">
+                          Correct answer:{" "}
+                          <span className="font-semibold text-emerald-700">
+                            {currentQ.correct_answer || "-"}
+                          </span>
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
                 ) : (
                   <div className="space-y-2">
@@ -1385,7 +1424,7 @@ export default function Page() {
                         role="button"
                       >
                         <span
-                          className={`inline-flex items-center justify-center h-6 w-6 rounded-full border text-[11px] font-semibold mr-2 ${
+                          className={`inline-flex items-center justify-center h-9 w-9 rounded-full border text-sm font-semibold mr-3 ${
                             isCorrect
                               ? "border-emerald-600 bg-emerald-600 text-white"
                               : isWrong
@@ -1457,13 +1496,14 @@ export default function Page() {
                           <img
                             src={resolvedImageUrl}
                             alt="question"
-                            className="w-full max-h-[240px] object-contain"
+                            className="w-full max-h-[360px] object-contain"
                           />
                         </div>
                       ) : null}
                       <div
                         ref={passageBoxRef}
-                        className="text-[17px] leading-7 text-slate-700 min-h-[340px] w-full font-serif"
+                        className="min-h-[340px] w-full text-[25px] leading-[1.65] text-slate-700"
+                        style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}
                         onMouseUp={handleHighlightMouseUp}
                         onClick={(e) => {
                           const target = e.target as HTMLElement;
@@ -1520,7 +1560,7 @@ export default function Page() {
                     </div>
                   </div>
                     <div
-                      className="mt-4 text-[18px] font-semibold text-slate-900 font-serif"
+                      className="mt-4 text-[19px] font-semibold text-slate-900 font-serif leading-[1.35] md:text-[20px]"
                     onMouseUp={handleHighlightMouseUp}
                     onClick={(e) => {
                       const target = e.target as HTMLElement;
@@ -1538,7 +1578,7 @@ export default function Page() {
                   {currentQ.is_open_ended ? (
                     <div className="mt-4 space-y-2">
                       <textarea
-                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm min-h-[110px]"
+                        className="w-full rounded-xl border border-slate-200 px-4 py-3 text-xl min-h-[140px]"
                         value={answers[currentQ.id] ?? ""}
                         onChange={(e) => setAnswer(e.target.value)}
                         placeholder="Type your answer"
@@ -1581,7 +1621,7 @@ export default function Page() {
                           role="button"
                         >
                           <span
-                            className={`inline-flex items-center justify-center h-6 w-6 rounded-full border text-[11px] font-semibold mr-2 ${
+                            className={`inline-flex items-center justify-center h-9 w-9 rounded-full border text-sm font-semibold mr-3 ${
                               isCorrect
                                 ? "border-emerald-600 bg-emerald-600 text-white"
                                 : isWrong
@@ -1639,38 +1679,45 @@ export default function Page() {
             <div className="p-6 text-sm text-slate-500">No questions in this module.</div>
           )}
         </div>
+        </div>
       </div>
 
-      <div className="fixed bottom-0 left-0 right-0 border-t bg-white/95 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
+      <div className="fixed bottom-0 left-0 right-0 border-t-2 border-dashed border-slate-500 bg-[#e8f0ff]/95 backdrop-blur">
+        <div className="grid w-full grid-cols-[1fr_auto_1fr] items-center gap-3 px-6 py-3 md:px-10">
+          <div className="flex items-center gap-3 truncate text-left text-sm font-semibold text-slate-800">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/Victory.PNG" alt="Victory College" className="h-9 w-9 rounded-full object-contain" />
+            <span className="truncate">Victory College - Ilyas Yagubov</span>
+          </div>
           <button
-            className="rounded-lg border px-4 py-2 text-sm"
-            onClick={() => setCurrentQuestion((i) => Math.max(0, i - 1))}
-            disabled={currentQuestion === 0 || navLocked}
+            className="justify-self-center rounded-xl bg-slate-900 px-5 py-2 text-sm font-semibold text-white shadow-sm"
             type="button"
+            onClick={() => {
+              if (navLocked) return;
+              setMapOpen((v) => !v);
+            }}
           >
-            Previous
+            Question {currentQuestion + 1} of {questions.length || 0}
           </button>
-          <button
-            className="rounded-full border px-5 py-2 text-sm font-semibold text-slate-700"
-            type="button"
-            onClick={() => { if (navLocked) return; setMapOpen((v) => !v); }}
-          >
-            {currentQuestion + 1} of {questions.length || 0}
-          </button>
-          {currentQuestion < questions.length - 1 ? (
-            <button
-              className="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white"
-              onClick={() => setCurrentQuestion((i) => Math.min(questions.length - 1, i + 1))}
-              type="button"
-            >
-              Next
-            </button>
-          ) : (
-            <button className="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white" onClick={finishModule} type="button">
-              Finish module
-            </button>
-          )}
+          <div className="justify-self-end">
+            {currentQuestion < questions.length - 1 ? (
+              <button
+                className="rounded-full bg-blue-600 px-6 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
+                onClick={() => setCurrentQuestion((i) => Math.min(questions.length - 1, i + 1))}
+                type="button"
+              >
+                Next
+              </button>
+            ) : (
+              <button
+                className="rounded-full bg-blue-600 px-6 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
+                onClick={finishModule}
+                type="button"
+              >
+                Finish module
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -1787,3 +1834,4 @@ export default function Page() {
           </div>
   );
 }
+
