@@ -155,6 +155,67 @@ async function apiPOST<T>(path: string, token: string, body: any): Promise<T> {
   return json as T;
 }
 
+async function uploadWithProgress<T>(
+  path: string,
+  token: string,
+  body: FormData,
+  onProgress: (progress: number, loaded: number, total: number) => void
+): Promise<T> {
+  return await new Promise<T>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", path);
+    xhr.responseType = "json";
+    xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable || event.total <= 0) return;
+      onProgress(
+        Math.max(0, Math.min(100, Math.round((event.loaded / event.total) * 100))),
+        event.loaded,
+        event.total
+      );
+    };
+
+    xhr.onerror = () => reject(new Error("Upload failed"));
+    xhr.onabort = () => reject(new Error("Upload cancelled"));
+    xhr.onload = () => {
+      const response = xhr.response;
+      let fallback: Record<string, unknown> = {};
+      if (!response && xhr.responseType !== "json" && typeof xhr.responseText === "string" && xhr.responseText) {
+        try {
+          fallback = JSON.parse(xhr.responseText) as Record<string, unknown>;
+        } catch {
+          fallback = {};
+        }
+      }
+      const payload = response && typeof response === "object" ? response : fallback;
+      if (xhr.status >= 200 && xhr.status < 300) {
+        onProgress(100, body.get("file") instanceof File ? (body.get("file") as File).size : 0, body.get("file") instanceof File ? (body.get("file") as File).size : 0);
+        resolve(payload as T);
+        return;
+      }
+      reject(new Error((payload as { error?: string })?.error || `Upload failed: ${xhr.status}`));
+    };
+
+    xhr.send(body);
+  });
+}
+
+function formatUploadSpeed(bytesPerSecond: number) {
+  if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) return "—";
+  if (bytesPerSecond >= 1024 * 1024) return `${(bytesPerSecond / (1024 * 1024)).toFixed(1)} MB/s`;
+  if (bytesPerSecond >= 1024) return `${Math.round(bytesPerSecond / 1024)} KB/s`;
+  return `${Math.round(bytesPerSecond)} B/s`;
+}
+
+function formatRemainingTime(seconds: number) {
+  if (!Number.isFinite(seconds) || seconds < 0) return "—";
+  if (seconds < 60) return `${Math.max(1, Math.ceil(seconds))}s left`;
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.ceil(seconds % 60);
+  return `${mins}m ${secs}s left`;
+}
+
 // ISO -> datetime-local (for inputs)
 function toDatetimeLocal(iso: string | null) {
   if (!iso) return "";
@@ -352,6 +413,10 @@ export default function CourseDetailPage() {
   const [uploadDesc, setUploadDesc] = useState("");
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadBusy, setUploadBusy] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadSpeed, setUploadSpeed] = useState<string | null>(null);
+  const [uploadEta, setUploadEta] = useState<string | null>(null);
+  const [uploadComplete, setUploadComplete] = useState(false);
 
   // Toggles for actions
   const [showCreateFolder, setShowCreateFolder] = useState(false);
@@ -410,6 +475,10 @@ export default function CourseDetailPage() {
   const [savingOverview, setSavingOverview] = useState(false);
   const [coverFile, setCoverFile] = useState<File | null>(null);
   const [uploadingCover, setUploadingCover] = useState(false);
+  const [coverUploadProgress, setCoverUploadProgress] = useState(0);
+  const [coverUploadSpeed, setCoverUploadSpeed] = useState<string | null>(null);
+  const [coverUploadEta, setCoverUploadEta] = useState<string | null>(null);
+  const [coverUploadComplete, setCoverUploadComplete] = useState(false);
 
   // Calendar
   const [events, setEvents] = useState<CourseEvent[]>([]);
@@ -1066,7 +1135,12 @@ async function getSignedUrl(storage_path: string, storage_url?: string | null) {
     const displayName = uploadName.trim() || uploadFile.name;
 
     setUploadBusy(true);
+    setUploadProgress(0);
+    setUploadSpeed(null);
+    setUploadEta(null);
+    setUploadComplete(false);
     setContentError(null);
+    const startedAt = Date.now();
 
     try {
       const form = new FormData();
@@ -1076,15 +1150,21 @@ async function getSignedUrl(storage_path: string, storage_url?: string | null) {
       if (uploadDesc.trim()) form.append("description", uploadDesc.trim());
       form.append("file", uploadFile);
 
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/course-nodes/upload/`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${accessToken}` },
-        body: form,
-      });
+      await uploadWithProgress<{ ok: boolean }>(
+        `${process.env.NEXT_PUBLIC_API_BASE}/api/course-nodes/upload/`,
+        accessToken,
+        form,
+        (progress, loaded, total) => {
+          setUploadProgress(progress);
+          const elapsedSeconds = Math.max((Date.now() - startedAt) / 1000, 0.1);
+          const bytesPerSecond = loaded / elapsedSeconds;
+          setUploadSpeed(formatUploadSpeed(bytesPerSecond));
+          setUploadEta(formatRemainingTime((total - loaded) / Math.max(bytesPerSecond, 1)));
+        }
+      );
 
-      const json = await res.json();
-      if (!res.ok) throw new Error(json?.error || "Upload failed");
-
+      setUploadComplete(true);
+      setUploadEta("Completed");
       setUploadName("");
       setUploadDesc("");
       setUploadFile(null);
@@ -1093,6 +1173,9 @@ async function getSignedUrl(storage_path: string, storage_url?: string | null) {
     } catch (e: any) {
       setContentError(e?.message ?? "Upload failed");
     } finally {
+      if (uploadProgress >= 100) {
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+      }
       setUploadBusy(false);
     }
   }
@@ -1328,33 +1411,47 @@ async function getSignedUrl(storage_path: string, storage_url?: string | null) {
     if (!coverFile) return alert("Choose an image first");
 
     setUploadingCover(true);
+    setCoverUploadProgress(0);
+    setCoverUploadSpeed(null);
+    setCoverUploadEta(null);
+    setCoverUploadComplete(false);
     setError(null);
+    const startedAt = Date.now();
 
     try {
       const form = new FormData();
       form.append("course_id", course.id);
       form.append("file", coverFile);
 
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/courses/cover-upload/`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${accessToken}` },
-        body: form,
-      });
-
-      const json = await res.json();
-      if (!res.ok) throw new Error(json?.error || "Cover upload failed");
+      const json = await uploadWithProgress<{ cover_url?: string | null; cover_path?: string | null }>(
+        `${process.env.NEXT_PUBLIC_API_BASE}/api/courses/cover-upload/`,
+        accessToken,
+        form,
+        (progress, loaded, total) => {
+          setCoverUploadProgress(progress);
+          const elapsedSeconds = Math.max((Date.now() - startedAt) / 1000, 0.1);
+          const bytesPerSecond = loaded / elapsedSeconds;
+          setCoverUploadSpeed(formatUploadSpeed(bytesPerSecond));
+          setCoverUploadEta(formatRemainingTime((total - loaded) / Math.max(bytesPerSecond, 1)));
+        }
+      );
 
       if (json.cover_url) {
         const base = process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") || "";
         setCoverUrl(resolveMediaUrl(json.cover_url, base));
       }
-      if (json.cover_path) {
-        setCourse((prev) => (prev ? { ...prev, cover_path: json.cover_path } : prev));
+      if (json.cover_path !== undefined) {
+        setCourse((prev) => (prev ? { ...prev, cover_path: json.cover_path ?? null } : prev));
       }
+      setCoverUploadComplete(true);
+      setCoverUploadEta("Completed");
       setCoverFile(null);
     } catch (e: any) {
       setError(e?.message ?? "Cover upload failed");
     } finally {
+      if (coverUploadProgress >= 100) {
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+      }
       setUploadingCover(false);
     }
   }
@@ -1529,6 +1626,26 @@ async function getSignedUrl(storage_path: string, storage_url?: string | null) {
                 >
                   {uploadingCover ? "Uploading…" : "Upload cover"}
                 </button>
+                {uploadingCover ? (
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-xs text-neutral-600">
+                      <span>{coverUploadComplete ? "Upload complete" : "Upload progress"}</span>
+                      <span>{coverUploadProgress}%</span>
+                    </div>
+                    <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                      <div
+                        className={`h-full rounded-full transition-[width] duration-200 ${
+                          coverUploadComplete ? "bg-emerald-600" : "bg-sky-600"
+                        }`}
+                        style={{ width: `${coverUploadProgress}%` }}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between text-[11px] text-neutral-500">
+                      <span>{coverUploadSpeed ?? "—"}</span>
+                      <span>{coverUploadEta ?? "Preparing..."}</span>
+                    </div>
+                  </div>
+                ) : null}
 
                 <div className="text-xs text-neutral-500">Recommended: wide banner (JPG/PNG).</div>
               </div>
@@ -1742,6 +1859,26 @@ async function getSignedUrl(storage_path: string, storage_url?: string | null) {
                   >
                     {uploadBusy ? "Uploading..." : "Upload file"}
                   </button>
+                  {uploadBusy ? (
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between text-xs text-neutral-600">
+                        <span>{uploadComplete ? "Upload complete" : "Upload progress"}</span>
+                        <span>{uploadProgress}%</span>
+                      </div>
+                      <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                        <div
+                          className={`h-full rounded-full transition-[width] duration-200 ${
+                            uploadComplete ? "bg-emerald-700" : "bg-emerald-600"
+                          }`}
+                          style={{ width: `${uploadProgress}%` }}
+                        />
+                      </div>
+                      <div className="flex items-center justify-between text-[11px] text-neutral-500">
+                        <span>{uploadSpeed ?? "—"}</span>
+                        <span>{uploadEta ?? "Preparing..."}</span>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
 

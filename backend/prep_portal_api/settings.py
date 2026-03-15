@@ -181,6 +181,24 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
+
+def _env_int(name: str, default: int | None) -> int | None:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    if raw.lower() == "none":
+        return None
+    try:
+        return int(raw)
+    except Exception:
+        return default
+
+
+# Large course/assignment uploads should be configurable. Django defaults are
+# too small for video/PDF-heavy teacher workflows.
+DATA_UPLOAD_MAX_MEMORY_SIZE = _env_int("DATA_UPLOAD_MAX_MEMORY_SIZE", 524288000)
+FILE_UPLOAD_MAX_MEMORY_SIZE = _env_int("FILE_UPLOAD_MAX_MEMORY_SIZE", 10485760)
+
 # Cloudinary storage (for production uploads)
 if os.getenv("CLOUDINARY_URL"):
     STORAGES = {

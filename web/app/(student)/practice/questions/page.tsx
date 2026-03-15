@@ -274,10 +274,16 @@ export default function Page() {
     order.forEach((k, idx) => indexMap.set(k, idx));
     const completedCount = [...progress.subtopics].filter((k) => indexMap.has(k)).length;
     const baseLevel = subject === "math" ? levels.math : levels.verbal;
-    const effectiveLevel = Math.max(baseLevel, completedCount);
+    const baseCompleted =
+      subject === "verbal"
+        ? Math.max(0, Math.floor(baseLevel / 2))
+        : baseLevel >= 20
+        ? order.length
+        : Math.max(0, baseLevel > 0 ? baseLevel - 1 : 0);
+    const effectiveLevel = Math.max(baseCompleted, completedCount);
 
     const derivedCompletedSubtopics = new Set<string>(progress.subtopics);
-    const completionCap = Math.max(baseLevel, completedCount);
+    const completionCap = effectiveLevel;
     order.forEach((k, idx) => {
       if (idx < completionCap) derivedCompletedSubtopics.add(k);
     });

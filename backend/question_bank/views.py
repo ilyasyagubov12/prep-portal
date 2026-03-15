@@ -260,7 +260,31 @@ def _effective_level(user, subject: str) -> int:
         return 0
     base = _parse_level(prof.math_level if subject == "math" else prof.verbal_level)
     completed = SubtopicProgress.objects.filter(user=user, subject=subject, passed=True).count()
-    return max(base, completed)
+    return max(_display_level_to_unlock_level(subject, base), completed)
+
+
+def _completed_to_level(subject: str, completed: int) -> int:
+    if subject == "verbal":
+        return completed * 2
+    if subject == "math":
+        total = len(subtopic_order("math"))
+        if total and completed >= total:
+            return 20
+        if completed > 0:
+            return completed + 1
+    return completed
+
+
+def _display_level_to_unlock_level(subject: str, level: int) -> int:
+    if subject == "verbal":
+        return max(0, level // 2)
+    if subject == "math":
+        total = len(subtopic_order("math"))
+        if level >= 20:
+            return total
+        if level > 0:
+            return max(0, level - 1)
+    return max(0, level)
 
 
 def _set_level(user, subject: str, level: int):
@@ -455,12 +479,10 @@ class QuestionQuizSubmitView(APIView):
 
                 # update level based on completed subtopics
                 completed = SubtopicProgress.objects.filter(user=request.user, subject=subject, passed=True).count()
-                if subject == "verbal":
-                    completed = completed * 2
                 current_level = _parse_level(
                     request.user.profile.math_level if subject == "math" else request.user.profile.verbal_level
                 )
-                _set_level(request.user, subject, max(current_level, completed))
+                _set_level(request.user, subject, max(current_level, _completed_to_level(subject, completed)))
             else:
                 prog, _ = TopicProgress.objects.get_or_create(user=request.user, subject=subject, topic=topic)
                 prog.best_score = max(prog.best_score or 0, score)
