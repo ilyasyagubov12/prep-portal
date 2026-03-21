@@ -43,6 +43,25 @@ def _practice_accessible_student_ids(practice: ModulePractice):
     return direct_ids
 
 
+def _practice_result_visible_student_ids(practice: ModulePractice):
+    return set(practice.result_visible_students.values_list("id", flat=True))
+
+
+def _practice_results_visible_to_user(practice: ModulePractice, user: User) -> bool:
+    if _is_staff(user):
+        return True
+
+    mode = (practice.result_visibility_mode or "").lower()
+    if not mode:
+        mode = "all" if practice.results_published else "hidden"
+
+    if mode == "all":
+        return True
+    if mode == "selected":
+        return practice.result_visible_students.filter(id=user.id).exists()
+    return False
+
+
 def _serialize_question_for_student(q: ModulePracticeQuestion, choice_order: list | None = None):
     choices = []
     raw_choices = q.choices or []
@@ -310,13 +329,12 @@ class ModulePracticeListView(APIView):
                     else:
                         locked = False
 
-            latest_attempt = (
-                ModulePracticeAttempt.objects.filter(practice=p, student=user)
-                .order_by("-started_at")
-                .first()
-            )
+            student_attempts = ModulePracticeAttempt.objects.filter(practice=p, student=user)
+            attempts_count = student_attempts.count()
+            latest_attempt = student_attempts.order_by("-started_at").first()
+            can_view_results = _practice_results_visible_to_user(p, user)
             attempt_summary = None
-            if latest_attempt and (p.results_published or staff):
+            if latest_attempt and can_view_results:
                 attempt_summary = {
                     "id": str(latest_attempt.id),
                     "status": latest_attempt.status,
@@ -331,6 +349,8 @@ class ModulePracticeListView(APIView):
                     "description": p.description,
                     "is_active": p.is_active,
                     "results_published": p.results_published,
+                    "result_visibility_mode": p.result_visibility_mode,
+                    "can_view_results": can_view_results,
                     "shuffle_questions": p.shuffle_questions,
                     "shuffle_choices": p.shuffle_choices,
                     "allow_retakes": p.allow_retakes,
@@ -348,12 +368,16 @@ class ModulePracticeListView(APIView):
                             "question_count": ModulePracticeQuestion.objects.filter(module=m).count(),
                         }
                         for m in modules
-                    ],
-                    "attempt": attempt_summary,
+                      ],
+                      "attempts_count": attempts_count,
+                      "attempt": attempt_summary,
                     "allowed_student_ids": list(access_qs.values_list("student_id", flat=True)) if staff else None,
                     "allowed_student_count": access_qs.count() if staff else None,
                     "allowed_course_ids": list(p.allowed_courses.values_list("id", flat=True)) if staff else None,
                     "allowed_course_count": p.allowed_courses.count() if staff else None,
+                    "result_visible_student_ids": list(p.result_visible_students.values_list("id", flat=True))
+                    if staff
+                    else None,
                 }
             )
 
@@ -423,7 +447,16 @@ class ModulePracticeUpdateView(APIView):
         if description is not None:
             practice.description = description
         if "results_published" in request.data:
-            practice.results_published = bool(request.data.get("results_published"))
+            next_published = bool(request.data.get("results_published"))
+            practice.results_published = next_published
+            if "result_visibility_mode" not in request.data:
+                practice.result_visibility_mode = "all" if next_published else "hidden"
+        if "result_visibility_mode" in request.data:
+            mode = str(request.data.get("result_visibility_mode") or "hidden").strip().lower()
+            if mode not in {"hidden", "all", "selected"}:
+                return Response({"error": "Invalid result_visibility_mode"}, status=400)
+            practice.result_visibility_mode = mode
+            practice.results_published = mode != "hidden"
         if "is_active" in request.data:
             practice.is_active = bool(request.data.get("is_active"))
         if "shuffle_questions" in request.data:
@@ -1072,10 +1105,15 @@ class ModulePracticeStudentSearchView(APIView):
             return Response({"error": "Forbidden"}, status=403)
 
         q = (request.data.get("q") or "").strip().lower()
+        tag = (request.data.get("tag") or "").strip()
+        course_id = (request.data.get("course_id") or "").strip()
         limit = int(request.data.get("limit") or 50)
         practice_id = request.data.get("practice_id")
+        accessible_only = bool(request.data.get("accessible_only"))
         attempt_counts: dict[str, int] = {}
         access_limits: dict[str, int | None] = {}
+        result_visible_ids: set[str] = set()
+        student_course_map: dict[str, list[dict[str, str]]] = {}
         if practice_id:
             rows = (
                 ModulePracticeAttempt.objects.filter(practice_id=practice_id, status="submitted")
@@ -1087,14 +1125,24 @@ class ModulePracticeStudentSearchView(APIView):
                 "student_id", "attempt_limit"
             )
             access_limits = {str(r["student_id"]): r["attempt_limit"] for r in access_rows}
+            practice = ModulePractice.objects.filter(id=practice_id).first()
+            if practice:
+                result_visible_ids = {str(student_id) for student_id in _practice_result_visible_student_ids(practice)}
 
         qs = Profile.objects.select_related("user").filter(role="student")
-        if practice_id:
+        if practice_id and accessible_only:
             practice = ModulePractice.objects.filter(id=practice_id).first()
             if practice:
                 accessible_ids = _practice_accessible_student_ids(practice)
                 if accessible_ids:
                     qs = qs.filter(user_id__in=accessible_ids)
+                else:
+                    qs = qs.none()
+        if course_id:
+            enrolled_ids = Enrollment.objects.filter(course_id=course_id).values_list("user_id", flat=True)
+            qs = qs.filter(user_id__in=enrolled_ids)
+        if tag:
+            qs = qs.filter(tag__iexact=tag)
         if q:
             qs = qs.filter(
                 models.Q(nickname__icontains=q)
@@ -1102,9 +1150,22 @@ class ModulePracticeStudentSearchView(APIView):
                 | models.Q(user__first_name__icontains=q)
                 | models.Q(user__last_name__icontains=q)
                 | models.Q(student_id__icontains=q)
+                | models.Q(user_id__icontains=q)
             )
 
-        qs = qs.order_by("nickname")[: max(1, min(limit, 200))]
+        qs = qs.order_by("nickname", "user__username")[: max(1, min(limit, 200))]
+        selected_user_ids = [p.user_id for p in qs]
+        if selected_user_ids:
+            enrollment_rows = (
+                Enrollment.objects.filter(user_id__in=selected_user_ids)
+                .select_related("course")
+                .values("user_id", "course_id", "course__title")
+            )
+            for row in enrollment_rows:
+                uid = str(row["user_id"])
+                student_course_map.setdefault(uid, []).append(
+                    {"id": str(row["course_id"]), "title": row["course__title"] or ""}
+                )
         data = []
         for p in qs:
             data.append(
@@ -1115,9 +1176,12 @@ class ModulePracticeStudentSearchView(APIView):
                     "last_name": p.user.last_name,
                     "nickname": p.nickname,
                     "student_id": p.student_id,
+                    "tag": p.tag,
                     "avatar": p.avatar,
                     "attempts_count": attempt_counts.get(str(p.user.id), 0),
                     "access_limit": access_limits.get(str(p.user.id)),
+                    "can_view_results": str(p.user.id) in result_visible_ids,
+                    "courses": student_course_map.get(str(p.user.id), []),
                 }
             )
         return Response({"ok": True, "students": data})
@@ -1137,7 +1201,10 @@ class ModulePracticeStudentLookupView(APIView):
 
         attempt_counts: dict[str, int] = {}
         access_limits: dict[str, int | None] = {}
+        result_visible_ids: set[str] = set()
+        student_course_map: dict[str, list[dict[str, str]]] = {}
         if practice_id:
+            practice = ModulePractice.objects.filter(id=practice_id).first()
             rows = (
                 ModulePracticeAttempt.objects.filter(
                     practice_id=practice_id, status="submitted", student_id__in=student_ids
@@ -1150,8 +1217,21 @@ class ModulePracticeStudentLookupView(APIView):
                 practice_id=practice_id, is_active=True, student_id__in=student_ids
             ).values("student_id", "attempt_limit")
             access_limits = {str(r["student_id"]): r["attempt_limit"] for r in access_rows}
+            if practice:
+                result_visible_ids = {str(student_id) for student_id in _practice_result_visible_student_ids(practice)}
 
         qs = Profile.objects.select_related("user").filter(user_id__in=student_ids)
+        if student_ids:
+            enrollment_rows = (
+                Enrollment.objects.filter(user_id__in=student_ids)
+                .select_related("course")
+                .values("user_id", "course_id", "course__title")
+            )
+            for row in enrollment_rows:
+                uid = str(row["user_id"])
+                student_course_map.setdefault(uid, []).append(
+                    {"id": str(row["course_id"]), "title": row["course__title"] or ""}
+                )
         data = []
         for p in qs:
             data.append(
@@ -1162,9 +1242,12 @@ class ModulePracticeStudentLookupView(APIView):
                     "last_name": p.user.last_name,
                     "nickname": p.nickname,
                     "student_id": p.student_id,
+                    "tag": p.tag,
                     "avatar": p.avatar,
                     "attempts_count": attempt_counts.get(str(p.user.id), 0),
                     "access_limit": access_limits.get(str(p.user.id)),
+                    "can_view_results": str(p.user.id) in result_visible_ids,
+                    "courses": student_course_map.get(str(p.user.id), []),
                 }
             )
         return Response({"ok": True, "students": data})
@@ -1230,6 +1313,44 @@ class ModulePracticeAccessSetView(APIView):
             access_rows
         )
         return Response({"ok": True, "allowed_student_count": students.count()})
+
+
+class ModulePracticeResultVisibilitySetView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request):
+        if not _is_staff(request.user):
+            return Response({"error": "Forbidden"}, status=403)
+
+        pid = request.data.get("practice_id")
+        mode = str(request.data.get("result_visibility_mode") or "hidden").strip().lower()
+        student_ids = request.data.get("student_ids") or []
+        if not pid:
+            return Response({"error": "practice_id required"}, status=400)
+        if mode not in {"hidden", "all", "selected"}:
+            return Response({"error": "Invalid result_visibility_mode"}, status=400)
+        if not isinstance(student_ids, list):
+            return Response({"error": "student_ids must be list"}, status=400)
+
+        try:
+            practice = ModulePractice.objects.get(id=pid)
+        except ModulePractice.DoesNotExist:
+            return Response({"error": "Not found"}, status=404)
+
+        students = User.objects.filter(id__in=student_ids)
+        practice.result_visibility_mode = mode
+        practice.results_published = mode != "hidden"
+        practice.save(update_fields=["result_visibility_mode", "results_published", "updated_at"])
+        practice.result_visible_students.set(students)
+
+        return Response(
+            {
+                "ok": True,
+                "result_visibility_mode": practice.result_visibility_mode,
+                "visible_student_count": students.count(),
+            }
+        )
 
 
 class ModulePracticeStartView(APIView):
@@ -1407,7 +1528,7 @@ class ModulePracticeReviewView(APIView):
 
         if not practice:
             return Response({"error": "Not found"}, status=404)
-        if not practice.results_published and not staff:
+        if not _practice_results_visible_to_user(practice, user):
             return Response({"error": "Results not published"}, status=403)
         if not attempt:
             return Response({"error": "No submitted attempt"}, status=404)
@@ -1496,6 +1617,10 @@ class ModulePracticeAttemptsView(APIView):
         else:
             target_id = user.id
 
+        can_view_results = _practice_results_visible_to_user(practice, user)
+        if not can_view_results and not staff:
+            return Response({"error": "Results not published"}, status=403)
+
         attempts = (
             ModulePracticeAttempt.objects.filter(practice=practice, student_id=target_id, status="submitted")
             .order_by("-completed_at", "-started_at")
@@ -1517,6 +1642,8 @@ class ModulePracticeAttemptsView(APIView):
             {
                 "ok": True,
                 "results_published": practice.results_published,
+                "result_visibility_mode": practice.result_visibility_mode,
+                "can_view_results": can_view_results,
                 "attempts": data,
             }
         )
@@ -1581,7 +1708,7 @@ class ModulePracticeSubmitView(APIView):
         attempt.completed_at = timezone.now()
         attempt.save()
 
-        if attempt.practice.results_published or _is_staff(request.user):
+        if _practice_results_visible_to_user(attempt.practice, request.user):
             return Response(
                 {
                     "ok": True,

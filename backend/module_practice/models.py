@@ -8,6 +8,11 @@ class ModulePractice(models.Model):
         ("sat", "SAT"),
         ("act", "ACT"),
     ]
+    RESULT_VISIBILITY_CHOICES = [
+        ("hidden", "Hidden"),
+        ("all", "Visible to all students"),
+        ("selected", "Visible to selected students only"),
+    ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     exam_type = models.CharField(max_length=10, choices=EXAM_TYPE_CHOICES, default="sat")
@@ -15,6 +20,11 @@ class ModulePractice(models.Model):
     description = models.TextField(blank=True, null=True)
     is_active = models.BooleanField(default=True)
     results_published = models.BooleanField(default=False)
+    result_visibility_mode = models.CharField(
+        max_length=20,
+        choices=RESULT_VISIBILITY_CHOICES,
+        default="hidden",
+    )
     shuffle_questions = models.BooleanField(default=True)
     shuffle_choices = models.BooleanField(default=False)
     allow_retakes = models.BooleanField(default=True)
@@ -23,6 +33,11 @@ class ModulePractice(models.Model):
         "courses.Course",
         blank=True,
         related_name="module_practices_allowed",
+    )
+    result_visible_students = models.ManyToManyField(
+        settings.AUTH_USER_MODEL,
+        blank=True,
+        related_name="module_practices_result_visible",
     )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,

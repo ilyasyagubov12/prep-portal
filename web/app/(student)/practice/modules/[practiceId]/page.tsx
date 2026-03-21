@@ -745,7 +745,7 @@ export default function Page() {
   }
 
   async function refreshCurrentQuestion() {
-    if (!canEditQuestions || !currentQ) return;
+    if (!canEditQuestions || !currentQ || resultsReview) return;
     const now = Date.now();
     if (now - lastQuestionRefresh.current < 1500) return;
     lastQuestionRefresh.current = now;
@@ -799,7 +799,7 @@ export default function Page() {
   }
 
   useEffect(() => {
-    if (!canEditQuestions) return;
+    if (!canEditQuestions || resultsReview) return;
     const handleFocus = () => {
       if (document.hidden) return;
       refreshCurrentQuestion();
@@ -810,7 +810,7 @@ export default function Page() {
       window.removeEventListener("focus", handleFocus);
       document.removeEventListener("visibilitychange", handleFocus);
     };
-  }, [canEditQuestions, currentQ?.id]);
+  }, [canEditQuestions, currentQ?.id, resultsReview]);
   const resolvedImageUrl =
     imageUrl && imageUrl.startsWith("/") ? `${API_BASE}${imageUrl}` : imageUrl;
   const resolveChoiceImage = (url?: string | null) => {

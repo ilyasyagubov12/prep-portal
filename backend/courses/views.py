@@ -3,10 +3,12 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser
+from django.http import FileResponse, StreamingHttpResponse
 from django.utils import timezone
 from django.db import transaction
 from django.contrib.auth import get_user_model
 from django.core.files.storage import default_storage
+from urllib.request import urlopen
 import os
 import cloudinary.uploader
 import re
@@ -31,6 +33,29 @@ def _is_teacher(user: User) -> bool:
     prof = getattr(user, "profile", None)
     role = (getattr(prof, "role", None) or "").lower()
     return role == "teacher"
+
+
+def _can_access_course(user: User, course: Course) -> bool:
+    if _require_admin(user):
+        return True
+    if CourseTeacher.objects.filter(course=course, teacher=user).exists():
+        return True
+    return Enrollment.objects.filter(course=course, user=user).exists()
+
+
+def _node_is_visible(node: CourseNode) -> bool:
+    if node.kind == "assignment":
+        return bool(getattr(node.assignment, "status", None) == "published")
+    if node.kind == "quiz" and node.quiz and getattr(node.quiz, "is_active", True) is False:
+        return False
+    if node.published:
+        return True
+    if not node.publish_at:
+        return False
+    try:
+        return node.publish_at <= timezone.now()
+    except Exception:
+        return False
 
 
 def _cloudinary_public_id_from_url(url: str) -> str | None:
@@ -417,9 +442,67 @@ class CourseNodesListView(APIView):
         data = CourseNodeSerializer(
             qs,
             many=True,
-            context={"assignments_map": assignments_map, "quizzes_map": quizzes_map},
+            context={"assignments_map": assignments_map, "quizzes_map": quizzes_map, "request": request},
         ).data
         return Response({"ok": True, "nodes": data})
+
+
+class CourseNodeFileView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        node_id = request.query_params.get("node_id")
+        if not node_id:
+            return Response({"error": "node_id required"}, status=400)
+
+        try:
+            node = (
+                CourseNode.objects.select_related("course")
+                .get(id=node_id, kind="file")
+            )
+        except CourseNode.DoesNotExist:
+            return Response({"error": "File not found"}, status=404)
+
+        if not _can_access_course(request.user, node.course):
+            return Response({"error": "Forbidden"}, status=403)
+
+        can_manage = _require_admin(request.user) or CourseTeacher.objects.filter(
+            course=node.course, teacher=request.user
+        ).exists()
+        if not can_manage and not _node_is_visible(node):
+            return Response({"error": "Forbidden"}, status=403)
+
+        if not node.storage_path:
+            return Response({"error": "File missing"}, status=404)
+
+        as_attachment = request.query_params.get("download") in {"1", "true", "yes"}
+        filename = node.name or os.path.basename(str(node.storage_path)) or "file"
+        content_type = node.mime_type or "application/octet-stream"
+
+        if str(node.storage_path).startswith("http://") or str(node.storage_path).startswith("https://"):
+            try:
+                remote = urlopen(str(node.storage_path))
+            except Exception:
+                return Response({"error": "Unable to open file"}, status=404)
+
+            response = StreamingHttpResponse(remote, content_type=content_type)
+            disposition = "attachment" if as_attachment else "inline"
+            response["Content-Disposition"] = f'{disposition}; filename="{filename}"'
+            if getattr(node, "size_bytes", None):
+                response["Content-Length"] = str(node.size_bytes)
+            return response
+
+        try:
+            handle = default_storage.open(node.storage_path, "rb")
+        except Exception:
+            return Response({"error": "Unable to open file"}, status=404)
+
+        return FileResponse(
+            handle,
+            as_attachment=as_attachment,
+            filename=filename,
+            content_type=content_type,
+        )
 
 
 class CourseNodesCreateView(APIView):

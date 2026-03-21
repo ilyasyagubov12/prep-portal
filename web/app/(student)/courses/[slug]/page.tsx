@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useParams, useRouter } from "next/navigation";
 
 type Course = {
@@ -479,6 +479,7 @@ export default function CourseDetailPage() {
   const [coverUploadSpeed, setCoverUploadSpeed] = useState<string | null>(null);
   const [coverUploadEta, setCoverUploadEta] = useState<string | null>(null);
   const [coverUploadComplete, setCoverUploadComplete] = useState(false);
+  const fileObjectUrlCache = useRef<Record<string, string>>({});
 
   // Calendar
   const [events, setEvents] = useState<CourseEvent[]>([]);
@@ -495,6 +496,17 @@ export default function CourseDetailPage() {
   const [creatingEvent, setCreatingEvent] = useState(false);
 
   const canManage = isTeacherOrAdmin(profile);
+
+  useEffect(() => {
+    return () => {
+      Object.values(fileObjectUrlCache.current).forEach((url) => {
+        try {
+          URL.revokeObjectURL(url);
+        } catch {}
+      });
+      fileObjectUrlCache.current = {};
+    };
+  }, []);
 
   const sortedNodes = useMemo(() => {
     const copy = [...nodes];
@@ -886,17 +898,6 @@ export default function CourseDetailPage() {
     void loadGradebook(course.id);
   }, [course?.id, accessToken, gradebookLoaded]);
 
-async function getSignedUrl(storage_path: string, storage_url?: string | null) {
-  const base = process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") || "";
-  if (storage_url) {
-    if (storage_url.startsWith("http://") || storage_url.startsWith("https://")) return storage_url;
-    if (storage_url.startsWith("/")) return `${base}${storage_url}`;
-    return `${base}/${storage_url}`;
-  }
-  if (storage_path.startsWith("http://") || storage_path.startsWith("https://")) return storage_path;
-  return `${base}/media/${storage_path}`;
-}
-
   async function loadGradebook(courseId: string) {
     setGradebookLoading(true);
     setGradebookError(null);
@@ -965,12 +966,31 @@ async function getSignedUrl(storage_path: string, storage_url?: string | null) {
     }
   }
 
+  async function getProtectedNodeUrl(node: CourseNode, download = false) {
+    if (!accessToken) throw new Error("Not logged in.");
+    const cacheKey = `${node.id}:${download ? "download" : "inline"}`;
+    if (fileObjectUrlCache.current[cacheKey]) return fileObjectUrlCache.current[cacheKey];
+
+    const base = process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") || "";
+    const res = await fetch(
+      `${base}/api/course-nodes/file/?node_id=${encodeURIComponent(node.id)}${download ? "&download=1" : ""}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+    if (!res.ok) {
+      const json = await res.json().catch(() => null);
+      throw new Error(json?.error || "Failed to open file");
+    }
+    const blob = await res.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    fileObjectUrlCache.current[cacheKey] = objectUrl;
+    return objectUrl;
+  }
+
   async function onPreview(node: CourseNode) {
     if (!node.storage_path) return;
     try {
-      const url = await getSignedUrl(node.storage_path, (node as any).storage_url);
-      const hint = node.mime_type ? node.storage_path : url || node.storage_path;
-      const t = guessPreviewType(hint, node.mime_type);
+      const t = guessPreviewType(node.storage_path || node.name || "", node.mime_type);
+      const url = await getProtectedNodeUrl(node, false);
       setPreviewType(t);
       setPreviewUrl(url);
       setPreviewTitle(node.name);
@@ -986,8 +1006,13 @@ async function getSignedUrl(storage_path: string, storage_url?: string | null) {
   async function onDownload(node: CourseNode) {
     if (!node.storage_path) return;
     try {
-      const url = await getSignedUrl(node.storage_path, (node as any).storage_url);
-      window.open(url, "_blank");
+      const url = await getProtectedNodeUrl(node, true);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = safeFileName(node.name || "file");
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
     } catch (e: any) {
       alert(e?.message ?? "Download failed");
     }

@@ -77,6 +77,8 @@ type Practice = {
   description: string | null;
   is_active: boolean;
   results_published: boolean;
+  result_visibility_mode?: "hidden" | "all" | "selected" | null;
+  can_view_results?: boolean;
   shuffle_questions?: boolean;
   shuffle_choices?: boolean;
   allow_retakes?: boolean;
@@ -87,6 +89,7 @@ type Practice = {
   allowed_student_count?: number | null;
   allowed_course_ids?: string[] | null;
   allowed_course_count?: number | null;
+  result_visible_student_ids?: string[] | null;
   modules: PracticeModule[];
   attempt?: PracticeAttempt | null;
   attempts_count?: number | null;
@@ -99,9 +102,12 @@ type Student = {
   last_name?: string | null;
   nickname?: string | null;
   student_id?: string | null;
+  tag?: string | null;
   avatar?: string | null;
   attempts_count?: number | null;
   access_limit?: number | null;
+  can_view_results?: boolean | null;
+  courses?: { id: string; title: string }[] | null;
 };
 
 type Course = {
@@ -112,7 +118,7 @@ type Course = {
 
 function isTeacherOrAdmin(p: Profile | null) {
   if (!p) return false;
-  const role = (p.role ?? "").toLowerCase();
+  const role = (p.role || "").toLowerCase();
   return role === "teacher" || role === "admin" || !!p.is_admin;
 }
 
@@ -418,17 +424,12 @@ function ExamSection({
   loadAttempts: (practiceId: string) => void;
   onReviewAttempt: (practiceId: string, attemptId: string, showScoreDetails?: boolean) => void;
 }) {
-  const [retakeDraft, setRetakeDraft] = useState<Record<string, string>>({});
   const [attemptsOpen, setAttemptsOpen] = useState<Record<string, boolean>>({});
   const [activePanels, setActivePanels] = useState<
     Record<string, "results" | "access" | "builder" | null>
   >({});
   const openManage = (practiceId: string) => setManageId(practiceId);
   const closeManage = () => setManageId(null);
-
-  useEffect(() => {
-    setRetakeDraft({});
-  }, [practices]);
 
   useEffect(() => {
     if (!canManage || !manageId) return;
@@ -441,13 +442,16 @@ function ExamSection({
   useEffect(() => {
     if (!accessToken || practices.length === 0) return;
     practices.forEach((p) => {
+      const canViewResults = canManage || !!p.can_view_results;
+      if (!canViewResults) return;
       if (!attemptsByPractice[p.id] && !attemptsLoading[p.id]) {
         loadAttempts(p.id);
       }
     });
-  }, [accessToken, practices, attemptsByPractice, attemptsLoading, loadAttempts]);
+  }, [accessToken, practices, attemptsByPractice, attemptsLoading, loadAttempts, canManage]);
 
-  function toggleAttempts(practiceId: string) {
+  function toggleAttempts(practiceId: string, canViewResults: boolean) {
+    if (!canViewResults) return;
     const next = !attemptsOpen[practiceId];
     setAttemptsOpen((prev) => ({ ...prev, [practiceId]: next }));
     if (next && !attemptsByPractice[practiceId] && !attemptsLoading[practiceId]) {
@@ -474,6 +478,8 @@ function ExamSection({
             const activePanel = activePanels[p.id] ?? null;
             const attemptsCount =
               attemptsByPractice[p.id]?.length ?? (typeof p.attempts_count === "number" ? p.attempts_count : 0);
+            const canViewResults = canManage || !!p.can_view_results;
+            const resultMode = p.result_visibility_mode ?? (p.results_published ? "all" : "hidden");
             return (
               <div
                 key={p.id}
@@ -500,8 +506,10 @@ function ExamSection({
                         Unlocked
                       </span>
                     )}
-                    {p.results_published ? (
+                    {resultMode === "all" ? (
                       <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-700">Results live</span>
+                    ) : resultMode === "selected" ? (
+                      <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-semibold text-violet-700">Results limited</span>
                     ) : (
                       <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700">Results hidden</span>
                     )}
@@ -512,9 +520,14 @@ function ExamSection({
 
               <div className="mt-5">
                 <button
-                  className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                  className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold ${
+                    canViewResults
+                      ? "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+                      : "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
+                  }`}
                   type="button"
-                  onClick={() => toggleAttempts(p.id)}
+                  onClick={() => toggleAttempts(p.id, canViewResults)}
+                  disabled={!canViewResults}
                 >
                   {attemptsOpen[p.id] ? "Hide attempts" : "View my attempts"}
                   <span className="rounded-full bg-white px-2 py-0.5 text-[10px] text-slate-500">
@@ -523,7 +536,7 @@ function ExamSection({
                 </button>
                 {attemptsOpen[p.id] ? (
                   <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm">
-                    {!canManage && !p.results_published ? (
+                    {!canManage && !canViewResults ? (
                       <div className="text-xs text-slate-500">Results are hidden for this test.</div>
                     ) : attemptsLoading[p.id] ? (
                       <div className="text-xs text-slate-500">Loading attempts...</div>
@@ -549,7 +562,7 @@ function ExamSection({
                               </div>
                             </div>
                             <div className="mt-2 flex flex-wrap gap-2">
-                              {p.results_published && attempt.module_scores
+                              {canViewResults && attempt.module_scores
                                 ? Object.entries(attempt.module_scores).map(([key, val]) => {
                                     const [subject, mod] = key.split("-");
                                     const label = subject ? `${subject.toUpperCase()} M${mod}` : key;
@@ -570,7 +583,7 @@ function ExamSection({
                                     );
                                   })
                                 : null}
-                              {p.results_published &&
+                              {canViewResults &&
                               typeof attempt.correct === "number" &&
                               typeof attempt.total === "number" ? (
                                 <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-700">
@@ -582,18 +595,18 @@ function ExamSection({
                               <button
                                 className="rounded-full border border-slate-900 px-3 py-1 text-[11px] font-semibold text-slate-900 hover:bg-slate-50 disabled:opacity-60"
                                 type="button"
-                                disabled={!p.results_published}
+                                disabled={!canViewResults}
                                 onClick={() => onReviewAttempt(p.id, attempt.id)}
                               >
-                                {p.results_published ? "Review attempt" : "Results hidden"}
+                                {canViewResults ? "Review attempt" : "Results hidden"}
                               </button>
                               <button
                                 className="rounded-full border px-3 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
                                 type="button"
-                                disabled={!p.results_published}
+                                disabled={!canViewResults}
                                 onClick={() => onReviewAttempt(p.id, attempt.id, true)}
                               >
-                                {p.results_published ? "View score report" : "Results hidden"}
+                                {canViewResults ? "View score report" : "Results hidden"}
                               </button>
                             </div>
                             </div>
@@ -676,25 +689,19 @@ function ExamSection({
                     Results overview
                   </div>
                   <PracticeResultsPanel
-                    practiceId={p.id}
+                    practice={p}
                     token={accessToken}
                     onReviewAttempt={(attemptId, showScoreDetails) => onReviewAttempt(p.id, attemptId, showScoreDetails)}
                     modules={p.modules}
-                    resultsPublished={!!p.results_published}
+                    refresh={refresh}
                   />
                 </div>
               ) : null}
 
               {canManage && manageId === p.id && activePanel === "access" ? (
                 <div className="mt-5 space-y-4 border-t pt-4">
+                  <PracticeResultVisibilityManager practice={p} token={accessToken} refresh={refresh} />
                   <div className="flex flex-wrap items-center gap-6">
-                    <ToggleSwitch
-                      checked={!!p.results_published}
-                      onChange={() => togglePractice(p.id, { results_published: !p.results_published })}
-                      label="Results"
-                      onLabel="Published"
-                      offLabel="Hidden"
-                    />
                     <ToggleSwitch
                       checked={!!p.is_active}
                       onChange={() => togglePractice(p.id, { is_active: !p.is_active })}
@@ -710,7 +717,12 @@ function ExamSection({
                       Delete mock
                     </button>
                   </div>
-                  <PracticeAccessManager practice={p} token={accessToken} refresh={refresh} />
+                  <PracticeAccessManager
+                    practice={p}
+                    token={accessToken}
+                    refresh={refresh}
+                    onUpdatePractice={togglePractice}
+                  />
                 </div>
               ) : null}
 
@@ -739,51 +751,6 @@ function ExamSection({
                         />
                         Shuffle answer choices
                       </label>
-                      <label className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={p.allow_retakes ?? true}
-                          onChange={() => togglePractice(p.id, { allow_retakes: !(p.allow_retakes ?? true) })}
-                        />
-                        Allow retakes
-                      </label>
-                      <label className="flex flex-wrap items-center gap-2">
-                        <span className="text-[11px] text-slate-500">Retake limit</span>
-                        <input
-                          type="number"
-                          min={1}
-                          placeholder="Unlimited"
-                          className="w-28 rounded-md border px-2 py-1 text-xs"
-                          value={retakeDraft[p.id] ?? (p.retake_limit ?? "").toString()}
-                          onChange={(e) =>
-                            setRetakeDraft((prev) => ({ ...prev, [p.id]: e.target.value }))
-                          }
-                          onBlur={async () => {
-                            const raw = retakeDraft[p.id];
-                            if (raw === undefined) return;
-                            if (!raw) {
-                              await togglePractice(p.id, { retake_limit: null });
-                              setRetakeDraft((prev) => {
-                                const next = { ...prev };
-                                delete next[p.id];
-                                return next;
-                              });
-                              return;
-                            }
-                            const nextVal = Number(raw);
-                            if (!Number.isNaN(nextVal)) {
-                              await togglePractice(p.id, { retake_limit: Math.max(1, nextVal) });
-                              setRetakeDraft((prev) => {
-                                const next = { ...prev };
-                                delete next[p.id];
-                                return next;
-                              });
-                            }
-                          }}
-                          disabled={p.allow_retakes === false}
-                        />
-                        <span className="text-[10px] text-slate-400">Total attempts allowed</span>
-                      </label>
                     </div>
                   </div>
 
@@ -807,10 +774,12 @@ function PracticeAccessManager({
   practice,
   token,
   refresh,
+  onUpdatePractice,
 }: {
   practice: Practice;
   token: string | null;
   refresh: () => void;
+  onUpdatePractice: (practiceId: string, payload: Record<string, any>) => Promise<void>;
 }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Student[]>([]);
@@ -821,20 +790,25 @@ function PracticeAccessManager({
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [courses, setCourses] = useState<Course[]>([]);
-  const [courseQuery, setCourseQuery] = useState("");
-  const [selectedCourseIds, setSelectedCourseIds] = useState<string[]>([]);
-  const [expandedCourses, setExpandedCourses] = useState<Record<string, boolean>>({});
-  const [courseMembers, setCourseMembers] = useState<Record<string, Student[]>>({});
-  const [courseMembersLoading, setCourseMembersLoading] = useState<Record<string, boolean>>({});
-  const [courseMembersError, setCourseMembersError] = useState<Record<string, string | null>>({});
+  const [allowRetakesDraft, setAllowRetakesDraft] = useState(practice.allow_retakes ?? true);
+  const [retakeValue, setRetakeValue] = useState((practice.retake_limit ?? "").toString());
+  const [savingRetakes, setSavingRetakes] = useState(false);
+  const [studentFilterCourseId, setStudentFilterCourseId] = useState("");
+  const [studentFilterTag, setStudentFilterTag] = useState("");
+  const [selectedFilterCourseId, setSelectedFilterCourseId] = useState("");
+  const [selectedFilterTag, setSelectedFilterTag] = useState("");
 
   useEffect(() => {
     setSelectedIds(practice.allowed_student_ids ?? []);
   }, [practice.allowed_student_ids]);
 
   useEffect(() => {
-    setSelectedCourseIds(practice.allowed_course_ids ?? []);
-  }, [practice.allowed_course_ids]);
+    setAllowRetakesDraft(practice.allow_retakes ?? true);
+  }, [practice.allow_retakes]);
+
+  useEffect(() => {
+    setRetakeValue((practice.retake_limit ?? "").toString());
+  }, [practice.retake_limit]);
 
   useEffect(() => {
     if (!token) return;
@@ -856,35 +830,6 @@ function PracticeAccessManager({
       cancelled = true;
     };
   }, [token]);
-
-  async function loadCourseMembers(courseId: string) {
-    if (!token) return;
-    setCourseMembersLoading((prev) => ({ ...prev, [courseId]: true }));
-    setCourseMembersError((prev) => ({ ...prev, [courseId]: null }));
-    try {
-      const res = await fetch(`${API_BASE}/api/courses/people/?course_id=${courseId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const json = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(json?.error || "Failed to load members");
-      setCourseMembers((prev) => ({ ...prev, [courseId]: json?.students ?? [] }));
-    } catch (e: any) {
-      setCourseMembersError((prev) => ({ ...prev, [courseId]: e?.message ?? "Failed to load members" }));
-      setCourseMembers((prev) => ({ ...prev, [courseId]: [] }));
-    } finally {
-      setCourseMembersLoading((prev) => ({ ...prev, [courseId]: false }));
-    }
-  }
-
-  function toggleCourseMembers(courseId: string) {
-    setExpandedCourses((prev) => {
-      const next = !prev[courseId];
-      if (next && !courseMembers[courseId] && !courseMembersLoading[courseId]) {
-        loadCourseMembers(courseId);
-      }
-      return { ...prev, [courseId]: next };
-    });
-  }
 
   useEffect(() => {
     if (!token) return;
@@ -950,6 +895,8 @@ function PracticeAccessManager({
         },
         body: JSON.stringify({
           q: showAll ? "" : query.trim(),
+          tag: studentFilterTag,
+          course_id: studentFilterCourseId,
           limit: 100,
           practice_id: practice.id,
         }),
@@ -968,36 +915,62 @@ function PracticeAccessManager({
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   }
 
-  const filteredCourses = useMemo(() => {
-    const q = courseQuery.trim().toLowerCase();
-    if (!q) return courses;
-    return courses.filter((c) => {
-      const title = (c.title || "").toLowerCase();
-      const slug = (c.slug || "").toLowerCase();
-      return title.includes(q) || slug.includes(q);
+  const availableTags = useMemo(() => {
+    const tags = new Set<string>();
+    [...results, ...selectedDetails].forEach((student) => {
+      const tag = (student.tag || "").trim();
+      if (tag) tags.add(tag);
     });
-  }, [courses, courseQuery]);
+    return Array.from(tags).sort((a, b) => a.localeCompare(b));
+  }, [results, selectedDetails]);
 
-  function toggleCourse(id: string) {
-    setSelectedCourseIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  const filteredResults = useMemo(() => {
+    return results.filter((student) => {
+      if (studentFilterTag && (student.tag || "") !== studentFilterTag) return false;
+      if (studentFilterCourseId && !(student.courses || []).some((course) => course.id === studentFilterCourseId)) {
+        return false;
+      }
+      return true;
+    });
+  }, [results, studentFilterCourseId, studentFilterTag]);
+
+  const filteredSelectedIds = useMemo(() => {
+    return selectedIds.filter((id) => {
+      const student = selectedDetails.find((detail) => detail.user_id === id) || results.find((detail) => detail.user_id === id);
+      if (!student) return true;
+      if (selectedFilterTag && (student.tag || "") !== selectedFilterTag) return false;
+      if (selectedFilterCourseId && !(student.courses || []).some((course) => course.id === selectedFilterCourseId)) {
+        return false;
+      }
+      return true;
+    });
+  }, [selectedIds, selectedDetails, results, selectedFilterCourseId, selectedFilterTag]);
+
+  const selectedStudentCount = selectedIds.length;
+  const accessModeLabel =
+    selectedStudentCount === 0 ? "Open to all students" : `Restricted to ${selectedStudentCount} student${selectedStudentCount === 1 ? "" : "s"}`;
+
+  function buildStudentLimits() {
+    const student_limits: Record<string, number | null> = {};
+    selectedIds.forEach((id) => {
+      const raw = limitOverrides[id];
+      if (!raw) {
+        student_limits[id] = null;
+        return;
+      }
+      const num = Number(raw);
+      student_limits[id] = Number.isNaN(num) ? null : Math.max(1, num);
+    });
+    return student_limits;
   }
 
-  async function saveAccess() {
+  async function saveAccess(successMessage = "Access saved.") {
     if (!token) return;
     setLoading(true);
     setError(null);
     setMessage(null);
     try {
-      const student_limits: Record<string, number | null> = {};
-      selectedIds.forEach((id) => {
-        const raw = limitOverrides[id];
-        if (!raw) {
-          student_limits[id] = null;
-          return;
-        }
-        const num = Number(raw);
-        student_limits[id] = Number.isNaN(num) ? null : Math.max(1, num);
-      });
+      const student_limits = buildStudentLimits();
       const res = await fetch(`${API_BASE}/api/module-practice/access/set/`, {
         method: "POST",
         headers: {
@@ -1008,12 +981,12 @@ function PracticeAccessManager({
           practice_id: practice.id,
           student_ids: selectedIds,
           student_limits,
-          course_ids: selectedCourseIds,
+          course_ids: [],
         }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || "Failed to save access");
-      setMessage("Access saved.");
+      setMessage(successMessage);
       refresh();
     } catch (e: any) {
       setError(e?.message ?? "Failed to save access");
@@ -1022,235 +995,339 @@ function PracticeAccessManager({
     }
   }
 
+  async function saveSingleStudentLimit(studentId: string) {
+    await saveAccess(`Attempt limit updated for ${studentId}.`);
+  }
+
+  async function saveRetakeSettings() {
+    setSavingRetakes(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const payload: Record<string, any> = { allow_retakes: allowRetakesDraft };
+      if (allowRetakesDraft) {
+        if (!retakeValue) {
+          payload.retake_limit = null;
+        } else {
+          const nextVal = Number(retakeValue);
+          payload.retake_limit = Number.isNaN(nextVal) ? null : Math.max(1, nextVal);
+        }
+      } else {
+        payload.retake_limit = null;
+      }
+      await onUpdatePractice(practice.id, payload);
+      setMessage("Retake settings saved.");
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to save retake settings");
+    } finally {
+      setSavingRetakes(false);
+    }
+  }
+
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4">
-      <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Access control</div>
-      <div className="mt-2 text-xs text-slate-500">
-        Choose which students or course groups can take this practice test. If none are selected, all students can
-        access it.
-      </div>
-
-      {error ? <div className="mt-2 text-xs text-red-600">{error}</div> : null}
-      {message ? <div className="mt-2 text-xs text-emerald-600">{message}</div> : null}
-
-      <div className="mt-3 flex flex-wrap gap-2 items-center">
-        <input
-          className="min-w-[220px] flex-1 rounded-lg border px-3 py-2 text-xs"
-          placeholder="Search by name, username, or student ID"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-        <button
-          className="rounded-lg border px-3 py-2 text-xs font-semibold"
-          type="button"
-          onClick={() => searchStudents(false)}
-          disabled={loading}
-        >
-          Search
-        </button>
-        <button
-          className="rounded-lg border px-3 py-2 text-xs font-semibold"
-          type="button"
-          onClick={() => searchStudents(true)}
-          disabled={loading}
-        >
-          Show all
-        </button>
-        <button
-          className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white"
-          type="button"
-          onClick={saveAccess}
-          disabled={loading}
-        >
-          Save access
-        </button>
-      </div>
-
-      <div className="mt-3 grid gap-3 lg:grid-cols-2">
-        <div className="rounded-lg border bg-slate-50 p-3">
-          <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Search results</div>
-          <div className="mt-2 grid gap-2 max-h-[220px] overflow-y-auto">
-            {results.length === 0 ? (
-              <div className="text-xs text-slate-500">No students loaded.</div>
-            ) : (
-              results.map((s) => {
-                const picked = selectedIds.includes(s.user_id);
-                const name = s.nickname || `${s.first_name ?? ""} ${s.last_name ?? ""}`.trim() || s.username;
-                const attempts = s.attempts_count ?? 0;
-                const accessLimit = s.access_limit;
-                return (
-                  <button
-                    key={s.user_id}
-                    className={`rounded-lg border px-3 py-2 text-left text-xs ${
-                      picked ? "border-blue-500 bg-blue-50" : "border-slate-200"
-                    }`}
-                    onClick={() => toggleSelect(s.user_id)}
-                    type="button"
-                  >
-                    <div className="font-semibold text-slate-700">{name}</div>
-                    <div className="text-[10px] text-slate-400">
-                      {s.username} {s.student_id ? `· ${s.student_id}` : ""}
-                    </div>
-                    <div className="text-[10px] text-slate-500">Attempts: {attempts}</div>
-                    <div className="text-[10px] text-slate-500">
-                      Limit: {accessLimit != null ? accessLimit : "Default"}
-                    </div>
-                  </button>
-                );
-              })
-            )}
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_320px_340px]">
+        <div className="min-w-0">
+          <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Access control</div>
+          <div className="mt-2 text-xs text-slate-500">
+            Choose which students can take this practice test. If none are selected, all students can access it.
           </div>
         </div>
-
-        <div className="rounded-lg border bg-slate-50 p-3">
-          <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Selected</div>
-          <div className="mt-2 grid gap-2 max-h-[220px] overflow-y-auto">
-            {selectedIds.length === 0 ? (
-              <div className="text-xs text-slate-500">No students selected.</div>
-            ) : (
-              selectedIds.map((id) => {
-                const s = selectedDetails.find((r) => r.user_id === id) || results.find((r) => r.user_id === id);
-                const attempts = s?.attempts_count ?? 0;
-                return (
-                  <div key={id} className="rounded-lg border border-slate-200 px-3 py-2 text-xs">
-                    <div className="font-semibold text-slate-700">
-                      {s?.nickname || `${s?.first_name ?? ""} ${s?.last_name ?? ""}`.trim() || s?.username || id}
-                    </div>
-                    <div className="text-[10px] text-slate-500">Attempts: {attempts}</div>
-                    <div className="mt-2 flex items-center gap-2 text-[10px] text-slate-500">
-                      <span>Limit</span>
-                      <input
-                        type="number"
-                        min={1}
-                        placeholder="Default"
-                        className="w-20 rounded border px-2 py-1 text-[10px]"
-                        value={limitOverrides[id] ?? ""}
-                        onChange={(e) =>
-                          setLimitOverrides((prev) => ({ ...prev, [id]: e.target.value }))
-                        }
-                      />
-                      <span className="text-slate-400">blank = default</span>
-                    </div>
-                    <button
-                      className="mt-1 text-[10px] text-red-600"
-                      type="button"
-                      onClick={() => toggleSelect(id)}
-                    >
-                      Remove
-                    </button>
-                  </div>
-                );
-              })
-            )}
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-right">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">Current mode</div>
+          <div className="mt-1 text-sm font-semibold text-slate-800">{accessModeLabel}</div>
+          <div className="mt-2 flex flex-wrap justify-end gap-2 text-[11px]">
+            <span className="rounded-full bg-white px-2.5 py-1 text-slate-600">{selectedStudentCount} students</span>
+          </div>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">Retake settings</div>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-2 text-xs font-medium text-slate-700">
+              <input
+                type="checkbox"
+                checked={allowRetakesDraft}
+                onChange={() => setAllowRetakesDraft((prev) => !prev)}
+              />
+              Allow retakes
+            </label>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+              <span>Retake limit</span>
+              <input
+                type="number"
+                min={1}
+                placeholder="Unlimited"
+                className="w-28 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs"
+                value={retakeValue}
+                onChange={(e) => setRetakeValue(e.target.value)}
+                disabled={!allowRetakesDraft}
+              />
+              <span className="text-[10px] text-slate-400">Total attempts allowed</span>
+            </div>
+            <button
+              className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+              type="button"
+              onClick={saveRetakeSettings}
+              disabled={savingRetakes}
+            >
+              Save retake settings
+            </button>
           </div>
         </div>
       </div>
 
-      <div className="mt-4 rounded-lg border bg-slate-50 p-3">
-        <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Course groups</div>
-        <div className="mt-1 text-xs text-slate-500">
-          Grant access to all students enrolled in selected courses.
+      {error ? <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">{error}</div> : null}
+      {message ? <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">{message}</div> : null}
+
+      <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">Student access</div>
+            <div className="mt-1 text-xs text-slate-500">Search students and add them directly to this exam.</div>
+          </div>
+          {selectedStudentCount > 0 ? (
+            <button
+              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+              type="button"
+              onClick={() => setSelectedIds([])}
+            >
+              Clear students
+            </button>
+          ) : null}
         </div>
-        <div className="mt-3 flex flex-wrap items-center gap-2">
+
+        <div className="mt-3 flex flex-wrap gap-2 items-center">
           <input
-            className="min-w-[220px] flex-1 rounded-lg border px-3 py-2 text-xs"
-            placeholder="Filter courses by name or slug"
-            value={courseQuery}
-            onChange={(e) => setCourseQuery(e.target.value)}
+            className="min-w-[240px] flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs"
+            placeholder="Search by name, username, or student ID"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                searchStudents(false);
+              }
+            }}
           />
-          <div className="text-[10px] text-slate-400">{filteredCourses.length} courses</div>
+          <select
+            className="min-w-[180px] rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs"
+            value={studentFilterCourseId}
+            onChange={(e) => setStudentFilterCourseId(e.target.value)}
+          >
+            <option value="">All courses</option>
+            {courses.map((course) => (
+              <option key={course.id} value={course.id}>
+                {course.title}
+              </option>
+            ))}
+          </select>
+          <select
+            className="min-w-[160px] rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs"
+            value={studentFilterTag}
+            onChange={(e) => setStudentFilterTag(e.target.value)}
+          >
+            <option value="">All tags</option>
+            {availableTags.map((tag) => (
+              <option key={tag} value={tag}>
+                {tag}
+              </option>
+            ))}
+          </select>
+          <button
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+            type="button"
+            onClick={() => searchStudents(false)}
+            disabled={loading}
+          >
+            Search
+          </button>
+          <button
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+            type="button"
+            onClick={() => searchStudents(true)}
+            disabled={loading}
+          >
+            Show all
+          </button>
+          <button
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+            type="button"
+            onClick={() => {
+              setQuery("");
+              setStudentFilterCourseId("");
+              setStudentFilterTag("");
+              searchStudents(true);
+            }}
+            disabled={loading}
+          >
+            Reset filters
+          </button>
+          <button
+            className="rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+            type="button"
+            onClick={() => saveAccess()}
+            disabled={loading}
+          >
+            Save access
+          </button>
         </div>
 
-        <div className="mt-3 grid gap-3 lg:grid-cols-2">
-          <div className="rounded-lg border border-slate-200 bg-white p-3">
-            <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Available courses</div>
-            <div className="mt-2 grid gap-2 max-h-[200px] overflow-y-auto">
-              {filteredCourses.length === 0 ? (
-                <div className="text-xs text-slate-500">No courses found.</div>
+        <div className="mt-4 grid gap-3 lg:grid-cols-[1.2fr_1fr]">
+          <div className="rounded-xl border border-slate-200 bg-white p-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Search results</div>
+              <div className="rounded-full bg-slate-100 px-2 py-1 text-[10px] text-slate-500">{filteredResults.length} shown</div>
+            </div>
+            <div className="mt-2 grid gap-2 max-h-[260px] overflow-y-auto">
+              {filteredResults.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-slate-200 px-3 py-6 text-center text-xs text-slate-500">
+                  No students loaded.
+                </div>
               ) : (
-                filteredCourses.map((c) => {
-                  const picked = selectedCourseIds.includes(c.id);
-                  const open = !!expandedCourses[c.id];
-                  const members = courseMembers[c.id] || [];
+                filteredResults.map((s) => {
+                  const picked = selectedIds.includes(s.user_id);
+                  const name = s.nickname || `${s.first_name ?? ""} ${s.last_name ?? ""}`.trim() || s.username;
+                  const attempts = s.attempts_count ?? 0;
+                  const accessLimit = s.access_limit;
                   return (
-                    <div
-                      key={c.id}
-                      className={`rounded-lg border px-3 py-2 text-left text-xs ${
-                        picked ? "border-blue-500 bg-blue-50" : "border-slate-200 bg-white"
+                    <button
+                      key={s.user_id}
+                      className={`rounded-xl border px-3 py-3 text-left text-xs transition ${
+                        picked
+                          ? "border-blue-500 bg-blue-50 shadow-sm"
+                          : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
                       }`}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => toggleCourse(c.id)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          toggleCourse(c.id);
-                        }
-                      }}
+                      onClick={() => toggleSelect(s.user_id)}
+                      type="button"
                     >
-                      <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-start justify-between gap-3">
                         <div>
-                          <div className="font-semibold text-slate-700">{c.title}</div>
-                          <div className="text-[10px] text-slate-400">{c.slug || c.id}</div>
+                          <div className="font-semibold text-slate-700">{name}</div>
+                          <div className="mt-0.5 text-[10px] text-slate-400">
+                            {s.username} {s.student_id ? `· ${s.student_id}` : ""}
+                          </div>
+                        </div>
+                        <span
+                          className={`rounded-full px-2 py-1 text-[10px] font-semibold ${
+                            picked ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600"
+                          }`}
+                        >
+                          {picked ? "Selected" : "Add"}
+                        </span>
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-slate-500">
+                        <span className="rounded-full bg-slate-100 px-2 py-1">Attempts: {attempts}</span>
+                        <span className="rounded-full bg-slate-100 px-2 py-1">
+                          Limit: {accessLimit != null ? accessLimit : "Default"}
+                        </span>
+                        {s.tag ? <span className="rounded-full bg-emerald-50 px-2 py-1 text-emerald-700">Tag: {s.tag}</span> : null}
+                        {(s.courses || []).slice(0, 1).map((course) => (
+                          <span key={`${s.user_id}-${course.id}`} className="rounded-full bg-blue-50 px-2 py-1 text-blue-700">
+                            {course.title}
+                          </span>
+                        ))}
+                      </div>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Selected students</div>
+              <div className="rounded-full bg-slate-100 px-2 py-1 text-[10px] text-slate-500">{filteredSelectedIds.length} shown</div>
+            </div>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+              <select
+                className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs"
+                value={selectedFilterCourseId}
+                onChange={(e) => setSelectedFilterCourseId(e.target.value)}
+              >
+                <option value="">All selected courses</option>
+                {courses.map((course) => (
+                  <option key={course.id} value={course.id}>
+                    {course.title}
+                  </option>
+                ))}
+              </select>
+              <select
+                className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs"
+                value={selectedFilterTag}
+                onChange={(e) => setSelectedFilterTag(e.target.value)}
+              >
+                <option value="">All selected tags</option>
+                {availableTags.map((tag) => (
+                  <option key={tag} value={tag}>
+                    {tag}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="mt-2 grid gap-2 max-h-[260px] overflow-y-auto">
+              {filteredSelectedIds.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-slate-200 px-3 py-6 text-center text-xs text-slate-500">
+                  No selected students match the current filters.
+                </div>
+              ) : (
+                filteredSelectedIds.map((id) => {
+                  const s = selectedDetails.find((r) => r.user_id === id) || results.find((r) => r.user_id === id);
+                  const attempts = s?.attempts_count ?? 0;
+                  return (
+                    <div key={id} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-xs">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="font-semibold text-slate-700">
+                            {s?.nickname || `${s?.first_name ?? ""} ${s?.last_name ?? ""}`.trim() || s?.username || id}
+                          </div>
+                          <div className="mt-1 text-[10px] text-slate-500">Attempts: {attempts}</div>
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            {s?.tag ? (
+                              <span className="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-700 ring-1 ring-emerald-200">
+                                {s.tag}
+                              </span>
+                            ) : null}
+                            {(s?.courses || []).slice(0, 2).map((course) => (
+                              <span
+                                key={`${id}-${course.id}`}
+                                className="rounded-full bg-blue-50 px-2 py-1 text-[10px] font-semibold text-blue-700 ring-1 ring-blue-200"
+                              >
+                                {course.title}
+                              </span>
+                            ))}
+                          </div>
                         </div>
                         <button
-                          className="rounded-full border px-2 py-1 text-[10px] font-semibold text-slate-600 hover:bg-slate-50"
+                          className="rounded-lg border border-red-200 bg-white px-2.5 py-1.5 text-[10px] font-semibold text-red-600 hover:bg-red-50"
                           type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleCourseMembers(c.id);
-                          }}
+                          onClick={() => toggleSelect(id)}
                         >
-                          {open ? "Hide members" : "View members"}
+                          Remove
                         </button>
                       </div>
-                      {open ? (
-                        <div className="mt-2 rounded-md border border-slate-100 bg-slate-50 px-2 py-2 text-[10px] text-slate-600">
-                          {courseMembersLoading[c.id] ? (
-                            <div>Loading members...</div>
-                          ) : courseMembersError[c.id] ? (
-                            <div className="text-red-600">{courseMembersError[c.id]}</div>
-                          ) : members.length === 0 ? (
-                            <div>No students enrolled.</div>
-                          ) : (
-                            <div className="flex flex-wrap gap-2">
-                              {members.slice(0, 20).map((m) => (
-                                <span key={m.user_id} className="rounded-full bg-white px-2 py-0.5">
-                                  {m.nickname ||
-                                    `${m.first_name ?? ""} ${m.last_name ?? ""}`.trim() ||
-                                    m.username ||
-                                    m.user_id}
-                                </span>
-                              ))}
-                              {members.length > 20 ? (
-                                <span className="text-[10px] text-slate-400">+{members.length - 20} more</span>
-                              ) : null}
-                            </div>
-                          )}
-                        </div>
-                      ) : null}
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-
-          <div className="rounded-lg border border-slate-200 bg-white p-3">
-            <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Selected courses</div>
-            <div className="mt-2 grid gap-2 max-h-[200px] overflow-y-auto">
-              {selectedCourseIds.length === 0 ? (
-                <div className="text-xs text-slate-500">No courses selected.</div>
-              ) : (
-                selectedCourseIds.map((id) => {
-                  const c = courses.find((course) => course.id === id);
-                  return (
-                    <div key={id} className="rounded-lg border border-slate-200 px-3 py-2 text-xs">
-                      <div className="font-semibold text-slate-700">{c?.title || id}</div>
-                      <div className="text-[10px] text-slate-400">{c?.slug || id}</div>
-                      <button className="mt-1 text-[10px] text-red-600" type="button" onClick={() => toggleCourse(id)}>
-                        Remove
-                      </button>
+                      <div className="mt-3 flex items-center gap-2 text-[10px] text-slate-500">
+                        <span className="font-semibold text-slate-600">Attempt limit</span>
+                        <input
+                          type="number"
+                          min={1}
+                          placeholder="Default"
+                          className="w-24 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px]"
+                          value={limitOverrides[id] ?? ""}
+                          onChange={(e) => setLimitOverrides((prev) => ({ ...prev, [id]: e.target.value }))}
+                        />
+                        <span className="text-slate-400">Leave blank to use default</span>
+                      </div>
+                      <div className="mt-3 flex justify-end">
+                        <button
+                          className="rounded-lg bg-blue-600 px-3 py-1.5 text-[10px] font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+                          type="button"
+                          onClick={() => saveSingleStudentLimit(id)}
+                          disabled={loading}
+                        >
+                          Set limit
+                        </button>
+                      </div>
                     </div>
                   );
                 })
@@ -1259,31 +1336,44 @@ function PracticeAccessManager({
           </div>
         </div>
       </div>
+
+
     </div>
   );
+
 }
 
 function PracticeResultsPanel({
-  practiceId,
+  practice,
   token,
   onReviewAttempt,
   modules,
-  resultsPublished,
+  refresh,
 }: {
-  practiceId: string;
+  practice: Practice;
   token: string | null;
   onReviewAttempt: (attemptId: string, showScoreDetails?: boolean) => void;
   modules: PracticeModule[];
-  resultsPublished: boolean;
+  refresh: () => void;
 }) {
+  const practiceId = practice.id;
   const [query, setQuery] = useState("");
   const [students, setStudents] = useState<Student[]>([]);
+  const [allStudents, setAllStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [attemptsByStudent, setAttemptsByStudent] = useState<Record<string, PracticeAttempt[]>>({});
   const [attemptsLoading, setAttemptsLoading] = useState<Record<string, boolean>>({});
   const [attemptsError, setAttemptsError] = useState<Record<string, string | null>>({});
   const [openStudentId, setOpenStudentId] = useState<string | null>(null);
+  const [courseOptions, setCourseOptions] = useState<Course[]>([]);
+  const [selectedCourseId, setSelectedCourseId] = useState("");
+  const [selectedTag, setSelectedTag] = useState("");
+  const [savingVisibilityFor, setSavingVisibilityFor] = useState<string | null>(null);
+  const [localResultMode, setLocalResultMode] = useState<"hidden" | "all" | "selected">(
+    practice.result_visibility_mode ?? (practice.results_published ? "all" : "hidden")
+  );
+  const [localVisibleIds, setLocalVisibleIds] = useState<string[]>(practice.result_visible_student_ids ?? []);
 
   const displayName = (s: Student) => {
     if (s.nickname) return s.nickname;
@@ -1292,10 +1382,25 @@ function PracticeResultsPanel({
     return s.student_id || s.user_id;
   };
 
-  async function searchStudents(showAll = false) {
+  useEffect(() => {
+    setLocalResultMode(practice.result_visibility_mode ?? (practice.results_published ? "all" : "hidden"));
+  }, [practice.result_visibility_mode, practice.results_published]);
+
+  useEffect(() => {
+    setLocalVisibleIds(practice.result_visible_student_ids ?? []);
+  }, [practice.result_visible_student_ids]);
+
+  async function searchStudents(
+    showAll = false,
+    captureAll = false,
+    overrides?: { query?: string; courseId?: string; tag?: string }
+  ) {
     if (!token) return;
     setLoading(true);
     setError(null);
+    const activeQuery = overrides?.query ?? query;
+    const activeCourseId = overrides?.courseId ?? selectedCourseId;
+    const activeTag = overrides?.tag ?? selectedTag;
     try {
       const res = await fetch(`${API_BASE}/api/module-practice/students/search/`, {
         method: "POST",
@@ -1304,14 +1409,22 @@ function PracticeResultsPanel({
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          q: showAll ? "" : query,
-          limit: 50,
+          q: showAll ? "" : activeQuery,
+          tag: activeTag,
+          course_id: activeCourseId,
+          limit: captureAll ? 200 : 50,
           practice_id: practiceId,
+          accessible_only: true,
         }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || "Failed to load students");
-      setStudents(json.students ?? []);
+      const nextStudents = json.students ?? [];
+      if (captureAll) {
+        setAllStudents(nextStudents);
+      } else {
+        setStudents(nextStudents);
+      }
     } catch (e: any) {
       setError(e?.message ?? "Failed to load students");
     } finally {
@@ -1322,8 +1435,35 @@ function PracticeResultsPanel({
   useEffect(() => {
     if (!token) return;
     searchStudents(true);
+    searchStudents(true, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [practiceId, token]);
+
+  useEffect(() => {
+    if (!token) return;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/courses/`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json?.error || "Failed to load courses");
+        const list = Array.isArray(json) ? json : json?.courses || [];
+        setCourseOptions(list);
+      } catch {
+        setCourseOptions([]);
+      }
+    })();
+  }, [token]);
+
+  const tagOptions = useMemo(() => {
+    const tags = new Set<string>();
+    for (const student of allStudents) {
+      const tag = (student.tag || "").trim();
+      if (tag) tags.add(tag);
+    }
+    return Array.from(tags).sort((a, b) => a.localeCompare(b));
+  }, [allStudents]);
 
   async function loadStudentAttempts(studentId: string) {
     if (!token) return;
@@ -1352,34 +1492,124 @@ function PracticeResultsPanel({
     }
   }
 
+  async function toggleStudentResultVisibility(studentId: string) {
+    if (!token || localResultMode === "all") return;
+    const currentlyVisible = localVisibleIds.includes(studentId);
+    const nextIds = currentlyVisible
+      ? localVisibleIds.filter((id) => id !== studentId)
+      : [...localVisibleIds, studentId];
+    setSavingVisibilityFor(studentId);
+    setError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/module-practice/results/set/`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          practice_id: practiceId,
+          result_visibility_mode: "selected",
+          student_ids: nextIds,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Failed to update result visibility");
+      setLocalResultMode("selected");
+      setLocalVisibleIds(nextIds);
+      setStudents((prev) =>
+        prev.map((student) =>
+          student.user_id === studentId ? { ...student, can_view_results: !currentlyVisible } : student
+        )
+      );
+      setAllStudents((prev) =>
+        prev.map((student) =>
+          student.user_id === studentId ? { ...student, can_view_results: !currentlyVisible } : student
+        )
+      );
+      refresh();
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to update result visibility");
+    } finally {
+      setSavingVisibilityFor(null);
+    }
+  }
+
   return (
     <div className="rounded-2xl border bg-white p-4 shadow-sm">
       <div className="text-sm font-semibold text-slate-900">Student results</div>
       <p className="mt-1 text-xs text-slate-500">Search students and review their submitted attempts.</p>
 
-      <div className="mt-3 flex flex-wrap gap-2">
-        <input
-          className="flex-1 rounded-xl border px-3 py-2 text-sm"
-          placeholder="Search by name, username, or student ID"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-        <button
-          className="rounded-xl border px-3 py-2 text-xs font-semibold"
-          type="button"
-          onClick={() => searchStudents(false)}
-          disabled={loading}
-        >
-          Search
-        </button>
-        <button
-          className="rounded-xl border px-3 py-2 text-xs font-semibold"
-          type="button"
-          onClick={() => searchStudents(true)}
-          disabled={loading}
-        >
-          Show all
-        </button>
+      <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50/80 p-3">
+        <div className="grid gap-2 lg:grid-cols-[minmax(0,1.8fr)_220px_220px_auto_auto]">
+          <input
+            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm"
+            placeholder="Search by name, username, or student ID"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          <select
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm"
+            value={selectedCourseId}
+            onChange={(e) => setSelectedCourseId(e.target.value)}
+          >
+            <option value="">All courses</option>
+            {courseOptions.map((course) => (
+              <option key={course.id} value={course.id}>
+                {course.title}
+              </option>
+            ))}
+          </select>
+          <select
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm"
+            value={selectedTag}
+            onChange={(e) => setSelectedTag(e.target.value)}
+          >
+            <option value="">All tags</option>
+            {tagOptions.map((tag) => (
+              <option key={tag} value={tag}>
+                {tag}
+              </option>
+            ))}
+          </select>
+          <button
+            className="rounded-xl border border-slate-900 bg-slate-900 px-4 py-2.5 text-xs font-semibold text-white"
+            type="button"
+            onClick={() => searchStudents(false)}
+            disabled={loading}
+          >
+            Search
+          </button>
+          <button
+            className="rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-xs font-semibold text-slate-700"
+            type="button"
+            onClick={() => {
+              setQuery("");
+              setSelectedCourseId("");
+              setSelectedTag("");
+              setOpenStudentId(null);
+              searchStudents(true, false, { query: "", courseId: "", tag: "" });
+            }}
+            disabled={loading}
+          >
+            Reset
+          </button>
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+          <span className="rounded-full bg-white px-3 py-1 ring-1 ring-slate-200">
+            Showing {students.length} student{students.length === 1 ? "" : "s"}
+          </span>
+          {selectedCourseId ? (
+            <span className="rounded-full bg-blue-50 px-3 py-1 text-blue-700 ring-1 ring-blue-200">
+              Course: {courseOptions.find((course) => course.id === selectedCourseId)?.title || "Selected"}
+            </span>
+          ) : null}
+          {selectedTag ? (
+            <span className="rounded-full bg-emerald-50 px-3 py-1 text-emerald-700 ring-1 ring-emerald-200">
+              Tag: {selectedTag}
+            </span>
+          ) : null}
+        </div>
       </div>
 
       {error ? <div className="mt-2 text-xs text-red-600">{error}</div> : null}
@@ -1400,11 +1630,58 @@ function PracticeResultsPanel({
                   <div className="text-xs text-slate-500">
                     {s.username || s.student_id || s.user_id}
                   </div>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {s.tag ? (
+                      <span className="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-700 ring-1 ring-emerald-200">
+                        {s.tag}
+                      </span>
+                    ) : null}
+                    {(s.courses || []).slice(0, 2).map((course) => (
+                      <span
+                        key={`${s.user_id}-${course.id}`}
+                        className="rounded-full bg-blue-50 px-2 py-1 text-[10px] font-semibold text-blue-700 ring-1 ring-blue-200"
+                      >
+                        {course.title}
+                      </span>
+                    ))}
+                    {(s.courses || []).length > 2 ? (
+                      <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-600 ring-1 ring-slate-200">
+                        +{(s.courses || []).length - 2} more
+                      </span>
+                    ) : null}
+                  </div>
                 </div>
                 <div className="flex items-center gap-2 text-xs text-slate-600">
                   <span className="rounded-full bg-slate-100 px-3 py-1">
                     Attempts: {s.attempts_count ?? 0}
                   </span>
+                  <button
+                    className={`rounded-lg px-3 py-1 text-xs font-semibold disabled:opacity-60 ${
+                      localResultMode === "all"
+                        ? "cursor-not-allowed border border-emerald-200 bg-emerald-50 text-emerald-700"
+                        : localVisibleIds.includes(s.user_id)
+                        ? "border border-amber-300 bg-amber-50 text-amber-700"
+                        : "border border-emerald-300 bg-emerald-50 text-emerald-700"
+                    }`}
+                    type="button"
+                    disabled={localResultMode === "all" || savingVisibilityFor === s.user_id}
+                    onClick={() => toggleStudentResultVisibility(s.user_id)}
+                    title={
+                      localResultMode === "all"
+                        ? "Results are visible to all students"
+                        : localVisibleIds.includes(s.user_id)
+                        ? "Unpublish this student's result"
+                        : "Publish this student's result"
+                    }
+                  >
+                    {localResultMode === "all"
+                      ? "Visible to all"
+                      : savingVisibilityFor === s.user_id
+                      ? "Saving..."
+                      : localVisibleIds.includes(s.user_id)
+                      ? "Unpublish result"
+                      : "Publish result"}
+                  </button>
                   <button
                     className="rounded-lg border px-3 py-1 text-xs font-semibold"
                     type="button"
@@ -1475,9 +1752,8 @@ function PracticeResultsPanel({
                               className="rounded-md border border-slate-900 px-3 py-1 text-[11px] font-semibold text-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
                               type="button"
                               onClick={() => onReviewAttempt(attempt.id, true)}
-                              disabled={!resultsPublished}
                             >
-                              {resultsPublished ? "View score report" : "Results hidden"}
+                              View score report
                             </button>
                           </div>
                         </div>
@@ -1522,6 +1798,452 @@ function ToggleSwitch({
       </button>
       <div className="text-[12px] font-medium text-slate-500">
         {checked ? onLabel : offLabel}
+      </div>
+    </div>
+  );
+}
+
+function PracticeResultVisibilityManager({
+  practice,
+  token,
+  refresh,
+}: {
+  practice: Practice;
+  token: string | null;
+  refresh: () => void;
+}) {
+  const [mode, setMode] = useState<"hidden" | "all" | "selected">(
+    practice.result_visibility_mode ?? (practice.results_published ? "all" : "hidden")
+  );
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<Student[]>([]);
+  const [selectedIds, setSelectedIds] = useState<string[]>(practice.result_visible_student_ids ?? []);
+  const [selectedDetails, setSelectedDetails] = useState<Student[]>([]);
+  const [courseOptions, setCourseOptions] = useState<Course[]>([]);
+  const [searchCourseId, setSearchCourseId] = useState("");
+  const [searchTag, setSearchTag] = useState("");
+  const [selectedFilterCourseId, setSelectedFilterCourseId] = useState("");
+  const [selectedFilterTag, setSelectedFilterTag] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const selectedStudentCount = selectedIds.length;
+  const visibilityLabel =
+    mode === "all"
+      ? "Visible to all students"
+      : mode === "selected"
+        ? `Visible to ${selectedStudentCount} selected student${selectedStudentCount === 1 ? "" : "s"}`
+        : "Hidden from all students";
+
+  useEffect(() => {
+    setMode(practice.result_visibility_mode ?? (practice.results_published ? "all" : "hidden"));
+  }, [practice.result_visibility_mode, practice.results_published]);
+
+  useEffect(() => {
+    setSelectedIds(practice.result_visible_student_ids ?? []);
+  }, [practice.result_visible_student_ids]);
+
+  useEffect(() => {
+    if (!token || selectedIds.length === 0) {
+      setSelectedDetails([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/module-practice/students/lookup/`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ student_ids: selectedIds, practice_id: practice.id }),
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json?.error || "Failed to load students");
+        if (!cancelled) setSelectedDetails(json.students ?? []);
+      } catch {
+        if (!cancelled) setSelectedDetails([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [practice.id, selectedIds, token]);
+
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/courses/`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const json = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(json?.error || "Failed to load courses");
+        const list = Array.isArray(json) ? json : json?.courses || [];
+        if (!cancelled) setCourseOptions(list);
+      } catch {
+        if (!cancelled) setCourseOptions([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  async function searchStudents(showAll = false) {
+    if (!token) return;
+    setLoading(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/module-practice/students/search/`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          q: showAll ? "" : query.trim(),
+          tag: searchTag,
+          course_id: searchCourseId,
+          limit: 100,
+          practice_id: practice.id,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Failed to load students");
+      setResults(json.students ?? []);
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to load students");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]));
+  }
+
+  const availableTags = useMemo(() => {
+    const tags = new Set<string>();
+    [...results, ...selectedDetails].forEach((student) => {
+      const tag = (student.tag || "").trim();
+      if (tag) tags.add(tag);
+    });
+    return Array.from(tags).sort((a, b) => a.localeCompare(b));
+  }, [results, selectedDetails]);
+
+  const filteredResults = useMemo(() => {
+    return results.filter((student) => {
+      if (searchTag && (student.tag || "") !== searchTag) return false;
+      if (searchCourseId && !(student.courses || []).some((course) => course.id === searchCourseId)) return false;
+      return true;
+    });
+  }, [results, searchCourseId, searchTag]);
+
+  const filteredSelectedIds = useMemo(() => {
+    return selectedIds.filter((id) => {
+      const student = selectedDetails.find((entry) => entry.user_id === id) || results.find((entry) => entry.user_id === id);
+      if (!student) return true;
+      if (selectedFilterTag && (student.tag || "") !== selectedFilterTag) return false;
+      if (selectedFilterCourseId && !(student.courses || []).some((course) => course.id === selectedFilterCourseId)) return false;
+      return true;
+    });
+  }, [selectedIds, selectedDetails, results, selectedFilterCourseId, selectedFilterTag]);
+
+  async function saveVisibility() {
+    if (!token) return;
+    setLoading(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/module-practice/results/set/`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          practice_id: practice.id,
+          result_visibility_mode: mode,
+          student_ids: selectedIds,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Failed to save result visibility");
+      setMessage("Result visibility saved.");
+      refresh();
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to save result visibility");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="min-w-0">
+          <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Result visibility</div>
+          <div className="mt-2 text-xs text-slate-500">
+            Control which students can open score reports and review submitted attempts.
+          </div>
+          <div className="mt-4 grid gap-2 text-xs text-slate-600">
+            <label className="flex items-center gap-2">
+              <input type="radio" checked={mode === "hidden"} onChange={() => setMode("hidden")} />
+              <span>Hidden</span>
+            </label>
+            <label className="flex items-center gap-2">
+              <input type="radio" checked={mode === "all"} onChange={() => setMode("all")} />
+              <span>Visible to all students</span>
+            </label>
+            <label className="flex items-center gap-2">
+              <input type="radio" checked={mode === "selected"} onChange={() => setMode("selected")} />
+              <span>Visible to selected students only</span>
+            </label>
+          </div>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-right">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">Current mode</div>
+          <div className="mt-1 text-sm font-semibold text-slate-800">{visibilityLabel}</div>
+          <div className="mt-2 flex flex-wrap justify-end gap-2 text-[11px]">
+            <span className="rounded-full bg-white px-2.5 py-1 text-slate-600">{selectedStudentCount} students</span>
+          </div>
+        </div>
+      </div>
+
+      {error ? <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">{error}</div> : null}
+      {message ? <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">{message}</div> : null}
+
+      {mode === "selected" ? (
+        <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Students who can view results</div>
+              <div className="mt-1 text-xs text-slate-500">Search students and grant score-report visibility only to selected students.</div>
+            </div>
+            {selectedIds.length > 0 ? (
+              <button
+                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                type="button"
+                onClick={() => setSelectedIds([])}
+              >
+                Clear selected
+              </button>
+            ) : null}
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <input
+              className="min-w-[220px] flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs"
+              placeholder="Search by name, username, or student ID"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  searchStudents(false);
+                }
+              }}
+            />
+            <select
+              className="min-w-[180px] rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs"
+              value={searchCourseId}
+              onChange={(e) => setSearchCourseId(e.target.value)}
+            >
+              <option value="">All courses</option>
+              {courseOptions.map((course) => (
+                <option key={course.id} value={course.id}>
+                  {course.title}
+                </option>
+              ))}
+            </select>
+            <select
+              className="min-w-[160px] rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs"
+              value={searchTag}
+              onChange={(e) => setSearchTag(e.target.value)}
+            >
+              <option value="">All tags</option>
+              {availableTags.map((tag) => (
+                <option key={tag} value={tag}>
+                  {tag}
+                </option>
+              ))}
+            </select>
+            <button className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50" type="button" onClick={() => searchStudents(false)} disabled={loading}>
+              Search
+            </button>
+            <button className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50" type="button" onClick={() => searchStudents(true)} disabled={loading}>
+              Show all
+            </button>
+            <button
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              type="button"
+              onClick={() => {
+                setQuery("");
+                setSearchCourseId("");
+                setSearchTag("");
+                searchStudents(true);
+              }}
+              disabled={loading}
+            >
+              Reset filters
+            </button>
+          </div>
+
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+            <span className="rounded-full bg-white px-3 py-1 ring-1 ring-slate-200">{filteredResults.length} shown</span>
+            {searchCourseId ? (
+              <span className="rounded-full bg-blue-50 px-3 py-1 text-blue-700 ring-1 ring-blue-200">
+                Course: {courseOptions.find((course) => course.id === searchCourseId)?.title || "Selected"}
+              </span>
+            ) : null}
+            {searchTag ? (
+              <span className="rounded-full bg-emerald-50 px-3 py-1 text-emerald-700 ring-1 ring-emerald-200">Tag: {searchTag}</span>
+            ) : null}
+          </div>
+
+          <div className="mt-3 grid gap-3 lg:grid-cols-[1.2fr_1fr]">
+            <div className="rounded-xl border border-slate-200 bg-white p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Search results</div>
+                <div className="rounded-full bg-slate-100 px-2 py-1 text-[10px] text-slate-500">{filteredResults.length} shown</div>
+              </div>
+              <div className="mt-2 grid max-h-[220px] gap-2 overflow-y-auto">
+                {filteredResults.length === 0 ? (
+                  <div className="rounded-lg border border-dashed border-slate-200 px-3 py-6 text-center text-xs text-slate-500">No students loaded.</div>
+                ) : (
+                  filteredResults.map((student) => {
+                    const picked = selectedIds.includes(student.user_id);
+                    const name = student.nickname || `${student.first_name ?? ""} ${student.last_name ?? ""}`.trim() || student.username;
+                    return (
+                      <button
+                        key={student.user_id}
+                        className={`rounded-xl border px-3 py-3 text-left text-xs transition ${
+                          picked ? "border-blue-500 bg-blue-50 shadow-sm" : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
+                        }`}
+                        onClick={() => toggleSelect(student.user_id)}
+                        type="button"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="font-semibold text-slate-700">{name}</div>
+                            <div className="mt-0.5 text-[10px] text-slate-400">
+                              {student.username} {student.student_id ? `? ${student.student_id}` : ""}
+                            </div>
+                          </div>
+                          <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${picked ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600"}`}>
+                            {picked ? "Selected" : "Add"}
+                          </span>
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-slate-500">
+                          <span className="rounded-full bg-slate-100 px-2 py-1">{student.can_view_results ? "Can currently view results" : "Results hidden"}</span>
+                          {student.tag ? <span className="rounded-full bg-emerald-50 px-2 py-1 text-emerald-700">Tag: {student.tag}</span> : null}
+                          {(student.courses || []).slice(0, 1).map((course) => (
+                            <span key={`${student.user_id}-${course.id}`} className="rounded-full bg-blue-50 px-2 py-1 text-blue-700">
+                              {course.title}
+                            </span>
+                          ))}
+                        </div>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-slate-200 bg-white p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Selected students</div>
+                <div className="rounded-full bg-slate-100 px-2 py-1 text-[10px] text-slate-500">{filteredSelectedIds.length} shown</div>
+              </div>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                <select
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs"
+                  value={selectedFilterCourseId}
+                  onChange={(e) => setSelectedFilterCourseId(e.target.value)}
+                >
+                  <option value="">All selected courses</option>
+                  {courseOptions.map((course) => (
+                    <option key={course.id} value={course.id}>
+                      {course.title}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs"
+                  value={selectedFilterTag}
+                  onChange={(e) => setSelectedFilterTag(e.target.value)}
+                >
+                  <option value="">All selected tags</option>
+                  {availableTags.map((tag) => (
+                    <option key={tag} value={tag}>
+                      {tag}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="mt-2 grid max-h-[220px] gap-2 overflow-y-auto">
+                {filteredSelectedIds.length === 0 ? (
+                  <div className="rounded-lg border border-dashed border-slate-200 px-3 py-6 text-center text-xs text-slate-500">
+                    No selected students match the current filters.
+                  </div>
+                ) : (
+                  filteredSelectedIds.map((id) => {
+                    const student = selectedDetails.find((entry) => entry.user_id === id) || results.find((entry) => entry.user_id === id);
+                    return (
+                      <div key={id} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-xs">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="font-semibold text-slate-700">
+                              {student?.nickname || `${student?.first_name ?? ""} ${student?.last_name ?? ""}`.trim() || student?.username || id}
+                            </div>
+                            <div className="mt-1 text-[10px] text-slate-500">{student?.username || id}</div>
+                            <div className="mt-2 flex flex-wrap gap-1.5">
+                              {student?.tag ? (
+                                <span className="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-700 ring-1 ring-emerald-200">
+                                  {student.tag}
+                                </span>
+                              ) : null}
+                              {(student?.courses || []).slice(0, 2).map((course) => (
+                                <span
+                                  key={`${id}-${course.id}`}
+                                  className="rounded-full bg-blue-50 px-2 py-1 text-[10px] font-semibold text-blue-700 ring-1 ring-blue-200"
+                                >
+                                  {course.title}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                          <button
+                            className="rounded-lg border border-red-200 bg-white px-2.5 py-1.5 text-[10px] font-semibold text-red-600 hover:bg-red-50"
+                            type="button"
+                            onClick={() => toggleSelect(id)}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="mt-3">
+        <button
+          className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-60"
+          type="button"
+          onClick={saveVisibility}
+          disabled={loading}
+        >
+          Save result visibility
+        </button>
       </div>
     </div>
   );
