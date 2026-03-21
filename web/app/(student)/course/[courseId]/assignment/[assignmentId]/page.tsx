@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import type { Assignment, Submission, Grade, AssignmentFile } from "@/lib/types/assignment";
 
@@ -73,22 +73,58 @@ export default function AssignmentPage() {
   const [saveBusy, setSaveBusy] = useState(false);
   const [publishBusy, setPublishBusy] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const fileObjectUrlCache = useRef<Record<string, string>>({});
 
   const canManage = isTeacherOrAdmin(profile);
-  const mediaUrl = (path: string | null | undefined) => {
-    if (!path) return "";
-    const trimmed = path.trim();
-    if (!trimmed) return "";
-    if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) return trimmed;
 
-    const prefix = (API_BASE || "").replace(/\/$/, "");
-    if (trimmed.startsWith("/")) {
-      return prefix ? `${prefix}${trimmed}` : trimmed;
+  useEffect(() => {
+    return () => {
+      Object.values(fileObjectUrlCache.current).forEach((url) => {
+        try {
+          URL.revokeObjectURL(url);
+        } catch {}
+      });
+      fileObjectUrlCache.current = {};
+    };
+  }, []);
+
+  async function getProtectedAssignmentFileUrl(
+    params: { attachmentId?: string | null; submissionId?: string | null; download?: boolean },
+  ) {
+    if (!accessToken) throw new Error("Not logged in.");
+    const query = new URLSearchParams();
+    if (params.attachmentId) query.set("attachment_id", params.attachmentId);
+    if (params.submissionId) query.set("submission_id", params.submissionId);
+    if (params.download) query.set("download", "1");
+    const cacheKey = query.toString();
+    if (fileObjectUrlCache.current[cacheKey]) return fileObjectUrlCache.current[cacheKey];
+
+    const res = await fetch(`${API_BASE}/api/assignments/file/?${query.toString()}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    const blob = await res.blob();
+    if (!res.ok) {
+      try {
+        const text = await blob.text();
+        const json = JSON.parse(text) as { error?: string };
+        throw new Error(json.error || "Failed to open file");
+      } catch (error) {
+        if (error instanceof Error) throw error;
+        throw new Error("Failed to open file");
+      }
     }
+    const objectUrl = URL.createObjectURL(blob);
+    fileObjectUrlCache.current[cacheKey] = objectUrl;
+    return objectUrl;
+  }
 
-    const normalized = trimmed.replace(/^media\//, "");
-    return prefix ? `${prefix}/media/${normalized}` : `/media/${normalized}`;
-  };
+  async function openProtectedAssignmentFile(params: {
+    attachmentId?: string | null;
+    submissionId?: string | null;
+  }) {
+    const objectUrl = await getProtectedAssignmentFileUrl(params);
+    window.open(objectUrl, "_blank", "noopener,noreferrer");
+  }
 
   // auth + profile
   useEffect(() => {
@@ -552,7 +588,7 @@ export default function AssignmentPage() {
                         <button
                           className="btn-link"
                           type="button"
-                          onClick={() => window.open(mediaUrl((f as any).url || f.storage_path), "_blank")}
+                          onClick={() => void openProtectedAssignmentFile({ attachmentId: f.id })}
                         >
                           Open
                         </button>
@@ -660,7 +696,7 @@ export default function AssignmentPage() {
                                 <button
                                   className="btn-link"
                                   type="button"
-                                  onClick={() => window.open(mediaUrl((s as any).file_url || s.file_path), "_blank")}
+                                  onClick={() => void openProtectedAssignmentFile({ submissionId: s.id })}
                                 >
                                   Open
                                 </button>
@@ -692,7 +728,7 @@ export default function AssignmentPage() {
                           <button
                             className="btn-link"
                             type="button"
-                            onClick={() => window.open(mediaUrl((s as any).file_url || s.file_path), "_blank")}
+                            onClick={() => void openProtectedAssignmentFile({ submissionId: s.id })}
                           >
                             Open
                           </button>

@@ -3,10 +3,12 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser
+from django.http import FileResponse, StreamingHttpResponse
 from django.db import transaction
 from django.utils import timezone
 from django.contrib.auth import get_user_model
 from django.core.files.storage import default_storage
+from urllib.request import urlopen
 import os
 import cloudinary.uploader
 import cloudinary.api
@@ -31,6 +33,14 @@ User = get_user_model()
 
 def _require_staff(user: User, course: Course) -> bool:
     return _require_admin(user) or CourseTeacher.objects.filter(course=course, teacher=user).exists()
+
+
+def _can_view_assignment(user: User, assignment: Assignment) -> bool:
+    if _require_staff(user, assignment.course):
+        return True
+    if not Enrollment.objects.filter(course=assignment.course, user=user).exists():
+        return False
+    return assignment.status == "published"
 
 
 class AssignmentDetailView(APIView):
@@ -257,6 +267,69 @@ class AssignmentAttachmentListView(APIView):
             row["url"] = _cloud_url(f.storage_path, f.mime_type)
             rows.append(row)
         return Response({"ok": True, "files": rows})
+
+
+class AssignmentFileAccessView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        attachment_id = request.query_params.get("attachment_id")
+        submission_id = request.query_params.get("submission_id")
+        as_attachment = request.query_params.get("download") in {"1", "true", "yes"}
+        user = request.user
+
+        if bool(attachment_id) == bool(submission_id):
+            return Response({"error": "attachment_id or submission_id required"}, status=400)
+
+        if attachment_id:
+            try:
+                file_row = AssignmentFile.objects.select_related("assignment__course").get(id=attachment_id)
+            except AssignmentFile.DoesNotExist:
+                return Response({"error": "File not found"}, status=404)
+            if not _can_view_assignment(user, file_row.assignment):
+                return Response({"error": "Forbidden"}, status=403)
+            storage_path = file_row.storage_path
+            filename = file_row.name or os.path.basename(str(storage_path)) or "file"
+            content_type = file_row.mime_type or "application/octet-stream"
+            size_bytes = file_row.size_bytes
+        else:
+            try:
+                submission = Submission.objects.select_related("assignment__course", "student").get(id=submission_id)
+            except Submission.DoesNotExist:
+                return Response({"error": "File not found"}, status=404)
+            if not (_require_staff(user, submission.assignment.course) or submission.student_id == user.id):
+                return Response({"error": "Forbidden"}, status=403)
+            storage_path = submission.file_path
+            filename = submission.file_name or os.path.basename(str(storage_path)) or "file"
+            content_type = submission.mime_type or "application/octet-stream"
+            size_bytes = submission.file_size
+
+        if not storage_path:
+            return Response({"error": "File missing"}, status=404)
+
+        if str(storage_path).startswith("http://") or str(storage_path).startswith("https://"):
+            try:
+                remote = urlopen(str(storage_path))
+            except Exception:
+                return Response({"error": "Unable to open file"}, status=404)
+            response = StreamingHttpResponse(remote, content_type=content_type)
+            disposition = "attachment" if as_attachment else "inline"
+            response["Content-Disposition"] = f'{disposition}; filename="{filename}"'
+            if size_bytes:
+                response["Content-Length"] = str(size_bytes)
+            return response
+
+        try:
+            handle = default_storage.open(storage_path, "rb")
+        except Exception:
+            return Response({"error": "Unable to open file"}, status=404)
+
+        return FileResponse(
+            handle,
+            as_attachment=as_attachment,
+            filename=filename,
+            content_type=content_type,
+        )
 
 
 class AssignmentAttachmentUploadView(APIView):

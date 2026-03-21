@@ -986,11 +986,29 @@ export default function CourseDetailPage() {
     return objectUrl;
   }
 
+  async function getProtectedNodeStreamUrl(node: CourseNode) {
+    if (!accessToken) throw new Error("Not logged in.");
+    const base = process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") || "";
+    const res = await fetch(
+      `${base}/api/course-nodes/file-link/?node_id=${encodeURIComponent(node.id)}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error((json as { error?: string })?.error || "Failed to open file");
+    }
+    const rawUrl = typeof (json as { url?: string }).url === "string" ? (json as { url: string }).url : "";
+    if (!rawUrl) throw new Error("Failed to open file");
+    return rawUrl.startsWith("http://") || rawUrl.startsWith("https://")
+      ? rawUrl
+      : `${base}${rawUrl.startsWith("/") ? rawUrl : `/${rawUrl}`}`;
+  }
+
   async function onPreview(node: CourseNode) {
     if (!node.storage_path) return;
     try {
       const t = guessPreviewType(node.storage_path || node.name || "", node.mime_type);
-      const url = await getProtectedNodeUrl(node, false);
+      const url = t === "video" ? await getProtectedNodeStreamUrl(node) : await getProtectedNodeUrl(node, false);
       setPreviewType(t);
       setPreviewUrl(url);
       setPreviewTitle(node.name);

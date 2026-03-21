@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.http import FileResponse, StreamingHttpResponse
+from django.core import signing
 from django.utils import timezone
 from django.db import transaction
 from django.contrib.auth import get_user_model
@@ -20,6 +21,8 @@ from .models import Course, CourseTeacher, Enrollment, CourseNode
 from .serializers import CourseSerializer, CourseNodeSerializer
 
 User = get_user_model()
+PROTECTED_MEDIA_TOKEN_SALT = "protected-media"
+PROTECTED_MEDIA_MAX_AGE_SECONDS = 300
 
 
 def _require_admin(user: User) -> bool:
@@ -56,6 +59,18 @@ def _node_is_visible(node: CourseNode) -> bool:
         return node.publish_at <= timezone.now()
     except Exception:
         return False
+
+
+def _make_protected_media_token(payload: dict) -> str:
+    return signing.dumps(payload, salt=PROTECTED_MEDIA_TOKEN_SALT)
+
+
+def _read_protected_media_token(token: str) -> dict:
+    return signing.loads(
+        token,
+        salt=PROTECTED_MEDIA_TOKEN_SALT,
+        max_age=PROTECTED_MEDIA_MAX_AGE_SECONDS,
+    )
 
 
 def _cloudinary_public_id_from_url(url: str) -> str | None:
@@ -447,8 +462,45 @@ class CourseNodesListView(APIView):
         return Response({"ok": True, "nodes": data})
 
 
-class CourseNodeFileView(APIView):
+class CourseNodeFileLinkView(APIView):
     permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        node_id = request.query_params.get("node_id")
+        if not node_id:
+            return Response({"error": "node_id required"}, status=400)
+
+        try:
+            node = CourseNode.objects.select_related("course").get(id=node_id, kind="file")
+        except CourseNode.DoesNotExist:
+            return Response({"error": "File not found"}, status=404)
+
+        if not _can_access_course(request.user, node.course):
+            return Response({"error": "Forbidden"}, status=403)
+
+        can_manage = _require_admin(request.user) or CourseTeacher.objects.filter(
+            course=node.course, teacher=request.user
+        ).exists()
+        if not can_manage and not _node_is_visible(node):
+            return Response({"error": "Forbidden"}, status=403)
+
+        payload = {
+            "kind": "course-node",
+            "node_id": str(node.id),
+            "user_id": str(request.user.id),
+        }
+        token = _make_protected_media_token(payload)
+        return Response(
+            {
+                "ok": True,
+                "url": f"/api/course-nodes/file/?node_id={node.id}&token={token}",
+                "expires_in": PROTECTED_MEDIA_MAX_AGE_SECONDS,
+            }
+        )
+
+
+class CourseNodeFileView(APIView):
+    permission_classes = []
 
     def get(self, request):
         node_id = request.query_params.get("node_id")
@@ -463,11 +515,29 @@ class CourseNodeFileView(APIView):
         except CourseNode.DoesNotExist:
             return Response({"error": "File not found"}, status=404)
 
-        if not _can_access_course(request.user, node.course):
+        auth_user = request.user if getattr(request.user, "is_authenticated", False) else None
+        token = request.query_params.get("token")
+        token_user = None
+        if token:
+            try:
+                payload = _read_protected_media_token(token)
+            except signing.SignatureExpired:
+                return Response({"error": "Link expired"}, status=403)
+            except signing.BadSignature:
+                return Response({"error": "Forbidden"}, status=403)
+            if payload.get("kind") != "course-node" or payload.get("node_id") != str(node.id):
+                return Response({"error": "Forbidden"}, status=403)
+            token_user = User.objects.filter(id=payload.get("user_id")).first()
+
+        acting_user = auth_user or token_user
+        if not acting_user:
+            return Response({"error": "Authentication required"}, status=401)
+
+        if not _can_access_course(acting_user, node.course):
             return Response({"error": "Forbidden"}, status=403)
 
-        can_manage = _require_admin(request.user) or CourseTeacher.objects.filter(
-            course=node.course, teacher=request.user
+        can_manage = _require_admin(acting_user) or CourseTeacher.objects.filter(
+            course=node.course, teacher=acting_user
         ).exists()
         if not can_manage and not _node_is_visible(node):
             return Response({"error": "Forbidden"}, status=403)
