@@ -165,15 +165,25 @@ export default function LoginPage() {
 
         <div style={{ textAlign: "center", marginTop: 16 }}>
           <a
-            href="#"
+            href="https://www.victorygroup.az/"
+            target="_blank"
+            rel="noreferrer"
             style={{
-              color: "#e2e8f0",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: "8px 14px",
+              borderRadius: 10,
+              border: "1px solid rgba(255,255,255,0.5)",
+              background: "rgba(255,255,255,0.14)",
+              color: "#f8fafc",
               textDecoration: "none",
               fontSize: 14,
               fontWeight: 600,
+              boxShadow: "0 8px 20px rgba(0,0,0,0.18)",
             }}
           >
-            Forgot your password?
+            Check Who We Are
           </a>
         </div>
       </div>

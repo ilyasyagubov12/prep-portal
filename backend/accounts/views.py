@@ -195,7 +195,7 @@ class AdminSearchUsersView(APIView):
         if role:
             qs = qs.filter(role=role)
         if tag:
-            qs = qs.filter(tag__iexact=tag)
+            qs = qs.filter(tag__icontains=tag)
         if q:
             qs = qs.filter(
                 models.Q(nickname__icontains=q)

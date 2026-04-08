@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { subjects } from "@/lib/questionBank/topics";
 import { useRef } from "react";
 
@@ -15,6 +16,7 @@ type Question = {
 };
 
 export default function ManageQuestionsPage() {
+  const router = useRouter();
   const [subject, setSubject] = useState<"verbal" | "math">("verbal");
   const [topic, setTopic] = useState("");
   const [loading, setLoading] = useState(false);
@@ -188,17 +190,49 @@ export default function ManageQuestionsPage() {
     return group?.subtopics?.map((s) => s.title) ?? [];
   }, [subject, topic]);
 
+  const exportHref = useMemo(() => {
+    const params = new URLSearchParams();
+    if (selectedIds.size) {
+      params.set("ids", Array.from(selectedIds).join(","));
+    } else {
+      params.set("subject", subject);
+      if (topic) params.set("topic", topic);
+      if (subtopic) params.set("subtopic", subtopic);
+      if (search.trim()) params.set("q", search.trim());
+    }
+    const query = params.toString();
+    return query ? `/practice/questions/book?${query}` : "/practice/questions/book";
+  }, [search, selectedIds, subject, subtopic, topic]);
+
   return (
-    <div className="p-6 max-w-5xl mx-auto space-y-4">
-      <div className="flex items-center justify-between">
+    <div className="mx-auto max-w-5xl space-y-4 p-6">
+      <div className="flex items-center justify-between gap-3">
         <div>
           <div className="text-[11px] uppercase tracking-[0.22em] text-slate-500">Admin</div>
           <h1 className="text-2xl font-bold text-slate-900">Manage questions</h1>
           <p className="text-sm text-neutral-600">Filter by subject/topic, edit or delete.</p>
         </div>
-        <Link className="text-sm underline text-slate-600" href="/practice/questions">
-          ← Back to Question Bank
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            href={exportHref}
+            target="_blank"
+            rel="noreferrer"
+            className={`rounded-xl px-4 py-2 text-sm font-semibold shadow-sm ${
+              questions.length === 0
+                ? "pointer-events-none border border-slate-200 bg-slate-100 text-slate-400"
+                : "border border-[#8f1022]/20 bg-[#8f1022] text-white hover:bg-[#760d1c]"
+            }`}
+          >
+            {selectedIds.size ? `Export ${selectedIds.size} as PDF` : "Export filtered PDF book"}
+          </Link>
+          <button
+            type="button"
+            onClick={() => router.push("/practice/questions")}
+            className="text-sm underline text-slate-600"
+          >
+            {"<-"} Back to Question Bank
+          </button>
+        </div>
       </div>
 
       {err ? (

@@ -983,6 +983,7 @@ class AdminMembershipsListView(APIView):
                 "user_id": str(user.id),
                 "username": getattr(user, "username", None),
                 "nickname": getattr(p, "nickname", None),
+                "tag": getattr(p, "tag", None),
                 "role": getattr(p, "role", None),
                 "is_admin": getattr(p, "is_admin", False),
                 "avatar": getattr(p, "avatar", None),

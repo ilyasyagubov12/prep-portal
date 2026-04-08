@@ -2,6 +2,7 @@ from collections import defaultdict
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from django.db import models
 from django.db.models import Count
 from django.contrib.auth import get_user_model
 from django.core.files.storage import default_storage
@@ -32,14 +33,25 @@ class QuestionsListCreateView(APIView):
         subject = request.query_params.get("subject")
         topic = request.query_params.get("topic")
         subtopic = request.query_params.get("subtopic")
+        q = (request.query_params.get("q") or "").strip()
+        ids = [value.strip() for value in (request.query_params.get("ids") or "").split(",") if value.strip()]
 
         qs = Question.objects.all()
+        if ids:
+            qs = qs.filter(id__in=ids)
         if subject:
             qs = qs.filter(subject=subject)
         if topic:
             qs = qs.filter(topic=topic)
         if subtopic:
             qs = qs.filter(subtopic=subtopic)
+        if q:
+            qs = qs.filter(
+                models.Q(stem__icontains=q)
+                | models.Q(passage__icontains=q)
+                | models.Q(topic__icontains=q)
+                | models.Q(subtopic__icontains=q)
+            )
 
         # Students see only published
         if not is_staff(request.user):
