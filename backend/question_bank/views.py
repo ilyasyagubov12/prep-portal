@@ -26,6 +26,30 @@ def is_staff(user: User) -> bool:
     return user.is_superuser or getattr(prof, "is_admin", False) or role in ("admin", "teacher")
 
 
+def build_question_queryset(user, *, subject=None, topic=None, subtopic=None, q="", ids=None):
+    qs = Question.objects.all()
+    if ids:
+        qs = qs.filter(id__in=ids)
+    if subject:
+        qs = qs.filter(subject=subject)
+    if topic:
+        qs = qs.filter(topic=topic)
+    if subtopic:
+        qs = qs.filter(subtopic=subtopic)
+    if q:
+        qs = qs.filter(
+            models.Q(stem__icontains=q)
+            | models.Q(passage__icontains=q)
+            | models.Q(topic__icontains=q)
+            | models.Q(subtopic__icontains=q)
+        )
+
+    if not is_staff(user):
+        qs = qs.filter(published=True)
+
+    return qs.order_by("-created_at")
+
+
 class QuestionsListCreateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -36,29 +60,16 @@ class QuestionsListCreateView(APIView):
         q = (request.query_params.get("q") or "").strip()
         ids = [value.strip() for value in (request.query_params.get("ids") or "").split(",") if value.strip()]
 
-        qs = Question.objects.all()
-        if ids:
-            qs = qs.filter(id__in=ids)
-        if subject:
-            qs = qs.filter(subject=subject)
-        if topic:
-            qs = qs.filter(topic=topic)
-        if subtopic:
-            qs = qs.filter(subtopic=subtopic)
-        if q:
-            qs = qs.filter(
-                models.Q(stem__icontains=q)
-                | models.Q(passage__icontains=q)
-                | models.Q(topic__icontains=q)
-                | models.Q(subtopic__icontains=q)
-            )
-
-        # Students see only published
-        if not is_staff(request.user):
-            qs = qs.filter(published=True)
+        qs = build_question_queryset(
+            request.user,
+            subject=subject,
+            topic=topic,
+            subtopic=subtopic,
+            q=q,
+            ids=ids,
+        )
 
         limit_raw = request.query_params.get("limit")
-        qs = qs.order_by("-created_at")
         if limit_raw:
             try:
                 limit = int(limit_raw)
@@ -78,6 +89,32 @@ class QuestionsListCreateView(APIView):
             return Response({"error": serializer.errors}, status=400)
         q = serializer.save(created_by=request.user)
         return Response({"ok": True, "question": QuestionSerializer(q).data})
+
+
+class QuestionBookExportView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        if not is_staff(request.user):
+            return Response({"error": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+
+        subject = (request.data.get("subject") or "").strip().lower() or None
+        topic = (request.data.get("topic") or "").strip() or None
+        subtopic = (request.data.get("subtopic") or "").strip() or None
+        q = (request.data.get("q") or "").strip()
+        ids = request.data.get("ids") or []
+        if not isinstance(ids, list):
+            return Response({"error": "ids must be a list"}, status=400)
+
+        qs = build_question_queryset(
+            request.user,
+            subject=subject,
+            topic=topic,
+            subtopic=subtopic,
+            q=q,
+            ids=[str(value).strip() for value in ids if str(value).strip()],
+        )
+        return Response({"ok": True, "questions": QuestionSerializer(qs, many=True).data})
 
 
 class QuestionImageUploadView(APIView):

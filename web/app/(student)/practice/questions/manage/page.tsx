@@ -190,19 +190,30 @@ export default function ManageQuestionsPage() {
     return group?.subtopics?.map((s) => s.title) ?? [];
   }, [subject, topic]);
 
-  const exportHref = useMemo(() => {
-    const params = new URLSearchParams();
+  function openExport() {
+    if (questions.length === 0) return;
+
     if (selectedIds.size) {
-      params.set("ids", Array.from(selectedIds).join(","));
-    } else {
-      params.set("subject", subject);
-      if (topic) params.set("topic", topic);
-      if (subtopic) params.set("subtopic", subtopic);
-      if (search.trim()) params.set("q", search.trim());
+      const token = `question-book-export:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+      localStorage.setItem(
+        token,
+        JSON.stringify({
+          ids: Array.from(selectedIds),
+          createdAt: Date.now(),
+        })
+      );
+      window.open(`/practice/questions/book?export_token=${encodeURIComponent(token)}`, "_blank", "noopener,noreferrer");
+      return;
     }
+
+    const params = new URLSearchParams();
+    params.set("subject", subject);
+    if (topic) params.set("topic", topic);
+    if (subtopic) params.set("subtopic", subtopic);
+    if (search.trim()) params.set("q", search.trim());
     const query = params.toString();
-    return query ? `/practice/questions/book?${query}` : "/practice/questions/book";
-  }, [search, selectedIds, subject, subtopic, topic]);
+    window.open(query ? `/practice/questions/book?${query}` : "/practice/questions/book", "_blank", "noopener,noreferrer");
+  }
 
   return (
     <div className="mx-auto max-w-5xl space-y-4 p-6">
@@ -213,10 +224,9 @@ export default function ManageQuestionsPage() {
           <p className="text-sm text-neutral-600">Filter by subject/topic, edit or delete.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Link
-            href={exportHref}
-            target="_blank"
-            rel="noreferrer"
+          <button
+            type="button"
+            onClick={openExport}
             className={`rounded-xl px-4 py-2 text-sm font-semibold shadow-sm ${
               questions.length === 0
                 ? "pointer-events-none border border-slate-200 bg-slate-100 text-slate-400"
@@ -224,7 +234,7 @@ export default function ManageQuestionsPage() {
             }`}
           >
             {selectedIds.size ? `Export ${selectedIds.size} as PDF` : "Export filtered PDF book"}
-          </Link>
+          </button>
           <button
             type="button"
             onClick={() => router.push("/practice/questions")}

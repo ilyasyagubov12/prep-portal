@@ -29,14 +29,14 @@ type Question = {
 
 const timesTextStyle: CSSProperties = {
   fontFamily: '"Times New Roman", Times, serif',
-  fontSize: "14pt",
+  fontSize: "12pt",
   lineHeight: "1.45",
 };
 
 const timesBoldStyle: CSSProperties = {
   ...timesTextStyle,
   fontWeight: 700,
-  lineHeight: "1.35",
+  lineHeight: "1.25",
 };
 
 function resolveAssetUrl(url?: string | null) {
@@ -92,14 +92,14 @@ function estimateMathCardHeight(question: Question) {
   );
 }
 
-function packVerbalPages(items: Question[], heights?: Map<string, number>, maxHeight = 930) {
+function packVerbalPages(items: Question[], heights?: Map<string, number>, maxHeight = 900) {
   const pages: Question[][] = [];
   let current: Question[] = [];
   let used = 0;
 
   for (const item of items) {
     const itemHeight = heights?.get(item.id) ?? estimateVerbalRowHeight(item);
-    const nextHeight = itemHeight + (current.length ? 8 : 0);
+    const nextHeight = itemHeight + (current.length ? 4 : 0);
     if (current.length && used + nextHeight > maxHeight) {
       pages.push(current);
       current = [item];
@@ -114,7 +114,7 @@ function packVerbalPages(items: Question[], heights?: Map<string, number>, maxHe
   return pages;
 }
 
-function packMathPages(items: Question[], heights?: Map<string, number>, columnHeight = 930) {
+function packMathPages(items: Question[], heights?: Map<string, number>, columnHeight = 900) {
   const pages: { left: Question[]; right: Question[] }[] = [];
   let left: Question[] = [];
   let right: Question[] = [];
@@ -200,7 +200,7 @@ function HeaderStrip({ useFallbackHeader, setUseFallbackHeader }: { useFallbackH
 function NumberBadge({ index, difficulty }: { index: number; difficulty?: string | null }) {
   const fill = difficultyFillCount(difficulty);
   return (
-    <div className="mb-4 flex items-center justify-between rounded-full border-[3px] border-[#2c5fff] bg-[#eef4ff] px-4 py-2 text-[#2c5fff]">
+    <div className="mb-3 flex items-center justify-between rounded-full border-[3px] border-[#2c5fff] bg-[#eef4ff] px-4 py-2 text-[#2c5fff]">
       <span style={{ ...timesBoldStyle, fontSize: "18pt" }}>{index}</span>
       <div className="flex items-center gap-1.5">
         {Array.from({ length: 3 }).map((_, idx) => (
@@ -231,19 +231,19 @@ function VerbalRow({
       data-question-id={dataQuestionId}
       className={`question-row grid grid-cols-[1fr_1fr] gap-0 ${showTopBorder ? "border-t-2 border-dotted border-[#2c5fff]" : ""}`}
     >
-      <div className="border-r-[3px] border-[#2c5fff] py-6 pr-6">
+      <div className="border-r-[3px] border-[#2c5fff] py-4 pr-5">
         <NumberBadge index={index} difficulty={question.difficulty} />
         {imageUrl ? (
-          <div className="mb-4 overflow-hidden rounded-[16px] border border-[#d9e4ff] bg-white p-2">
+          <div className="mb-3 overflow-hidden rounded-[16px] border border-[#d9e4ff] bg-white p-2">
             <img src={imageUrl} alt="Question" className="max-h-[118px] w-full object-contain" />
           </div>
         ) : null}
         <HtmlBlock html={question.passage || ""} style={timesTextStyle} className="text-slate-950" />
       </div>
-      <div className="py-6 pl-6">
+      <div className="py-4 pl-5">
         <HtmlBlock html={question.stem} style={timesBoldStyle} className="text-slate-950" />
         {question.is_open_ended ? null : (
-          <ol className="mt-4 space-y-1 text-slate-950" style={timesTextStyle}>
+          <ol className="mt-2 space-y-1 text-slate-950" style={timesTextStyle}>
             {question.choices.map((choice) => {
               const choiceImageUrl = resolveAssetUrl(choice.image_url);
               return (
@@ -280,17 +280,17 @@ function MathCard({
 }) {
   const imageUrl = resolveAssetUrl(question.image_url);
   return (
-    <section data-question-id={dataQuestionId} className="break-inside-avoid rounded-[8px] pb-4">
+    <section data-question-id={dataQuestionId} className="break-inside-auto rounded-[8px] pb-2">
       <NumberBadge index={index} difficulty={question.difficulty} />
       {imageUrl ? (
-        <div className="mb-3 overflow-hidden rounded-[16px] border border-[#d9e4ff] bg-white p-2">
+        <div className="mb-2 overflow-hidden rounded-[16px] border border-[#d9e4ff] bg-white p-2">
           <img src={imageUrl} alt="Question" className="max-h-[126px] w-full object-contain" />
         </div>
       ) : null}
-      {question.passage ? <HtmlBlock html={question.passage} style={timesTextStyle} className="mb-3 text-slate-950" /> : null}
+      {question.passage ? <HtmlBlock html={question.passage} style={timesTextStyle} className="mb-2 text-slate-950" /> : null}
       <HtmlBlock html={question.stem} style={timesBoldStyle} className="text-slate-950" />
       {question.is_open_ended ? null : (
-        <ol className="mt-3 space-y-1 text-slate-950" style={timesTextStyle}>
+        <ol className="mt-2 space-y-1 text-slate-950" style={timesTextStyle}>
           {question.choices.map((choice) => {
             const choiceImageUrl = resolveAssetUrl(choice.image_url);
             return (
@@ -331,11 +331,13 @@ function QuestionBookContent() {
   const topic = searchParams.get("topic") || "";
   const subtopic = searchParams.get("subtopic") || "";
   const q = searchParams.get("q") || "";
+  const exportToken = searchParams.get("export_token") || "";
   const idsParam = searchParams.get("ids") || "";
-  const ids = useMemo(
+  const queryIds = useMemo(
     () => idsParam.split(",").map((value) => value.trim()).filter(Boolean),
     [idsParam]
   );
+  const [selectedCount, setSelectedCount] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -362,22 +364,43 @@ function QuestionBookContent() {
         const isStaff = !!meJson?.is_admin || role === "admin" || role === "teacher";
         if (!me.ok || !isStaff) throw new Error("Only admin or teacher can export question books.");
 
-        const params = new URLSearchParams();
-        if (subject) params.set("subject", subject);
-        if (topic) params.set("topic", topic);
-        if (subtopic) params.set("subtopic", subtopic);
-        if (q) params.set("q", q);
-        if (ids.length) params.set("ids", ids.join(","));
+        let exportIds = queryIds;
+        if (exportToken) {
+          const stored = localStorage.getItem(exportToken);
+          if (!stored) throw new Error("Selected export set was not found. Please reopen export from Question Bank.");
+          let parsed: { ids?: string[] } | null = null;
+          try {
+            parsed = JSON.parse(stored);
+          } catch {
+            throw new Error("Selected export set is invalid. Please reopen export from Question Bank.");
+          }
+          exportIds = Array.isArray(parsed?.ids)
+            ? parsed!.ids.map((value) => String(value).trim()).filter(Boolean)
+            : [];
+        }
 
-        const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/questions/?${params.toString()}`, {
-          headers: { Authorization: `Bearer ${token}` },
+        if (!cancelled) setSelectedCount(exportIds.length);
+
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/questions/export/`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            subject,
+            topic,
+            subtopic,
+            q,
+            ids: exportIds,
+          }),
         });
         const json = await res.json().catch(() => null);
         if (!res.ok) throw new Error(json?.error || "Failed to load questions for export.");
 
         let nextQuestions: Question[] = json?.questions ?? [];
-        if (ids.length) {
-          const order = new Map(ids.map((id, index) => [id, index]));
+        if (exportIds.length) {
+          const order = new Map(exportIds.map((id, index) => [id, index]));
           nextQuestions = nextQuestions
             .slice()
             .sort((a, b) => (order.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (order.get(b.id) ?? Number.MAX_SAFE_INTEGER));
@@ -394,7 +417,7 @@ function QuestionBookContent() {
     return () => {
       cancelled = true;
     };
-  }, [ids, q, subject, subtopic, topic]);
+  }, [exportToken, q, queryIds, subject, subtopic, topic]);
 
   const summary = useMemo(() => {
     const parts = [];
@@ -402,9 +425,9 @@ function QuestionBookContent() {
     if (topic) parts.push(topic);
     if (subtopic) parts.push(subtopic);
     if (q) parts.push(`Search: ${q}`);
-    if (ids.length) parts.push(`${ids.length} selected question${ids.length === 1 ? "" : "s"}`);
-    return parts.join(" • ");
-  }, [ids.length, q, subject, subtopic, topic]);
+    if (selectedCount) parts.push(`${selectedCount} selected question${selectedCount === 1 ? "" : "s"}`);
+    return parts.join(" | ");
+  }, [q, selectedCount, subject, subtopic, topic]);
 
   const verbalQuestions = useMemo(() => questions.filter((question) => question.subject !== "math"), [questions]);
   const mathQuestions = useMemo(() => questions.filter((question) => question.subject === "math"), [questions]);
@@ -417,7 +440,13 @@ function QuestionBookContent() {
     [mathQuestions]
   );
 
+  const flowLayout = true;
+
   useEffect(() => {
+    if (flowLayout) {
+      setLayoutReady(true);
+      return;
+    }
     if (!questions.length) {
       setVerbalPages([]);
       setMathPages([]);
@@ -473,19 +502,51 @@ function QuestionBookContent() {
     return () => {
       cancelled = true;
     };
-  }, [mathQuestions, questions.length, verbalQuestions]);
+  }, [flowLayout, mathQuestions, questions.length, verbalQuestions]);
 
   return (
     <>
       <style jsx global>{`
         @page {
           size: A4 portrait;
-          margin: 0;
+          margin: 0 0 25.4mm;
         }
 
         html,
         body {
           background: white;
+        }
+
+        .book-shell {
+          width: 210mm;
+          min-height: 297mm;
+          border: 2px solid #0f172a;
+          background: white;
+          box-shadow: 0 24px 80px rgba(15, 23, 42, 0.1);
+          overflow: hidden;
+        }
+
+        .page-guides {
+          background-image: linear-gradient(
+            to bottom,
+            transparent calc(297mm - 1px),
+            rgba(15, 23, 42, 0.16) calc(297mm - 1px),
+            rgba(15, 23, 42, 0.16) 297mm
+          );
+          background-size: 100% 297mm;
+        }
+
+        .book-content {
+          padding: 8mm 14mm 25.4mm;
+        }
+
+        .book-print-table {
+          width: 100%;
+          border-collapse: collapse;
+        }
+
+        .book-print-head {
+          display: table-header-group;
         }
 
         @media print {
@@ -503,21 +564,21 @@ function QuestionBookContent() {
             display: none !important;
           }
 
-          .print-page {
-            box-shadow: none !important;
+          .book-shell {
+            width: auto !important;
+            min-height: auto !important;
             margin: 0 !important;
-            width: 210mm !important;
-            height: 297mm !important;
-            min-height: 297mm !important;
-            max-width: none !important;
             border: 0 !important;
-            background: white !important;
-            overflow: hidden !important;
-            page-break-after: always;
+            box-shadow: none !important;
+            overflow: visible !important;
           }
 
-          .print-page:last-child {
-            page-break-after: auto;
+          .page-guides {
+            background: none !important;
+          }
+
+          .book-content {
+            padding: 8mm 14mm 25.4mm !important;
           }
         }
       `}</style>
@@ -546,9 +607,9 @@ function QuestionBookContent() {
           </div>
         </div>
 
-        {questions.length ? (
+        {questions.length && !flowLayout ? (
           <div className="fixed left-[-10000px] top-0 z-[-1] opacity-0 pointer-events-none" aria-hidden="true">
-            <div ref={verbalMeasureRef} className="w-[182mm] bg-white px-[14mm] py-[12mm]">
+            <div ref={verbalMeasureRef} className="w-[182mm] bg-white px-[14mm] py-[8mm]">
               {verbalQuestions.map((question, idx) => (
                 <VerbalRow
                   key={`measure-verbal-${question.id}`}
@@ -589,54 +650,49 @@ function QuestionBookContent() {
             Laying out printable pages...
           </div>
         ) : (
-          <div className="space-y-6">
-            {verbalPages.map((page, pageIndex) => (
-              <div
-                key={`verbal-page-${pageIndex}`}
-                className="print-page mx-auto flex w-[210mm] min-h-[297mm] flex-col overflow-hidden border-[2px] border-slate-900 bg-white shadow-[0_24px_80px_rgba(15,23,42,0.10)]"
-              >
-                <HeaderStrip useFallbackHeader={useFallbackHeader} setUseFallbackHeader={setUseFallbackHeader} />
-                <div className="flex-1 bg-white px-[14mm] py-[12mm]">
-                  {page.map((question, idx) => (
-                    <VerbalRow
-                      key={question.id}
-                      question={question}
-                      index={verbalIndexById.get(question.id) || idx + 1}
-                      showTopBorder={idx > 0}
-                    />
-                  ))}
-                </div>
-              </div>
-            ))}
+          <div className="mx-auto book-shell">
+            <table className="book-print-table">
+              <thead className="book-print-head">
+                <tr>
+                  <td className="p-0">
+                    <HeaderStrip useFallbackHeader={useFallbackHeader} setUseFallbackHeader={setUseFallbackHeader} />
+                  </td>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td className="align-top p-0">
+                    <div className="book-content page-guides">
+                      {verbalQuestions.length ? (
+                        <div>
+                          {verbalQuestions.map((question, idx) => (
+                            <VerbalRow
+                              key={question.id}
+                              question={question}
+                              index={verbalIndexById.get(question.id) || idx + 1}
+                              showTopBorder={idx > 0}
+                            />
+                          ))}
+                        </div>
+                      ) : null}
 
-            {mathPages.map((page, pageIndex) => (
-              <div
-                key={`math-page-${pageIndex}`}
-                className="print-page mx-auto flex w-[210mm] min-h-[297mm] flex-col overflow-hidden border-[2px] border-slate-900 bg-white shadow-[0_24px_80px_rgba(15,23,42,0.10)]"
-              >
-                <HeaderStrip useFallbackHeader={useFallbackHeader} setUseFallbackHeader={setUseFallbackHeader} />
-                <div className="flex flex-1 gap-x-8 bg-white px-[14mm] py-[12mm]">
-                  <div className="flex-1 space-y-4">
-                    {page.left.map((question) => (
-                      <MathCard
-                        key={question.id}
-                        question={question}
-                        index={mathIndexById.get(question.id) || 1}
-                      />
-                    ))}
-                  </div>
-                  <div className="flex-1 space-y-4">
-                    {page.right.map((question) => (
-                      <MathCard
-                        key={question.id}
-                        question={question}
-                        index={mathIndexById.get(question.id) || 1}
-                      />
-                    ))}
-                  </div>
-                </div>
-              </div>
-            ))}
+                      {mathQuestions.length ? (
+                        <div className={`${verbalQuestions.length ? "mt-8" : ""} columns-2 gap-x-8 [column-fill:auto]`}>
+                          {mathQuestions.map((question, idx) => (
+                            <div key={question.id} className="mb-3 break-inside-auto">
+                              <MathCard
+                                question={question}
+                                index={mathIndexById.get(question.id) || idx + 1}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         )}
       </div>
