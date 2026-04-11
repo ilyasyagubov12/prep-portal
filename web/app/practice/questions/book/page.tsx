@@ -46,15 +46,6 @@ function resolveAssetUrl(url?: string | null) {
   return `${process.env.NEXT_PUBLIC_API_BASE}${normalized}`;
 }
 
-function difficultyFillCount(difficulty?: string | null) {
-  const value = (difficulty || "").trim().toLowerCase();
-  if (!value) return 1;
-  if (value.includes("hard") || value.includes("advanced")) return 3;
-  if (value.includes("medium") || value.includes("moderate") || value.includes("mid")) return 2;
-  if (value.includes("easy") || value.includes("basic") || value.includes("low")) return 1;
-  return 2;
-}
-
 function stripHtml(html?: string | null) {
   return (html || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 }
@@ -197,19 +188,10 @@ function HeaderStrip({ useFallbackHeader, setUseFallbackHeader }: { useFallbackH
   );
 }
 
-function NumberBadge({ index, difficulty }: { index: number; difficulty?: string | null }) {
-  const fill = difficultyFillCount(difficulty);
+function NumberBadge({ index }: { index: number }) {
   return (
-    <div className="mb-3 flex items-center justify-between rounded-full border-[3px] border-[#2c5fff] bg-[#eef4ff] px-4 py-2 text-[#2c5fff]">
+    <div className="mb-3 flex items-center rounded-full border-[3px] border-[#2c5fff] bg-[#eef4ff] px-4 py-2 text-[#2c5fff]">
       <span style={{ ...timesBoldStyle, fontSize: "18pt" }}>{index}</span>
-      <div className="flex items-center gap-1.5">
-        {Array.from({ length: 3 }).map((_, idx) => (
-          <span
-            key={idx}
-            className={`h-4 w-4 border-2 border-[#2c5fff] ${idx < fill ? "bg-[#2c5fff]" : "bg-white"}`}
-          />
-        ))}
-      </div>
     </div>
   );
 }
@@ -232,7 +214,7 @@ function VerbalRow({
       className={`question-row grid grid-cols-[1fr_1fr] gap-0 ${showTopBorder ? "border-t-2 border-dotted border-[#2c5fff]" : ""}`}
     >
       <div className="border-r-[3px] border-[#2c5fff] py-4 pr-5">
-        <NumberBadge index={index} difficulty={question.difficulty} />
+        <NumberBadge index={index} />
         {imageUrl ? (
           <div className="mb-3 overflow-hidden rounded-[16px] border border-[#d9e4ff] bg-white p-2">
             <img src={imageUrl} alt="Question" className="max-h-[118px] w-full object-contain" />
@@ -281,7 +263,7 @@ function MathCard({
   const imageUrl = resolveAssetUrl(question.image_url);
   return (
     <section data-question-id={dataQuestionId} className="break-inside-auto rounded-[8px] pb-2">
-      <NumberBadge index={index} difficulty={question.difficulty} />
+      <NumberBadge index={index} />
       {imageUrl ? (
         <div className="mb-2 overflow-hidden rounded-[16px] border border-[#d9e4ff] bg-white p-2">
           <img src={imageUrl} alt="Question" className="max-h-[126px] w-full object-contain" />

@@ -11,6 +11,7 @@ from django.utils import timezone
 import os
 import csv
 import io
+import re
 from accounts.views import _require_admin
 from .models import Question, SubtopicProgress, TopicProgress
 from .serializers import QuestionSerializer
@@ -237,6 +238,23 @@ class QuestionImportView(APIView):
         reader = csv.DictReader(io.StringIO(decoded))
         created = 0
         errors = []
+        image_files = request.FILES.getlist("images")
+        image_map = {}
+
+        for uploaded in image_files:
+            base = os.path.splitext(os.path.basename(uploaded.name))[0]
+            image_map[base.lower()] = uploaded
+
+        def save_import_image(uploaded, row_number: int, suffix: str):
+            ext = os.path.splitext(uploaded.name)[1] or ".png"
+            safe_suffix = re.sub(r"[^a-z0-9_]+", "", suffix.lower()) or "q"
+            fname = (
+                f"question_images/imports/{request.user.id}/"
+                f"{timezone.now().strftime('%Y%m%d%H%M%S%f')}_{row_number}_{safe_suffix}{ext}"
+            )
+            saved_path = default_storage.save(fname, ContentFile(uploaded.read()))
+            url = default_storage.url(saved_path) if hasattr(default_storage, "url") else saved_path
+            return request.build_absolute_uri(url)
 
         for idx, row in enumerate(reader, start=1):
             try:
@@ -250,14 +268,24 @@ class QuestionImportView(APIView):
                 correct_letter = (row.get("correct") or "").strip().upper()
                 is_open_ended = str(row.get("is_open_ended") or "").strip().lower() in ("1", "true", "yes", "y")
                 correct_answer = (row.get("correct_answer") or "").strip() or None
+                question_image_url = None
+                row_key = str(idx)
+                question_file = image_map.get(row_key.lower())
+                if question_file:
+                    question_image_url = save_import_image(question_file, idx, "question")
                 choices = []
                 for letter in ["A", "B", "C", "D", "E", "F"]:
                   col = f"choice_{letter.lower()}"
                   if col in row and row[col]:
+                    choice_image_url = None
+                    choice_file = image_map.get(f"{row_key}_{letter}".lower())
+                    if choice_file:
+                        choice_image_url = save_import_image(choice_file, idx, f"choice_{letter}")
                     choices.append({
                       "label": letter,
                       "content": row[col],
-                      "is_correct": letter == correct_letter
+                      "is_correct": letter == correct_letter,
+                      "image_url": choice_image_url,
                     })
 
                 # If no choices are provided but a correct_answer exists, treat as open-ended
@@ -284,6 +312,7 @@ class QuestionImportView(APIView):
                     passage=passage,
                     difficulty=difficulty,
                     published=published,
+                    image_url=question_image_url,
                     choices=choices,
                     is_open_ended=is_open_ended,
                     correct_answer=correct_answer,

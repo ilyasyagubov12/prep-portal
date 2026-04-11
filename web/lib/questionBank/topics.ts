@@ -3,12 +3,11 @@ export type TopicGroup = { title: string; count?: number; subtopics?: Subtopic[]
 
 export const verbalGroups: TopicGroup[] = [
   {
-    title: "Craft and Structure",
+    title: "Standard English Conventions",
     count: 0,
     subtopics: [
-      { title: "Cross-Text Connections", count: 0 },
-      { title: "Text Structure and Purpose", count: 0 },
-      { title: "Words in Context", count: 0 },
+      { title: "Boundaries", count: 0 },
+      { title: "Form, Structure, and Sense", count: 0 },
     ],
   },
   {
@@ -29,11 +28,12 @@ export const verbalGroups: TopicGroup[] = [
     ],
   },
   {
-    title: "Standard English Conventions",
+    title: "Craft and Structure",
     count: 0,
     subtopics: [
-      { title: "Boundaries", count: 0 },
-      { title: "Form, Structure, and Sense", count: 0 },
+      { title: "Cross-Text Connections", count: 0 },
+      { title: "Text Structure and Purpose", count: 0 },
+      { title: "Words in Context", count: 0 },
     ],
   },
 ];

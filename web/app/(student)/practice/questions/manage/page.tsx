@@ -26,7 +26,11 @@ export default function ManageQuestionsPage() {
   const [search, setSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importImages, setImportImages] = useState<File[]>([]);
+  const [importing, setImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const folderInputRef = useRef<HTMLInputElement | null>(null);
 
   const token =
     typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
@@ -60,18 +64,21 @@ export default function ManageQuestionsPage() {
     }
   }
 
-  async function importCsv(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  async function importCsv() {
+    if (!importFile) {
+      setErr("Please choose a CSV file to import.");
+      return;
+    }
     if (!token) {
       setErr("Not logged in");
       return;
     }
-    setLoading(true);
+    setImporting(true);
     setErr(null);
     try {
       const fd = new FormData();
-      fd.append("file", file);
+      fd.append("file", importFile);
+      importImages.forEach((image) => fd.append("images", image, image.name));
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/questions/import/`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
@@ -94,8 +101,11 @@ export default function ManageQuestionsPage() {
     } catch (e: any) {
       setErr(e?.message ?? "Import failed");
     } finally {
-      setLoading(false);
+      setImporting(false);
+      setImportFile(null);
+      setImportImages([]);
       if (fileInputRef.current) fileInputRef.current.value = "";
+      if (folderInputRef.current) folderInputRef.current.value = "";
     }
   }
 
@@ -316,21 +326,54 @@ export default function ManageQuestionsPage() {
       </div>
 
       <div className="rounded-2xl border bg-white shadow-sm p-4 space-y-3">
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+          <div className="text-sm font-semibold text-slate-800">Import question CSV</div>
+          <p className="mt-1 text-xs text-slate-600">
+            Upload a CSV every time. Optionally choose an image folder where files are named like{" "}
+            <code>12.png</code> for the 12th question image or <code>12_A.png</code> for choice A of row 12.
+          </p>
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
+            <label className="flex flex-col gap-1 text-sm font-medium text-slate-800">
+              <span>CSV file</span>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".csv"
+                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm"
+                onChange={(e) => setImportFile(e.target.files?.[0] ?? null)}
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-sm font-medium text-slate-800">
+              <span>Image folder (optional)</span>
+              <input
+                {...({ webkitdirectory: "", directory: "", multiple: true } as any)}
+                ref={folderInputRef}
+                type="file"
+                accept="image/*"
+                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm"
+                onChange={(e) => setImportImages(Array.from(e.target.files ?? []))}
+              />
+            </label>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-slate-500">
+            <span>{importFile ? `CSV: ${importFile.name}` : "No CSV selected"}</span>
+            <span>{importImages.length ? `${importImages.length} image file(s) selected` : "No image folder selected"}</span>
+            <button
+              type="button"
+              onClick={importCsv}
+              disabled={importing || !importFile}
+              className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+            >
+              {importing ? "Importing..." : "Import CSV"}
+            </button>
+          </div>
+        </div>
+
         <div className="flex items-center justify-between">
           <div className="text-sm font-semibold text-slate-800">Results</div>
           <div className="flex items-center gap-3 text-xs text-neutral-500">
             <span>{questions.length} found</span>
             <span>{selectedIds.size} selected</span>
-            <label className="inline-flex items-center gap-2">
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".csv"
-                className="text-xs"
-                onChange={importCsv}
-              />
-              <span className="text-indigo-600 font-semibold cursor-pointer">Import CSV</span>
-            </label>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">

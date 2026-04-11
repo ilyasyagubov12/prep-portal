@@ -42,11 +42,10 @@ MATH_GROUPS = [
 
 VERBAL_GROUPS = [
     {
-        "title": "Craft and Structure",
+        "title": "Standard English Conventions",
         "subtopics": [
-            "Cross-Text Connections",
-            "Text Structure and Purpose",
-            "Words in Context",
+            "Boundaries",
+            "Form, Structure, and Sense",
         ],
     },
     {
@@ -65,10 +64,11 @@ VERBAL_GROUPS = [
         ],
     },
     {
-        "title": "Standard English Conventions",
+        "title": "Craft and Structure",
         "subtopics": [
-            "Boundaries",
-            "Form, Structure, and Sense",
+            "Cross-Text Connections",
+            "Text Structure and Purpose",
+            "Words in Context",
         ],
     },
 ]
