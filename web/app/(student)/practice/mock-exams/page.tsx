@@ -119,13 +119,18 @@ export default function Page() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [exams, setExams] = useState<MockExam[]>([]);
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [sectionSearches, setSectionSearches] = useState<Record<string, string>>({});
+  const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
 
   const [newTitle, setNewTitle] = useState("");
   const [newDesc, setNewDesc] = useState("");
+  const [newCourseId, setNewCourseId] = useState("");
   const [totalMinutes, setTotalMinutes] = useState(120);
   const [creating, setCreating] = useState(false);
 
   const [manageId, setManageId] = useState<string | null>(null);
+  const canManage = isTeacherOrAdmin(profile);
 
   useEffect(() => {
     let cancelled = false;
@@ -163,6 +168,34 @@ export default function Page() {
     setManageId(null);
   }, [searchParams]);
 
+  useEffect(() => {
+    if (!accessToken || !canManage) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/courses/`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        const json = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(json?.error || "Failed to load courses");
+        const list = Array.isArray(json) ? json : json?.courses || [];
+        if (cancelled) return;
+        setCourses(list);
+        const routeCourseId = searchParams?.get("course_id") || "";
+        if (routeCourseId && list.some((course: Course) => course.id === routeCourseId)) {
+          setNewCourseId(routeCourseId);
+        } else if (!newCourseId && list.length === 1) {
+          setNewCourseId(list[0].id);
+        }
+      } catch {
+        if (!cancelled) setCourses([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, canManage, searchParams, newCourseId]);
+
   async function loadExams(token: string) {
     setLoading(true);
     setError(null);
@@ -185,7 +218,43 @@ export default function Page() {
     void loadExams(accessToken);
   }, [accessToken]);
 
-  const canManage = isTeacherOrAdmin(profile);
+  const groupedExams = useMemo(() => {
+    const groups = new Map<string, { id: string; title: string; slug?: string | null; exams: MockExam[] }>();
+    for (const exam of exams) {
+      const key = exam.course_id || "unassigned";
+      if (!groups.has(key)) {
+        groups.set(key, {
+          id: key,
+          title: exam.course_title || "Unassigned",
+          slug: exam.course_slug || null,
+          exams: [],
+        });
+      }
+      groups.get(key)!.exams.push(exam);
+    }
+    return Array.from(groups.values()).sort((a, b) => a.title.localeCompare(b.title));
+  }, [exams]);
+
+  useEffect(() => {
+    if (groupedExams.length === 0) {
+      setActiveGroupId(null);
+      return;
+    }
+    const routeCourseId = searchParams?.get("course_id") || "";
+    if (routeCourseId && groupedExams.some((group) => group.id === routeCourseId)) {
+      setActiveGroupId(routeCourseId);
+      return;
+    }
+    if (activeGroupId && groupedExams.some((group) => group.id === activeGroupId)) {
+      return;
+    }
+    setActiveGroupId(groupedExams[0].id);
+  }, [groupedExams, searchParams, activeGroupId]);
+
+  const activeGroup = useMemo(
+    () => groupedExams.find((group) => group.id === activeGroupId) ?? groupedExams[0] ?? null,
+    [groupedExams, activeGroupId],
+  );
 
   useEffect(() => {
     if (!profileLoaded) return;
@@ -195,7 +264,7 @@ export default function Page() {
   }, [profileLoaded, canManage, router]);
 
   async function createExam() {
-    if (!accessToken || !newTitle.trim()) return;
+    if (!accessToken || !newTitle.trim() || !newCourseId) return;
     setCreating(true);
     setError(null);
     try {
@@ -208,6 +277,7 @@ export default function Page() {
         body: JSON.stringify({
           title: newTitle.trim(),
           description: newDesc || null,
+          course_id: newCourseId,
           total_time_minutes: totalMinutes,
           shuffle_questions: true,
           shuffle_choices: false,
@@ -264,87 +334,115 @@ export default function Page() {
 
         {error ? <div className="text-sm text-red-600">{error}</div> : null}
 
-        {canManage ? (
-          <section className="rounded-2xl border bg-white p-5 shadow-sm">
-            <div className="text-lg font-semibold">Create new mock exam</div>
-            <div className="mt-3 grid gap-3 md:grid-cols-[2fr_3fr_auto] items-end">
-              <label className="grid gap-1 text-sm">
-                <span className="text-xs uppercase tracking-wide text-slate-400">Title</span>
-                <input
-                  className="rounded-xl border px-3 py-2 text-sm"
-                  value={newTitle}
-                  onChange={(e) => setNewTitle(e.target.value)}
-                  placeholder="SAT Mock Exam - March"
-                />
-              </label>
-              <label className="grid gap-1 text-sm">
-                <span className="text-xs uppercase tracking-wide text-slate-400">Description</span>
-                <input
-                  className="rounded-xl border px-3 py-2 text-sm"
-                  value={newDesc}
-                  onChange={(e) => setNewDesc(e.target.value)}
-                  placeholder="Single-timer mock with free navigation"
-                />
-              </label>
-              <button
-                className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-60"
-                onClick={createExam}
-                disabled={creating}
-                type="button"
-              >
-                {creating ? "Creating..." : "Create"}
-              </button>
-            </div>
-
-            <div className="mt-4 grid gap-4 lg:grid-cols-2">
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Total time</div>
-                <div className="mt-3">
-                  <input
-                    type="number"
-                    min={1}
-                    className="rounded-lg border px-3 py-2 text-sm w-full"
-                    value={totalMinutes}
-                    onChange={(e) => setTotalMinutes(Math.max(1, Number(e.target.value) || 1))}
-                  />
-                </div>
-                <div className="mt-2 text-[11px] text-slate-500">Single timer for entire mock.</div>
-              </div>
-
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Question counts</div>
-                <div className="mt-3 text-sm text-slate-600">
-                  Counts are calculated automatically from the questions you add later.
-                </div>
-              </div>
-            </div>
-          </section>
-        ) : null}
-
         <section className="space-y-6">
           {exams.length === 0 ? (
             <div className="rounded-2xl border border-dashed bg-white px-5 py-6 text-sm text-slate-500">
               No mock exams yet.
             </div>
           ) : (
-            <div className="grid gap-5 lg:grid-cols-2">
-              {exams.map((exam) => (
-                <MockExamCard
-                  key={exam.id}
-                  exam={exam}
-                  canManage={canManage}
-                  manageId={manageId}
-                  openManage={openManage}
-                  closeManage={closeManage}
-                  startExam={startExam}
-                  token={accessToken}
-                  refresh={() => accessToken && loadExams(accessToken)}
-                  onReviewAttempt={(examId, attemptId) =>
-                    router.push(`/practice/mock-exams/${examId}?review_attempt=${attemptId}`)
-                  }
-                />
-              ))}
-            </div>
+            <>
+              <section className="rounded-2xl border bg-white p-5 shadow-sm">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="text-xs uppercase tracking-[0.3em] text-slate-400">Classes</div>
+                    <div className="mt-1 text-2xl font-semibold text-slate-900">Choose a class first</div>
+                    <div className="mt-1 text-sm text-slate-500">
+                      Open one class and work only with its quizzes.
+                    </div>
+                  </div>
+                  {activeGroup ? (
+                    <div className="rounded-2xl border bg-slate-50 px-4 py-3 text-right">
+                      <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Active class</div>
+                      <div className="mt-1 text-sm font-semibold text-slate-800">{activeGroup.title}</div>
+                      <div className="mt-1 text-xs text-slate-500">
+                        {activeGroup.exams.length} quiz{activeGroup.exams.length === 1 ? "" : "zes"}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                  {groupedExams.map((group) => (
+                    <button
+                      key={group.id}
+                      type="button"
+                      onClick={() => setActiveGroupId(group.id)}
+                      className={`rounded-2xl border px-4 py-4 text-left transition ${
+                        activeGroup?.id === group.id
+                          ? "border-indigo-500 bg-indigo-50 shadow-sm"
+                          : "border-slate-200 bg-slate-50 hover:border-slate-300 hover:bg-white"
+                      }`}
+                    >
+                      <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Class</div>
+                      <div className="mt-2 text-lg font-semibold text-slate-900">{group.title}</div>
+                      <div className="mt-2 inline-flex rounded-full bg-white px-2 py-1 text-xs text-slate-500">
+                        {group.exams.length} quiz{group.exams.length === 1 ? "" : "zes"}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </section>
+
+              {activeGroup ? (
+                <section className="rounded-2xl border bg-white p-5 shadow-sm">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="text-xs uppercase tracking-[0.3em] text-slate-400">Quiz library</div>
+                      <div className="mt-1 text-2xl font-semibold text-slate-900">{activeGroup.title}</div>
+                    </div>
+                    <div className="w-full max-w-sm">
+                      <input
+                        className="w-full rounded-xl border px-3 py-2 text-sm"
+                        placeholder={`Search quizzes in ${activeGroup.title}`}
+                        value={sectionSearches[activeGroup.id] || ""}
+                        onChange={(e) =>
+                          setSectionSearches((prev) => ({ ...prev, [activeGroup.id]: e.target.value }))
+                        }
+                      />
+                    </div>
+                  </div>
+
+                  <div className="mt-4">
+                    {(() => {
+                      const search = (sectionSearches[activeGroup.id] || "").trim().toLowerCase();
+                      const visibleExams = !search
+                        ? activeGroup.exams
+                        : activeGroup.exams.filter((exam) => {
+                            const haystack = `${exam.title} ${exam.description || ""}`.toLowerCase();
+                            return haystack.includes(search);
+                          });
+                      if (visibleExams.length === 0) {
+                        return (
+                          <div className="rounded-xl border border-dashed bg-slate-50 px-4 py-5 text-sm text-slate-500">
+                            No quizzes matched this search.
+                          </div>
+                        );
+                      }
+                      return (
+                        <div className="grid gap-5 lg:grid-cols-2">
+                          {visibleExams.map((exam) => (
+                            <MockExamCard
+                              key={exam.id}
+                              exam={exam}
+                              canManage={canManage}
+                              manageId={manageId}
+                              openManage={openManage}
+                              closeManage={closeManage}
+                              startExam={startExam}
+                              token={accessToken}
+                              refresh={() => accessToken && loadExams(accessToken)}
+                              onReviewAttempt={(examId, attemptId) =>
+                                router.push(`/practice/mock-exams/${examId}?review_attempt=${attemptId}`)
+                              }
+                            />
+                          ))}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </section>
+              ) : null}
+            </>
           )}
         </section>
       </div>
@@ -627,37 +725,6 @@ function MockExamCard({
                 />
                 Shuffle answer choices
               </label>
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={exam.allow_retakes}
-                  onChange={() => updateExam({ allow_retakes: !exam.allow_retakes })}
-                />
-                Allow retakes
-              </label>
-              <label className="flex flex-wrap items-center gap-2">
-                <span className="text-[11px] text-slate-500">Retake limit</span>
-                <input
-                  type="number"
-                  min={1}
-                  placeholder="Unlimited"
-                  className="w-28 rounded-md border px-2 py-1 text-xs"
-                  value={retakeDraft}
-                  onChange={(e) => setRetakeDraft(e.target.value)}
-                  onBlur={async () => {
-                    if (!retakeDraft) {
-                      await updateExam({ retake_limit: null });
-                      return;
-                    }
-                    const nextVal = Number(retakeDraft);
-                    if (!Number.isNaN(nextVal)) {
-                      await updateExam({ retake_limit: Math.max(1, nextVal) });
-                    }
-                  }}
-                  disabled={exam.allow_retakes === false}
-                />
-                <span className="text-[10px] text-slate-400">Total attempts allowed</span>
-              </label>
             </div>
           </div>
 
@@ -667,28 +734,70 @@ function MockExamCard({
 
       {canManage && active && activePanel === "access" ? (
         <div className="mt-5 space-y-4 border-t pt-4">
-          <div className="flex flex-wrap gap-3">
-            <button
-              className="rounded-lg border px-3 py-2 text-xs font-semibold"
-              type="button"
-              onClick={() => updateExam({ results_published: !exam.results_published })}
-            >
-              {exam.results_published ? "Hide results" : "Publish results"}
-            </button>
-            <button
-              className="rounded-lg border px-3 py-2 text-xs font-semibold"
-              type="button"
-              onClick={() => updateExam({ is_active: !exam.is_active })}
-            >
-              {exam.is_active ? "Disable access" : "Enable access"}
-            </button>
-            <button
-              className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700"
-              type="button"
-              onClick={deleteExam}
-            >
-              Delete mock
-            </button>
+          <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr_auto]">
+            <div className="rounded-xl border bg-slate-50 p-4">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">Class access</div>
+              <div className="mt-3 flex flex-wrap gap-3">
+                <ToggleSwitch
+                  checked={exam.is_active}
+                  onChange={() => updateExam({ is_active: !exam.is_active })}
+                  label="Access enabled"
+                />
+                <ToggleSwitch
+                  checked={exam.results_published}
+                  onChange={() => updateExam({ results_published: !exam.results_published })}
+                  label="Results published"
+                />
+              </div>
+            </div>
+            <div className="rounded-xl border bg-slate-50 p-4">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">Retake settings</div>
+              <div className="mt-3 flex items-center gap-3">
+                <ToggleSwitch
+                  checked={exam.allow_retakes}
+                  onChange={() => updateExam({ allow_retakes: !exam.allow_retakes })}
+                  label="Allow retakes"
+                />
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <input
+                  type="number"
+                  min={1}
+                  placeholder="Unlimited"
+                  className="w-28 rounded-md border px-2 py-1 text-xs"
+                  value={retakeDraft}
+                  onChange={(e) => setRetakeDraft(e.target.value)}
+                  disabled={!exam.allow_retakes}
+                />
+                <button
+                  className="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-60"
+                  type="button"
+                  disabled={!exam.allow_retakes}
+                  onClick={async () => {
+                    if (!retakeDraft) {
+                      await updateExam({ retake_limit: null });
+                      return;
+                    }
+                    const nextVal = Number(retakeDraft);
+                    if (!Number.isNaN(nextVal)) {
+                      await updateExam({ retake_limit: Math.max(1, nextVal) });
+                    }
+                  }}
+                >
+                  Save limit
+                </button>
+              </div>
+              <div className="mt-1 text-[10px] text-slate-400">Default attempt limit for this whole class</div>
+            </div>
+            <div className="flex items-start">
+              <button
+                className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700"
+                type="button"
+                onClick={deleteExam}
+              >
+                Delete mock
+              </button>
+            </div>
           </div>
 
           <MockExamAccessManager exam={exam} token={token} refresh={refresh} />
@@ -770,41 +879,14 @@ function MockExamAccessManager({
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [selectedDetails, setSelectedDetails] = useState<Student[]>([]);
   const [limitOverrides, setLimitOverrides] = useState<Record<string, string>>({});
+  const [savingLimitId, setSavingLimitId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [courses, setCourses] = useState<Course[]>([]);
-  const [courseQuery, setCourseQuery] = useState("");
-  const [selectedCourseIds, setSelectedCourseIds] = useState<string[]>([]);
 
   useEffect(() => {
     setSelectedIds(exam.allowed_student_ids ?? []);
   }, [exam.allowed_student_ids]);
-
-  useEffect(() => {
-    setSelectedCourseIds(exam.allowed_course_ids ?? []);
-  }, [exam.allowed_course_ids]);
-
-  useEffect(() => {
-    if (!token) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch(`${API_BASE}/api/courses/`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const json = await res.json().catch(() => null);
-        if (!res.ok) throw new Error(json?.error || "Failed to load courses");
-        const list = Array.isArray(json) ? json : json?.courses || [];
-        if (!cancelled) setCourses(list);
-      } catch {
-        if (!cancelled) setCourses([]);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [token]);
 
   useEffect(() => {
     if (!token) return;
@@ -833,7 +915,7 @@ function MockExamAccessManager({
     return () => {
       cancelled = true;
     };
-  }, [selectedIds, token]);
+  }, [selectedIds, token, exam.id]);
 
   useEffect(() => {
     setLimitOverrides((prev) => {
@@ -886,18 +968,18 @@ function MockExamAccessManager({
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   }
 
-  const filteredCourses = useMemo(() => {
-    const q = courseQuery.trim().toLowerCase();
-    if (!q) return courses;
-    return courses.filter((c) => {
-      const title = (c.title || "").toLowerCase();
-      const slug = (c.slug || "").toLowerCase();
-      return title.includes(q) || slug.includes(q);
+  function normalizedStudentLimits() {
+    const student_limits: Record<string, number | null> = {};
+    selectedIds.forEach((id) => {
+      const raw = limitOverrides[id];
+      if (!raw) {
+        student_limits[id] = null;
+        return;
+      }
+      const num = Number(raw);
+      student_limits[id] = Number.isNaN(num) ? null : Math.max(1, num);
     });
-  }, [courses, courseQuery]);
-
-  function toggleCourse(id: string) {
-    setSelectedCourseIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+    return student_limits;
   }
 
   async function saveAccess() {
@@ -906,16 +988,6 @@ function MockExamAccessManager({
     setError(null);
     setMessage(null);
     try {
-      const student_limits: Record<string, number | null> = {};
-      selectedIds.forEach((id) => {
-        const raw = limitOverrides[id];
-        if (!raw) {
-          student_limits[id] = null;
-          return;
-        }
-        const num = Number(raw);
-        student_limits[id] = Number.isNaN(num) ? null : Math.max(1, num);
-      });
       const res = await fetch(`${API_BASE}/api/mock-exams/access/set/`, {
         method: "POST",
         headers: {
@@ -925,8 +997,7 @@ function MockExamAccessManager({
         body: JSON.stringify({
           mock_exam_id: exam.id,
           student_ids: selectedIds,
-          student_limits,
-          course_ids: selectedCourseIds,
+          student_limits: normalizedStudentLimits(),
         }),
       });
       const json = await res.json();
@@ -940,11 +1011,42 @@ function MockExamAccessManager({
     }
   }
 
+  async function saveStudentLimit(studentId: string) {
+    if (!token) return;
+    setSavingLimitId(studentId);
+    setError(null);
+    setMessage(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/mock-exams/access/set/`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          mock_exam_id: exam.id,
+          student_ids: selectedIds,
+          student_limits: normalizedStudentLimits(),
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Failed to save limit");
+      setMessage("Student limit saved.");
+      refresh();
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to save limit");
+    } finally {
+      setSavingLimitId(null);
+    }
+  }
+
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4">
       <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Access control</div>
       <div className="mt-2 text-xs text-slate-500">
-        Choose which students or course groups can take this mock. If none are selected, all students can access it.
+        {exam.course_title
+          ? `This quiz belongs to ${exam.course_title}. If no students are selected, the whole class can take it.`
+          : "Choose which students can take this mock. If none are selected, everyone with class access can take it."}
       </div>
 
       {error ? <div className="mt-2 text-xs text-red-600">{error}</div> : null}
@@ -985,16 +1087,21 @@ function MockExamAccessManager({
 
       <div className="mt-3 grid gap-3 lg:grid-cols-2">
         <div className="rounded-lg border bg-slate-50 p-3">
-          <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Search results</div>
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Class roster</div>
+            <div className="rounded-full bg-white px-2 py-1 text-[10px] text-slate-500">{results.length} shown</div>
+          </div>
           <div className="mt-2 grid gap-2 max-h-[220px] overflow-y-auto">
             {results.length === 0 ? (
-              <div className="text-xs text-slate-500">No students loaded.</div>
+              <div className="rounded-lg border border-dashed border-slate-200 bg-white px-3 py-5 text-xs text-slate-500">
+                No students loaded from this class.
+              </div>
             ) : (
               results.map((s) => {
                 const picked = selectedIds.includes(s.user_id);
                 const name = s.nickname || `${s.first_name ?? ""} ${s.last_name ?? ""}`.trim() || s.username;
                 const attempts = s.attempts_count ?? 0;
-                const accessLimit = s.access_limit;
+                const accessLimit = s.access_limit ?? (exam.allow_retakes ? exam.retake_limit : 1);
                 return (
                   <button
                     key={s.user_id}
@@ -1004,12 +1111,28 @@ function MockExamAccessManager({
                     onClick={() => toggleSelect(s.user_id)}
                     type="button"
                   >
-                    <div className="font-semibold text-slate-700">{name}</div>
-                    <div className="text-[10px] text-slate-400">
-                      {s.username} {s.student_id ? `· ${s.student_id}` : ""}
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="font-semibold text-slate-700">{name}</div>
+                        <div className="text-[10px] text-slate-400">
+                          {s.username}
+                          {s.student_id ? ` - ${s.student_id}` : ""}
+                        </div>
+                      </div>
+                      <div
+                        className={`rounded-full px-2 py-1 text-[10px] font-semibold ${
+                          picked ? "bg-indigo-600 text-white" : "bg-white text-slate-500"
+                        }`}
+                      >
+                        {picked ? "Selected" : "Tap to allow"}
+                      </div>
                     </div>
-                    <div className="text-[10px] text-slate-500">Attempts: {attempts}</div>
-                    <div className="text-[10px] text-slate-500">Limit: {accessLimit != null ? accessLimit : "Default"}</div>
+                    <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-slate-500">
+                      <span className="rounded-full bg-white px-2 py-1">Used: {attempts}</span>
+                      <span className="rounded-full bg-white px-2 py-1">
+                        Allowed: {accessLimit != null ? accessLimit : "Unlimited"}
+                      </span>
+                    </div>
                   </button>
                 );
               })
@@ -1018,22 +1141,52 @@ function MockExamAccessManager({
         </div>
 
         <div className="rounded-lg border bg-slate-50 p-3">
-          <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Selected</div>
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Selected students</div>
+            <div className="rounded-full bg-white px-2 py-1 text-[10px] text-slate-500">
+              {selectedIds.length} selected
+            </div>
+          </div>
           <div className="mt-2 grid gap-2 max-h-[220px] overflow-y-auto">
             {selectedIds.length === 0 ? (
-              <div className="text-xs text-slate-500">No students selected.</div>
+              <div className="rounded-lg border border-dashed border-slate-200 bg-white px-3 py-5 text-xs text-slate-500">
+                No student-specific restriction. The whole class can take it.
+              </div>
             ) : (
               selectedIds.map((id) => {
                 const s = selectedDetails.find((r) => r.user_id === id) || results.find((r) => r.user_id === id);
                 const attempts = s?.attempts_count ?? 0;
+                const overrideRaw = limitOverrides[id] ?? "";
+                const overrideLimit = overrideRaw ? Math.max(1, Number(overrideRaw) || 1) : null;
+                const effectiveLimit = overrideLimit ?? s?.access_limit ?? (exam.allow_retakes ? exam.retake_limit : 1);
                 return (
-                  <div key={id} className="rounded-lg border border-slate-200 px-3 py-2 text-xs">
-                    <div className="font-semibold text-slate-700">
-                      {s?.nickname || `${s?.first_name ?? ""} ${s?.last_name ?? ""}`.trim() || s?.username || id}
+                  <div key={id} className="rounded-lg border border-slate-200 px-3 py-2 text-xs bg-white">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="font-semibold text-slate-700">
+                          {s?.nickname || `${s?.first_name ?? ""} ${s?.last_name ?? ""}`.trim() || s?.username || id}
+                        </div>
+                        <div className="text-[10px] text-slate-400">
+                          {s?.username || id}
+                          {s?.student_id ? ` - ${s.student_id}` : ""}
+                        </div>
+                      </div>
+                      <button
+                        className="rounded-md border border-red-200 px-2 py-1 text-[10px] font-semibold text-red-600"
+                        type="button"
+                        onClick={() => toggleSelect(id)}
+                      >
+                        Remove
+                      </button>
                     </div>
-                    <div className="text-[10px] text-slate-500">Attempts: {attempts}</div>
-                    <div className="mt-2 flex items-center gap-2 text-[10px] text-slate-500">
-                      <span>Limit</span>
+                    <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-slate-500">
+                      <span className="rounded-full bg-slate-50 px-2 py-1">Used: {attempts}</span>
+                      <span className="rounded-full bg-slate-50 px-2 py-1">
+                        Allowed: {effectiveLimit != null ? effectiveLimit : "Unlimited"}
+                      </span>
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-slate-500">
+                      <span>Extra limit</span>
                       <input
                         type="number"
                         min={1}
@@ -1043,14 +1196,15 @@ function MockExamAccessManager({
                         onChange={(e) => setLimitOverrides((prev) => ({ ...prev, [id]: e.target.value }))}
                       />
                       <span className="text-slate-400">blank = default</span>
+                      <button
+                        className="rounded-md border border-indigo-200 px-2 py-1 text-[10px] font-semibold text-indigo-700 disabled:opacity-60"
+                        type="button"
+                        disabled={savingLimitId === id}
+                        onClick={() => saveStudentLimit(id)}
+                      >
+                        {savingLimitId === id ? "Saving..." : "Set limit"}
+                      </button>
                     </div>
-                    <button
-                      className="mt-1 text-[10px] text-red-600"
-                      type="button"
-                      onClick={() => toggleSelect(id)}
-                    >
-                      Remove
-                    </button>
                   </div>
                 );
               })
@@ -1058,73 +1212,43 @@ function MockExamAccessManager({
           </div>
         </div>
       </div>
-
-      <div className="mt-4 rounded-lg border bg-slate-50 p-3">
-        <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Course groups</div>
-        <div className="mt-1 text-xs text-slate-500">
-          Grant access to all students enrolled in selected courses.
-        </div>
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <input
-            className="min-w-[220px] flex-1 rounded-lg border px-3 py-2 text-xs"
-            placeholder="Filter courses by name or slug"
-            value={courseQuery}
-            onChange={(e) => setCourseQuery(e.target.value)}
-          />
-          <div className="text-[10px] text-slate-400">{filteredCourses.length} courses</div>
-        </div>
-
-        <div className="mt-3 grid gap-3 lg:grid-cols-2">
-          <div className="rounded-lg border border-slate-200 bg-white p-3">
-            <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Available courses</div>
-            <div className="mt-2 grid gap-2 max-h-[200px] overflow-y-auto">
-              {filteredCourses.length === 0 ? (
-                <div className="text-xs text-slate-500">No courses found.</div>
-              ) : (
-                filteredCourses.map((c) => {
-                  const picked = selectedCourseIds.includes(c.id);
-                  return (
-                    <button
-                      key={c.id}
-                      className={`rounded-lg border px-3 py-2 text-left text-xs ${
-                        picked ? "border-indigo-500 bg-indigo-50" : "border-slate-200"
-                      }`}
-                      type="button"
-                      onClick={() => toggleCourse(c.id)}
-                    >
-                      <div className="font-semibold text-slate-700">{c.title}</div>
-                      <div className="text-[10px] text-slate-400">{c.slug || c.id}</div>
-                    </button>
-                  );
-                })
-              )}
-            </div>
-          </div>
-
-          <div className="rounded-lg border border-slate-200 bg-white p-3">
-            <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Selected courses</div>
-            <div className="mt-2 grid gap-2 max-h-[200px] overflow-y-auto">
-              {selectedCourseIds.length === 0 ? (
-                <div className="text-xs text-slate-500">No courses selected.</div>
-              ) : (
-                selectedCourseIds.map((id) => {
-                  const c = courses.find((course) => course.id === id);
-                  return (
-                    <div key={id} className="rounded-lg border border-slate-200 px-3 py-2 text-xs">
-                      <div className="font-semibold text-slate-700">{c?.title || id}</div>
-                      <div className="text-[10px] text-slate-400">{c?.slug || id}</div>
-                      <button className="mt-1 text-[10px] text-red-600" type="button" onClick={() => toggleCourse(id)}>
-                        Remove
-                      </button>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
     </div>
+  );
+}
+
+function ToggleSwitch({
+  checked,
+  onChange,
+  label,
+  disabled = false,
+}: {
+  checked: boolean;
+  onChange: () => void;
+  label: string;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onChange}
+      disabled={disabled}
+      className={`inline-flex items-center gap-3 rounded-full border px-3 py-2 text-xs font-semibold transition ${
+        disabled ? "cursor-not-allowed opacity-60" : ""
+      }`}
+    >
+      <span>{label}</span>
+      <span
+        className={`relative inline-flex h-6 w-11 rounded-full transition ${
+          checked ? "bg-indigo-600" : "bg-slate-300"
+        }`}
+      >
+        <span
+          className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition ${
+            checked ? "left-[22px]" : "left-0.5"
+          }`}
+        />
+      </span>
+    </button>
   );
 }
 

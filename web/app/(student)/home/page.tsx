@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { Manrope } from "next/font/google";
+import { subjects } from "@/lib/questionBank/topics";
 import happy from "@/sss/happy(ilyas).png";
 import vic from "@/sss/vic(ilyas).png";
 
@@ -63,8 +64,8 @@ export default function HomePage() {
   const [uniFile, setUniFile] = useState<File | null>(null);
   const [uniUploading, setUniUploading] = useState(false);
   const [displayName, setDisplayName] = useState("there");
-  const [mathLevel, setMathLevel] = useState(0);
-  const [verbalLevel, setVerbalLevel] = useState(0);
+  const [mathQuizProgress, setMathQuizProgress] = useState({ passed: 0, total: 0 });
+  const [verbalQuizProgress, setVerbalQuizProgress] = useState({ passed: 0, total: 0 });
   const [streakCount, setStreakCount] = useState(0);
   const [streakMath, setStreakMath] = useState(0);
   const [streakVerbal, setStreakVerbal] = useState(0);
@@ -83,6 +84,14 @@ export default function HomePage() {
   const [courseSliderOverflow, setCourseSliderOverflow] = useState(false);
   const [courseCanScrollLeft, setCourseCanScrollLeft] = useState(false);
   const [courseCanScrollRight, setCourseCanScrollRight] = useState(false);
+  const totalMathSubtopics = useMemo(
+    () => subjects.math.reduce((sum, topic) => sum + (topic.subtopics?.length ?? 0), 0),
+    []
+  );
+  const totalVerbalSubtopics = useMemo(
+    () => subjects.verbal.reduce((sum, topic) => sum + (topic.subtopics?.length ?? 0), 0),
+    []
+  );
 
   useEffect(() => {
     const id = window.setInterval(() => setNow(new Date()), 60_000);
@@ -152,11 +161,22 @@ export default function HomePage() {
             }
             if (typeof prof?.goal_math === "number") setMathGoal(prof.goal_math);
             if (typeof prof?.goal_verbal === "number") setVerbalGoal(prof.goal_verbal);
-            const mLvl = parseInt(prof?.math_level ?? "0", 10);
-            const vLvl = parseInt(prof?.verbal_level ?? "0", 10);
-            setMathLevel(Number.isFinite(mLvl) ? mLvl : 0);
-            setVerbalLevel(Number.isFinite(vLvl) ? vLvl : 0);
             if (prof?.university_icon) setUniPreview(prof.university_icon);
+          }
+
+          const progressRes = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/questions/progress/`, {
+            headers: { Authorization: `Bearer ${access}` },
+          }).catch(() => null);
+          if (progressRes && progressRes.ok) {
+            const progressJson = await progressRes.json().catch(() => null);
+            const subtopics = Array.isArray(progressJson?.subtopics) ? progressJson.subtopics : [];
+            const mathPassed = subtopics.filter((item: any) => item?.subject === "math" && item?.passed).length;
+            const verbalPassed = subtopics.filter((item: any) => item?.subject === "verbal" && item?.passed).length;
+            setMathQuizProgress({ passed: mathPassed, total: totalMathSubtopics });
+            setVerbalQuizProgress({ passed: verbalPassed, total: totalVerbalSubtopics });
+          } else {
+            setMathQuizProgress({ passed: 0, total: totalMathSubtopics });
+            setVerbalQuizProgress({ passed: 0, total: totalVerbalSubtopics });
           }
 
           await fetchStreakStatus(access);
@@ -181,7 +201,7 @@ export default function HomePage() {
         setLoadingDates(false);
       }
     })();
-  }, []);
+  }, [totalMathSubtopics, totalVerbalSubtopics]);
 
   useEffect(() => {
     if (!streakLoaded || streakTimeLeft > 0 || streakRefreshing) return;
@@ -469,11 +489,11 @@ export default function HomePage() {
         </div>
         <div className="mt-3 grid grid-cols-2 gap-2 sm:gap-3">
           {[
-            { label: "Math", value: mathLevel, accent: "from-emerald-400 via-teal-400 to-indigo-500" },
-            { label: "Verbal", value: verbalLevel, accent: "from-amber-400 via-rose-400 to-purple-500" },
+            { label: "Math", progress: mathQuizProgress, accent: "from-emerald-400 via-teal-400 to-indigo-500" },
+            { label: "Verbal", progress: verbalQuizProgress, accent: "from-amber-400 via-rose-400 to-purple-500" },
           ].map((item) => {
-            const cap = 20;
-            const pct = Math.min(1, item.value / cap);
+            const pct = item.progress.total > 0 ? Math.min(1, item.progress.passed / item.progress.total) : 0;
+            const percentValue = Math.round(pct * 100);
             return (
               <div
                 key={item.label}
@@ -481,16 +501,18 @@ export default function HomePage() {
               >
                 <div className="absolute right-0 top-0 h-16 w-16 -translate-y-6 translate-x-6 rounded-full bg-slate-100/70 blur-2xl" />
                 <div className="flex items-center justify-between">
-                  <div className="text-xs uppercase tracking-[0.2em] text-slate-400">{item.label} level</div>
-                  <div className="text-lg font-extrabold text-slate-900">{item.value}</div>
+                  <div className="text-xs uppercase tracking-[0.2em] text-slate-400">{item.label} progress</div>
+                  <div className="text-lg font-extrabold text-slate-900">{percentValue}%</div>
                 </div>
                 <div className="mt-2 h-2 w-full rounded-full bg-slate-100">
                   <div
                     className={`h-2 rounded-full bg-gradient-to-r ${item.accent}`}
-                    style={{ width: `${Math.round(pct * 100)}%` }}
+                    style={{ width: `${percentValue}%` }}
                   />
                 </div>
-                <div className="mt-1 text-[11px] text-slate-500">Progress to 20</div>
+                <div className="mt-1 text-[11px] text-slate-500">
+                  {item.progress.passed}/{item.progress.total} quizzes passed
+                </div>
               </div>
             );
           })}

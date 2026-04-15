@@ -236,6 +236,7 @@ class QuestionImportView(APIView):
                 status=400,
             )
         reader = csv.DictReader(io.StringIO(decoded))
+        row_entries = list(enumerate(reader, start=1))
         created = 0
         errors = []
         image_files = request.FILES.getlist("images")
@@ -256,7 +257,9 @@ class QuestionImportView(APIView):
             url = default_storage.url(saved_path) if hasattr(default_storage, "url") else saved_path
             return request.build_absolute_uri(url)
 
-        for idx, row in enumerate(reader, start=1):
+        # Create rows in reverse so the question list, which is ordered by newest first,
+        # still shows the CSV's first row before later rows.
+        for idx, row in reversed(row_entries):
             try:
                 subject = (row.get("subject") or "").strip().lower()
                 topic = (row.get("topic") or "").strip()

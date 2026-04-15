@@ -28,6 +28,8 @@ def _mock_accessible_student_ids(exam: MockExam):
     direct_ids = set(
         MockExamAccess.objects.filter(mock_exam=exam, is_active=True).values_list("student_id", flat=True)
     )
+    if exam.course_id:
+        direct_ids.update(Enrollment.objects.filter(course_id=exam.course_id).values_list("user_id", flat=True))
     course_ids = list(exam.allowed_courses.values_list("id", flat=True))
     if course_ids:
         direct_ids.update(Enrollment.objects.filter(course_id__in=course_ids).values_list("user_id", flat=True))

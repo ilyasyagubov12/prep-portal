@@ -39,6 +39,37 @@ const timesBoldStyle: CSSProperties = {
   lineHeight: "1.25",
 };
 
+const mathTextStyle: CSSProperties = {
+  fontFamily: '"Times New Roman", Times, serif',
+  fontSize: "18pt",
+  lineHeight: "1.4",
+};
+
+const mathBoldStyle: CSSProperties = {
+  ...mathTextStyle,
+  fontWeight: 700,
+  lineHeight: "1.2",
+};
+
+function getCorrectAnswer(question: Question) {
+  if (question.is_open_ended) {
+    return stripHtml(question.correct_answer) || "—";
+  }
+
+  const markedChoice = question.choices.find((choice) => choice.is_correct);
+  if (markedChoice?.label) return markedChoice.label;
+
+  const normalized = (question.correct_answer || "").trim();
+  if (!normalized) return "—";
+
+  const matchingLabel = question.choices.find(
+    (choice) => choice.label.trim().toUpperCase() === normalized.toUpperCase()
+  );
+  if (matchingLabel?.label) return matchingLabel.label;
+
+  return stripHtml(normalized) || "—";
+}
+
 function resolveAssetUrl(url?: string | null) {
   if (!url) return null;
   if (/^(https?:)?\/\//i.test(url) || url.startsWith("data:")) return url;
@@ -75,10 +106,10 @@ function estimateMathCardHeight(question: Question) {
   const passageLines = Math.max(0, Math.ceil(stripHtml(question.passage).length / 26));
   return (
     84 +
-    stemLines * 23 +
-    passageLines * 20 +
+    stemLines * 34 +
+    passageLines * 30 +
     (question.image_url ? 180 : 0) +
-    (question.is_open_ended ? 96 : estimateChoiceBlockHeight(question.choices, true)) +
+    (question.is_open_ended ? 96 : estimateChoiceBlockHeight(question.choices, true) + question.choices.length * 14) +
     24
   );
 }
@@ -176,7 +207,8 @@ function HeaderStrip({ useFallbackHeader, setUseFallbackHeader }: { useFallbackH
         <img
           src="/question-book-header.png"
           alt="Question book header"
-          className="h-full w-full object-cover"
+          className="h-full max-w-none object-cover object-left"
+          style={{ width: "calc(100% + 10px)", marginLeft: "-5px" }}
           onError={() => setUseFallbackHeader(true)}
         />
       ) : (
@@ -184,6 +216,15 @@ function HeaderStrip({ useFallbackHeader, setUseFallbackHeader }: { useFallbackH
           <img src="/Victory.PNG" alt="Victory" className="h-10 w-auto object-contain" />
         </div>
       )}
+    </div>
+  );
+}
+
+function FooterStrip({ className = "" }: { className?: string }) {
+  return (
+    <div className={`flex h-[12.7mm] items-center justify-start gap-2 border-t-2 border-[#2c5fff] bg-white px-4 text-[10pt] text-slate-700 ${className}`}>
+      <img src="/Victory.PNG" alt="Victory" className="h-5 w-auto object-contain" />
+      <span style={{ ...timesTextStyle, fontSize: "10pt", lineHeight: "1.2" }}>© All right reserved by Victory College - Ilyas Yagubov</span>
     </div>
   );
 }
@@ -213,13 +254,13 @@ function VerbalRow({
       data-question-id={dataQuestionId}
       className={`question-row grid grid-cols-[1fr_1fr] gap-0 ${showTopBorder ? "border-t-2 border-dotted border-[#2c5fff]" : ""}`}
     >
-      <div className="border-r-[3px] border-[#2c5fff] py-4 pr-5">
-        <NumberBadge index={index} />
-        {imageUrl ? (
-          <div className="mb-3 overflow-hidden rounded-[16px] border border-[#d9e4ff] bg-white p-2">
-            <img src={imageUrl} alt="Question" className="max-h-[118px] w-full object-contain" />
-          </div>
-        ) : null}
+        <div className="border-r-[3px] border-[#2c5fff] py-4 pr-5">
+          <NumberBadge index={index} />
+          {imageUrl ? (
+            <div className="mb-3">
+              <img src={imageUrl} alt="Question" className="max-h-[220px] w-full object-contain object-left" />
+            </div>
+          ) : null}
         <HtmlBlock html={question.passage || ""} style={timesTextStyle} className="text-slate-950" />
       </div>
       <div className="py-4 pl-5">
@@ -233,12 +274,12 @@ function VerbalRow({
                   <div className="flex gap-3">
                     <div className="w-8 shrink-0" style={timesTextStyle}>{choice.label})</div>
                     <div className="min-w-0 flex-1">
-                      <HtmlBlock html={choice.content} style={timesTextStyle} className="text-slate-950" />
-                      {choiceImageUrl ? (
-                        <div className="mt-2 overflow-hidden rounded-xl border border-slate-200 bg-white p-2">
-                          <img src={choiceImageUrl} alt={`Choice ${choice.label}`} className="max-h-[96px] w-full object-contain" />
-                        </div>
-                      ) : null}
+                        <HtmlBlock html={choice.content} style={timesTextStyle} className="text-slate-950" />
+                        {choiceImageUrl ? (
+                          <div className="mt-2">
+                            <img src={choiceImageUrl} alt={`Choice ${choice.label}`} className="max-h-[70px] w-auto max-w-full object-contain object-left" />
+                          </div>
+                        ) : null}
                     </div>
                   </div>
                 </li>
@@ -262,30 +303,30 @@ function MathCard({
 }) {
   const imageUrl = resolveAssetUrl(question.image_url);
   return (
-    <section data-question-id={dataQuestionId} className="break-inside-auto rounded-[8px] pb-2">
-      <NumberBadge index={index} />
-      {imageUrl ? (
-        <div className="mb-2 overflow-hidden rounded-[16px] border border-[#d9e4ff] bg-white p-2">
-          <img src={imageUrl} alt="Question" className="max-h-[126px] w-full object-contain" />
-        </div>
-      ) : null}
-      {question.passage ? <HtmlBlock html={question.passage} style={timesTextStyle} className="mb-2 text-slate-950" /> : null}
-      <HtmlBlock html={question.stem} style={timesBoldStyle} className="text-slate-950" />
+      <section data-question-id={dataQuestionId} className="break-inside-avoid rounded-[8px] pb-2">
+        <NumberBadge index={index} />
+        {imageUrl ? (
+          <div className="mb-2">
+            <img src={imageUrl} alt="Question" className="max-h-[240px] w-full object-contain object-left" />
+          </div>
+        ) : null}
+      {question.passage ? <HtmlBlock html={question.passage} style={mathTextStyle} className="mb-2 text-slate-950" /> : null}
+      <HtmlBlock html={question.stem} style={mathBoldStyle} className="text-slate-950" />
       {question.is_open_ended ? null : (
-        <ol className="mt-2 space-y-1 text-slate-950" style={timesTextStyle}>
+        <ol className="mt-2 space-y-1 text-slate-950" style={mathTextStyle}>
           {question.choices.map((choice) => {
             const choiceImageUrl = resolveAssetUrl(choice.image_url);
             return (
               <li key={`${question.id}-${choice.label}`} className="list-none">
                 <div className="flex gap-3">
-                  <div className="w-8 shrink-0" style={timesTextStyle}>{choice.label})</div>
+                  <div className="w-8 shrink-0" style={mathTextStyle}>{choice.label})</div>
                   <div className="min-w-0 flex-1">
-                    <HtmlBlock html={choice.content} style={timesTextStyle} className="text-slate-950" />
-                    {choiceImageUrl ? (
-                      <div className="mt-2 overflow-hidden rounded-xl border border-slate-200 bg-white p-2">
-                        <img src={choiceImageUrl} alt={`Choice ${choice.label}`} className="max-h-[96px] w-full object-contain" />
-                      </div>
-                    ) : null}
+                      <HtmlBlock html={choice.content} style={mathTextStyle} className="text-slate-950" />
+                      {choiceImageUrl ? (
+                        <div className="mt-2">
+                          <img src={choiceImageUrl} alt={`Choice ${choice.label}`} className="max-h-[70px] w-auto max-w-full object-contain object-left" />
+                        </div>
+                      ) : null}
                   </div>
                 </div>
               </li>
@@ -421,6 +462,22 @@ function QuestionBookContent() {
     () => new Map(mathQuestions.map((question, index) => [question.id, index + 1])),
     [mathQuestions]
   );
+  const verbalAnswers = useMemo(
+    () =>
+      verbalQuestions.map((question, index) => ({
+        number: verbalIndexById.get(question.id) || index + 1,
+        answer: getCorrectAnswer(question),
+      })),
+    [verbalIndexById, verbalQuestions]
+  );
+  const mathAnswers = useMemo(
+    () =>
+      mathQuestions.map((question, index) => ({
+        number: mathIndexById.get(question.id) || index + 1,
+        answer: getCorrectAnswer(question),
+      })),
+    [mathIndexById, mathQuestions]
+  );
 
   const flowLayout = true;
 
@@ -491,12 +548,14 @@ function QuestionBookContent() {
       <style jsx global>{`
         @page {
           size: A4 portrait;
-          margin: 0 0 25.4mm;
+          margin: 0 0 12.7mm;
         }
 
         html,
         body {
           background: white;
+          margin: 0;
+          padding: 0;
         }
 
         .book-shell {
@@ -519,7 +578,23 @@ function QuestionBookContent() {
         }
 
         .book-content {
-          padding: 8mm 14mm 25.4mm;
+          padding: 8mm 14mm 12.7mm;
+        }
+
+        .math-flow-grid {
+          column-count: 1;
+          column-gap: 0;
+          column-fill: auto;
+        }
+
+        .math-flow-item {
+          display: inline-block;
+          width: 100%;
+          margin: 0 0 12px;
+          vertical-align: top;
+          break-inside: avoid;
+          page-break-inside: avoid;
+          -webkit-column-break-inside: avoid;
         }
 
         .book-print-table {
@@ -531,10 +606,21 @@ function QuestionBookContent() {
           display: table-header-group;
         }
 
+        .book-print-foot {
+          display: table-footer-group;
+        }
+
+        .question-row {
+          break-inside: avoid;
+          page-break-inside: avoid;
+        }
+
         @media print {
           html,
           body {
             background: white !important;
+            margin: 0 !important;
+            padding: 0 !important;
           }
 
           body {
@@ -560,7 +646,7 @@ function QuestionBookContent() {
           }
 
           .book-content {
-            padding: 8mm 14mm 25.4mm !important;
+            padding: 8mm 14mm 12.7mm !important;
           }
         }
       `}</style>
@@ -641,6 +727,13 @@ function QuestionBookContent() {
                   </td>
                 </tr>
               </thead>
+              <tfoot className="book-print-foot">
+                <tr>
+                  <td className="p-0">
+                    <FooterStrip />
+                  </td>
+                </tr>
+              </tfoot>
               <tbody>
                 <tr>
                   <td className="align-top p-0">
@@ -659,9 +752,9 @@ function QuestionBookContent() {
                       ) : null}
 
                       {mathQuestions.length ? (
-                        <div className={`${verbalQuestions.length ? "mt-8" : ""} columns-2 gap-x-8 [column-fill:auto]`}>
+                        <div className={`${verbalQuestions.length ? "mt-8" : ""} math-flow-grid`}>
                           {mathQuestions.map((question, idx) => (
-                            <div key={question.id} className="mb-3 break-inside-auto">
+                            <div key={question.id} className="math-flow-item">
                               <MathCard
                                 question={question}
                                 index={mathIndexById.get(question.id) || idx + 1}
@@ -669,6 +762,20 @@ function QuestionBookContent() {
                             </div>
                           ))}
                         </div>
+                      ) : null}
+
+                      {verbalAnswers.length ? (
+                        <AnswersTable
+                          title={subject === "verbal" && topic ? topic : "Verbal"}
+                          entries={verbalAnswers}
+                        />
+                      ) : null}
+
+                      {mathAnswers.length ? (
+                        <AnswersTable
+                          title={subject === "math" && topic ? topic : "Math"}
+                          entries={mathAnswers}
+                        />
                       ) : null}
                     </div>
                   </td>
@@ -679,6 +786,50 @@ function QuestionBookContent() {
         )}
       </div>
     </>
+  );
+}
+
+function AnswersTable({
+  title,
+  entries,
+}: {
+  title: string;
+  entries: Array<{ number: number; answer: string }>;
+}) {
+  const rows = [];
+  for (let i = 0; i < entries.length; i += 2) {
+    rows.push([entries[i], entries[i + 1] ?? null]);
+  }
+
+  return (
+    <section className="mt-8 break-before-page">
+      <h2
+        className="mb-5 text-center text-[22pt] font-semibold text-[#1f4fbf]"
+        style={{ fontFamily: '"Times New Roman", Times, serif' }}
+      >
+        Answers: {title}
+      </h2>
+      <table className="w-full border-collapse text-center text-slate-900" style={timesTextStyle}>
+        <thead>
+          <tr className="bg-[#eef4ff] text-[#1f4fbf]">
+            <th className="border-[2px] border-[#1f4fbf] px-3 py-2">Number</th>
+            <th className="border-[2px] border-[#1f4fbf] px-3 py-2">Answer</th>
+            <th className="border-[2px] border-[#1f4fbf] px-3 py-2">Number</th>
+            <th className="border-[2px] border-[#1f4fbf] px-3 py-2">Answer</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(([left, right], rowIndex) => (
+            <tr key={`${title}-${rowIndex}`}>
+              <td className="border-[2px] border-[#1f4fbf] px-3 py-2">{left.number}</td>
+              <td className="border-[2px] border-[#1f4fbf] px-3 py-2">{left.answer}</td>
+              <td className="border-[2px] border-[#1f4fbf] px-3 py-2">{right?.number ?? ""}</td>
+              <td className="border-[2px] border-[#1f4fbf] px-3 py-2">{right?.answer ?? ""}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
   );
 }
 
