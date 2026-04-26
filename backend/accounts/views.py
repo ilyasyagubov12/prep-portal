@@ -15,6 +15,23 @@ from .models import Profile
 User = get_user_model()
 
 
+def _parse_admin_level(raw, *, total: int):
+    if raw is None:
+        return None
+    value = str(raw).strip()
+    if value == "":
+        return 0
+    try:
+        parsed = int(value)
+    except Exception:
+        raise ValueError("Level must be a whole number")
+    if parsed < 0:
+        parsed = 0
+    if parsed > total:
+        parsed = total
+    return parsed
+
+
 class MeView(generics.RetrieveAPIView):
     """Return the current user's profile."""
 
@@ -303,12 +320,29 @@ class AdminUpdateUserView(APIView):
             profile.student_id = str(student_id).strip() or None
 
         math_level = request.data.get("math_level")
-        if math_level is not None:
-            profile.math_level = str(math_level).strip() or None
-
         verbal_level = request.data.get("verbal_level")
-        if verbal_level is not None:
-            profile.verbal_level = str(verbal_level).strip() or None
+
+        try:
+            from question_bank.models import SubtopicProgress, TopicProgress
+            from question_bank.topic_map import subtopic_order
+
+            if math_level is not None:
+                next_math_level = _parse_admin_level(math_level, total=len(subtopic_order("math")))
+                current_math_level = _parse_admin_level(profile.math_level, total=len(subtopic_order("math"))) or 0
+                if next_math_level != current_math_level:
+                    SubtopicProgress.objects.filter(user=user, subject="math").delete()
+                    TopicProgress.objects.filter(user=user, subject="math").delete()
+                profile.math_level = str(next_math_level)
+
+            if verbal_level is not None:
+                next_verbal_level = _parse_admin_level(verbal_level, total=len(subtopic_order("verbal")))
+                current_verbal_level = _parse_admin_level(profile.verbal_level, total=len(subtopic_order("verbal"))) or 0
+                if next_verbal_level != current_verbal_level:
+                    SubtopicProgress.objects.filter(user=user, subject="verbal").delete()
+                    TopicProgress.objects.filter(user=user, subject="verbal").delete()
+                profile.verbal_level = str(next_verbal_level)
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=400)
 
         phone_number = request.data.get("phone_number")
         if phone_number is not None:

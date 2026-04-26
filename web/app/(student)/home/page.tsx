@@ -145,6 +145,8 @@ export default function HomePage() {
         const access = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
 
         if (access) {
+          let profileMathLevel = 0;
+          let profileVerbalLevel = 0;
           const me = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/auth/me/`, {
             headers: { Authorization: `Bearer ${access}` },
           }).catch(() => null);
@@ -155,6 +157,8 @@ export default function HomePage() {
             const first = (prof?.user?.first_name || "").trim();
             const last = (prof?.user?.last_name || "").trim();
             setDisplayName(first || last ? `${first} ${last}`.trim() : "there");
+            profileMathLevel = Number.isFinite(Number(prof?.math_level)) ? Number(prof.math_level) : 0;
+            profileVerbalLevel = Number.isFinite(Number(prof?.verbal_level)) ? Number(prof.verbal_level) : 0;
             const sel = prof?.selected_exam_date;
             if (sel?.id && sel?.date) {
               setSelectedExam({ id: Number(sel.id), date: sel.date });
@@ -170,13 +174,13 @@ export default function HomePage() {
           if (progressRes && progressRes.ok) {
             const progressJson = await progressRes.json().catch(() => null);
             const subtopics = Array.isArray(progressJson?.subtopics) ? progressJson.subtopics : [];
-            const mathPassed = subtopics.filter((item: any) => item?.subject === "math" && item?.passed).length;
-            const verbalPassed = subtopics.filter((item: any) => item?.subject === "verbal" && item?.passed).length;
+            const mathPassed = Math.max(profileMathLevel, subtopics.filter((item: any) => item?.subject === "math" && item?.passed).length);
+            const verbalPassed = Math.max(profileVerbalLevel, subtopics.filter((item: any) => item?.subject === "verbal" && item?.passed).length);
             setMathQuizProgress({ passed: mathPassed, total: totalMathSubtopics });
             setVerbalQuizProgress({ passed: verbalPassed, total: totalVerbalSubtopics });
           } else {
-            setMathQuizProgress({ passed: 0, total: totalMathSubtopics });
-            setVerbalQuizProgress({ passed: 0, total: totalVerbalSubtopics });
+            setMathQuizProgress({ passed: profileMathLevel, total: totalMathSubtopics });
+            setVerbalQuizProgress({ passed: profileVerbalLevel, total: totalVerbalSubtopics });
           }
 
           await fetchStreakStatus(access);
@@ -481,7 +485,7 @@ export default function HomePage() {
 
   return (
     <div className={`${uiFont.className} min-h-screen bg-[#f6f7fb] text-slate-900 overflow-x-hidden`}>
-      <div className="mx-auto max-w-none px-0 py-6 sm:px-6 sm:py-8">
+      <div className="mx-auto max-w-none px-4 py-6 sm:px-6 sm:py-8">
         {/* Greeting */}
         <div className="mt-2 flex items-center gap-2 text-lg font-semibold">
           <span>👋</span>
@@ -500,7 +504,7 @@ export default function HomePage() {
                 className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-sm sm:px-4 sm:py-3"
               >
                 <div className="absolute right-0 top-0 h-16 w-16 -translate-y-6 translate-x-6 rounded-full bg-slate-100/70 blur-2xl" />
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-3">
                   <div className="text-xs uppercase tracking-[0.2em] text-slate-400">{item.label} progress</div>
                   <div className="text-lg font-extrabold text-slate-900">{percentValue}%</div>
                 </div>
@@ -511,7 +515,7 @@ export default function HomePage() {
                   />
                 </div>
                 <div className="mt-1 text-[11px] text-slate-500">
-                  {item.progress.passed}/{item.progress.total} quizzes passed
+                  {item.progress.passed}/{item.progress.total} quizzes completed
                 </div>
               </div>
             );
@@ -521,9 +525,9 @@ export default function HomePage() {
         {error ? <div className="mt-3 text-sm text-red-600">{error}</div> : null}
 
         {/* Main grid */}
-        <div className="mt-4 grid gap-4 lg:grid-cols-[2fr_1fr]">
+        <div className="mt-4 grid min-w-0 gap-4 lg:grid-cols-[2fr_1fr]">
           {/* Left column */}
-          <div className="grid gap-4">
+          <div className="grid min-w-0 gap-4">
             <div className="relative overflow-hidden rounded-3xl border border-blue-100 bg-gradient-to-br from-blue-50 via-white to-sky-50 p-5 sm:p-6 shadow-sm">
               <div className="pointer-events-none absolute -right-10 -top-12 h-32 w-32 rounded-full bg-blue-200/40 blur-2xl" />
               <div className="pointer-events-none absolute -left-10 -bottom-12 h-32 w-32 rounded-full bg-sky-200/40 blur-2xl" />
@@ -736,7 +740,7 @@ export default function HomePage() {
                   <div className="max-w-full overflow-hidden">
                     <div
                       ref={courseSliderRef}
-                      className="flex w-full min-w-0 max-w-full gap-3 sm:gap-4 overflow-x-auto pb-2 pr-1 snap-x snap-mandatory"
+                      className="flex w-full min-w-0 max-w-full flex-col gap-3 overflow-visible pb-2 pr-1 sm:flex-row sm:gap-4 sm:overflow-x-auto sm:snap-x sm:snap-mandatory overscroll-x-contain"
                       onScroll={() => {
                         const el = courseSliderRef.current;
                         if (!el) return;
@@ -749,20 +753,20 @@ export default function HomePage() {
                         return (
                           <div
                             key={course.id}
-                            className="w-[calc(50%-0.5rem)] min-w-[200px] max-w-[360px] flex-shrink-0 snap-start rounded-2xl border border-slate-200 bg-slate-50/60 px-4 py-4"
+                            className="w-full min-w-0 sm:min-w-[280px] sm:max-w-[360px] sm:w-[calc(50%-0.5rem)] flex-shrink-0 sm:snap-start rounded-2xl border border-slate-200 bg-slate-50/60 px-4 py-4"
                           >
                           <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <div className="text-sm font-semibold text-slate-900">{course.title}</div>
+                            <div className="min-w-0 flex-1">
+                              <div className="break-words text-sm font-semibold text-slate-900">{course.title}</div>
                               {course.description ? (
-                                <div className="mt-1 text-xs text-slate-500 line-clamp-2">
+                                <div className="mt-1 break-words text-xs text-slate-500 line-clamp-2">
                                   {course.description}
                                 </div>
                               ) : null}
                             </div>
                             {course.slug ? (
                               <button
-                                className="text-xs font-semibold text-blue-600"
+                                className="shrink-0 text-xs font-semibold text-blue-600"
                                 onClick={() => router.push(`/courses/${course.slug}`)}
                               >
                                 Open →
@@ -794,7 +798,7 @@ export default function HomePage() {
                                     key={`${course.id}-${item.id}`}
                                     className="rounded-lg border border-slate-200 bg-white px-3 py-2"
                                   >
-                                    <div className="text-xs font-semibold text-slate-700">{item.title}</div>
+                                    <div className="break-words text-xs font-semibold text-slate-700">{item.title}</div>
                                     <div className="mt-1 text-[11px] text-slate-500">
                                       {label}
                                       {dateLabel ? ` • ${dateLabel}` : ""}
@@ -820,7 +824,7 @@ export default function HomePage() {
           </div>
 
           {/* Right column */}
-          <div className="grid gap-4">
+          <div className="grid min-w-0 gap-4">
             <div className="relative rounded-3xl border border-blue-700 bg-gradient-to-br from-blue-700 to-blue-600 p-5 sm:p-6 text-white shadow-sm">
               <div className="text-4xl sm:text-5xl font-bold text-white">
                 {selectedExam ? countdownText ?? "" : "Set your exam"}

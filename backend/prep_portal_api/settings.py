@@ -72,6 +72,7 @@ INSTALLED_APPS = [
       "mediafiles",
       "module_practice",
       "mock_exams",
+      "reporting",
   ]
 
 MIDDLEWARE = [

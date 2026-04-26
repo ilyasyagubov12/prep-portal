@@ -9,12 +9,11 @@ import {
   BookOpen,
   ClipboardList,
   ClipboardCheck,
-  Layers,
-  Medal,
   SpellCheck,
   Calculator,
   Settings,
   LogOut,
+  FileText,
 } from "lucide-react";
 
 function resolveMediaUrl(raw: string | null | undefined) {
@@ -43,20 +42,6 @@ function resolveMediaUrl(raw: string | null | undefined) {
 type NavItem =
   | { section: string }
   | { label: string; href: string; icon: React.ComponentType<{ size?: number }> };
-
-const items: NavItem[] = [
-  { label: "Home", href: "/home", icon: Home },
-  { label: "Courses", href: "/courses", icon: BookOpen },
-
-  { section: "Practice" },
-  { label: "Question Bank", href: "/practice/questions", icon: ClipboardList },
-  { label: "Practice Test", href: "/practice/modules", icon: ClipboardCheck },
-
-  { label: "Vocab", href: "/vocab", icon: SpellCheck },
-  { label: "Score Calculator", href: "/score-calculator", icon: Calculator },
-
-  { label: "Settings", href: "/settings", icon: Settings },
-];
 
 function roleLabel(role: string | null | undefined) {
   const r = (role ?? "").toLowerCase();
@@ -128,6 +113,20 @@ export default function Sidebar({
     localStorage.removeItem("refresh_token");
     router.replace("/login");
   }
+
+  const items: NavItem[] = [
+    { label: "Home", href: "/home", icon: Home },
+    { label: "Courses", href: "/courses", icon: BookOpen },
+
+    { section: "Practice" },
+    { label: "Question Bank", href: "/practice/questions", icon: ClipboardList },
+    { label: "Practice Test", href: "/practice/modules", icon: ClipboardCheck },
+
+    { label: "Vocab", href: "/vocab", icon: SpellCheck },
+    { label: "Score Calculator", href: "/score-calculator", icon: Calculator },
+    ...(isStaff ? [{ label: "Reports", href: "/reports", icon: FileText } satisfies NavItem] : []),
+    { label: "Settings", href: "/settings", icon: Settings },
+  ];
 
   return (
     <aside

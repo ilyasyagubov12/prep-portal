@@ -13,6 +13,7 @@ const TITLE_RULES: Array<[RegExp, string]> = [
   [/^\/practice\/mock-exams(\/|$)/, "Mock Exams"],
   [/^\/practice\/questions(\/|$)/, "Question Bank"],
   [/^\/vocab(\/|$)/, "Vocab"],
+  [/^\/reports(\/|$)/, "Reports"],
   [/^\/settings(\/|$)/, "Settings"],
   [/^\/score-report(\/|$)/, "Score Report"],
   [/^\/dashboard(\/|$)/, "Dashboard"],

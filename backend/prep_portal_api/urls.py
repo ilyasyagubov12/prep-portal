@@ -34,6 +34,7 @@ urlpatterns = [
     path("api/", include("exam_dates.urls")),
     path("api/", include("module_practice.urls")),
     path("api/", include("mock_exams.urls")),
+    path("api/", include("reporting.urls")),
     # Temporary gradebook stubs
     path("api/grades/me/", grades_me, name="grades_me"),
     path("api/grades/offline/", grades_offline, name="grades_offline"),

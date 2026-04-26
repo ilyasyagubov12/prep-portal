@@ -341,31 +341,13 @@ def _effective_level(user, subject: str) -> int:
         return 0
     base = _parse_level(prof.math_level if subject == "math" else prof.verbal_level)
     completed = SubtopicProgress.objects.filter(user=user, subject=subject, passed=True).count()
-    return max(_display_level_to_unlock_level(subject, base), completed)
+    total = len(subtopic_order(subject))
+    return max(0, min(total, max(base, completed)))
 
 
 def _completed_to_level(subject: str, completed: int) -> int:
-    if subject == "verbal":
-        return completed * 2
-    if subject == "math":
-        total = len(subtopic_order("math"))
-        if total and completed >= total:
-            return 20
-        if completed > 0:
-            return completed + 1
-    return completed
-
-
-def _display_level_to_unlock_level(subject: str, level: int) -> int:
-    if subject == "verbal":
-        return max(0, level // 2)
-    if subject == "math":
-        total = len(subtopic_order("math"))
-        if level >= 20:
-            return total
-        if level > 0:
-            return max(0, level - 1)
-    return max(0, level)
+    total = len(subtopic_order(subject))
+    return max(0, min(total, completed))
 
 
 def _set_level(user, subject: str, level: int):
@@ -528,22 +510,45 @@ class QuestionQuizSubmitView(APIView):
         by_id = {str(q.id): q for q in qs}
         total = 0
         correct = 0
+        review = []
         for a in answers:
             qid = a.get("question_id")
             if not qid or qid not in by_id:
                 continue
             q = by_id[qid]
             total += 1
+            submitted_answer = str(a.get("answer") or "").strip()
+            is_correct = False
             if q.is_open_ended:
                 expected = (q.correct_answer or "").strip().lower()
-                actual = str(a.get("answer") or "").strip().lower()
+                actual = submitted_answer.lower()
                 if expected and actual == expected:
                     correct += 1
+                    is_correct = True
+                review.append(
+                    {
+                        "question_id": qid,
+                        "submitted_answer": submitted_answer,
+                        "is_correct": is_correct,
+                        "correct_answer": (q.correct_answer or "").strip(),
+                    }
+                )
             else:
-                pick = (a.get("answer") or "").strip()
                 correct_label = next((c.get("label") for c in q.choices if c.get("is_correct")), None)
-                if pick and correct_label and pick == correct_label:
+                correct_choice = next((c for c in q.choices if c.get("is_correct")), None)
+                if submitted_answer and correct_label and submitted_answer == correct_label:
                     correct += 1
+                    is_correct = True
+                review.append(
+                    {
+                        "question_id": qid,
+                        "submitted_answer": submitted_answer,
+                        "is_correct": is_correct,
+                        "correct_answer": correct_label or "",
+                        "correct_choice_content": (correct_choice or {}).get("content") or "",
+                        "correct_choice_image_url": (correct_choice or {}).get("image_url") or None,
+                    }
+                )
 
         score = (correct / total) if total else 0
         passed = score >= 0.8
@@ -571,4 +576,13 @@ class QuestionQuizSubmitView(APIView):
                 prog.completed_at = timezone.now()
                 prog.save()
 
-        return Response({"ok": True, "total": total, "correct": correct, "score": score, "passed": passed})
+        return Response(
+            {
+                "ok": True,
+                "total": total,
+                "correct": correct,
+                "score": score,
+                "passed": passed,
+                "review": review,
+            }
+        )

@@ -16,6 +16,15 @@ type QuizQuestion = {
   image_url?: string | null;
 };
 
+type QuestionReview = {
+  question_id: string;
+  submitted_answer: string;
+  is_correct: boolean;
+  correct_answer: string;
+  correct_choice_content?: string;
+  correct_choice_image_url?: string | null;
+};
+
 function MathContent({ html, className }: { html: string; className?: string }) {
   const ref = useRef<HTMLSpanElement | null>(null);
   useEffect(() => {
@@ -63,10 +72,12 @@ export default function Page() {
   const [current, setCurrent] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [result, setResult] = useState<null | { passed: boolean; score: number; correct: number; total: number }>(null);
+  const [reviewByQuestion, setReviewByQuestion] = useState<Record<string, QuestionReview>>({});
   const [timeLeft, setTimeLeft] = useState(20 * 60);
   const [showNavigator, setShowNavigator] = useState(false);
   const submittedRef = useRef(false);
   const [isStaff, setIsStaff] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     if (!subject || !topic) {
@@ -129,6 +140,8 @@ export default function Page() {
     if (!url) return null;
     return url.startsWith("/") ? `${process.env.NEXT_PUBLIC_API_BASE}${url}` : url;
   };
+  const currentReview = currentQ ? reviewByQuestion[currentQ.id] : null;
+  const resolvedCorrectChoiceImage = resolveChoiceImage(currentReview?.correct_choice_image_url);
 
   const stemHtml = useMemo(() => {
     if (!currentQ) return "";
@@ -142,12 +155,24 @@ export default function Page() {
   }, [currentQ]);
 
   function setAnswer(val: string) {
-    if (!currentQ) return;
+    if (!currentQ || result) return;
     setAnswers((p) => ({ ...p, [currentQ.id]: val }));
   }
 
+  function choiceState(label: string) {
+    if (!result || !currentReview || !currentQ) {
+      return answers[currentQ?.id || ""] === label ? "border-slate-900 bg-slate-50" : "border-slate-200";
+    }
+    const isPicked = currentReview.submitted_answer === label;
+    const isCorrect = currentReview.correct_answer === label;
+    if (isCorrect) return "border-emerald-500 bg-emerald-50";
+    if (isPicked) return "border-red-500 bg-red-50";
+    return "border-slate-200 bg-white";
+  }
+
   async function submitQuiz() {
-    if (!questions.length) return;
+    if (!questions.length || result || submitting) return;
+    submittedRef.current = true;
     const access = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
     const payload = {
       subject,
@@ -158,20 +183,37 @@ export default function Page() {
         answer: answers[q.id] ?? "",
       })),
     };
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/questions/quiz/submit/`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(access ? { Authorization: `Bearer ${access}` } : {}),
-      },
-      body: JSON.stringify(payload),
-    });
-    const json = await res.json();
-    if (!res.ok) {
-      setError(json?.error || "Failed to submit quiz");
-      return;
+    setSubmitting(true);
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/questions/quiz/submit/`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(access ? { Authorization: `Bearer ${access}` } : {}),
+        },
+        body: JSON.stringify(payload),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        submittedRef.current = false;
+        setSubmitting(false);
+        setError(json?.error || "Failed to submit quiz");
+        return;
+      }
+      setResult({ passed: json.passed, score: json.score, correct: json.correct, total: json.total });
+      const nextReview: Record<string, QuestionReview> = {};
+      for (const item of json.review || []) {
+        if (item?.question_id) {
+          nextReview[item.question_id] = item;
+        }
+      }
+      setReviewByQuestion(nextReview);
+      setSubmitting(false);
+    } catch (e: any) {
+      submittedRef.current = false;
+      setSubmitting(false);
+      setError(e?.message ?? "Failed to submit quiz");
     }
-    setResult({ passed: json.passed, score: json.score, correct: json.correct, total: json.total });
   }
 
   return (
@@ -237,16 +279,16 @@ export default function Page() {
                     placeholder="Type your answer"
                     value={answers[currentQ.id] ?? ""}
                     onChange={(e) => setAnswer(e.target.value)}
+                    disabled={!!result}
                   />
                 ) : (
                   <div className="space-y-2">
                     {(currentQ.choices || []).map((c) => (
                       <button
                         key={c.label}
-                        className={`w-full rounded-xl border px-4 py-3 text-left text-sm transition ${
-                          answers[currentQ.id] === c.label ? "border-slate-900 bg-slate-50" : "border-slate-200"
-                        }`}
+                        className={`w-full rounded-xl border px-4 py-3 text-left text-sm transition ${choiceState(c.label)}`}
                         onClick={() => setAnswer(c.label)}
+                        disabled={!!result}
                       >
                         <span className="inline-flex items-center justify-center h-6 w-6 rounded-full border border-slate-300 text-xs font-semibold mr-2">
                           {c.label}
@@ -266,6 +308,35 @@ export default function Page() {
                     ))}
                   </div>
                 )}
+
+                {result && currentReview ? (
+                  <div
+                    className={`rounded-xl border px-4 py-3 text-sm ${
+                      currentReview.is_correct ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-900"
+                    }`}
+                  >
+                    <div className="font-semibold">{currentReview.is_correct ? "Correct answer" : "Right answer"}</div>
+                    <div className="mt-1">
+                      {currentQ.is_open_ended ? (
+                        currentReview.correct_answer || "—"
+                      ) : (
+                        <>
+                          {currentReview.correct_answer}){" "}
+                          <MathContent html={formatMathHtml(currentReview.correct_choice_content || "").replace(/\n/g, "<br/>")} />
+                        </>
+                      )}
+                    </div>
+                    {resolvedCorrectChoiceImage ? (
+                      <div className="mt-2">
+                        <img
+                          src={resolvedCorrectChoiceImage}
+                          alt="Correct choice"
+                          className="max-h-40 rounded-md border border-slate-200 object-contain"
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
             </div>
           ) : (
@@ -292,10 +363,9 @@ export default function Page() {
                   {(currentQ.choices || []).map((c) => (
                     <button
                       key={c.label}
-                      className={`w-full rounded-xl border px-4 py-3 text-left text-sm transition ${
-                        answers[currentQ.id] === c.label ? "border-slate-900 bg-slate-50" : "border-slate-200"
-                      }`}
+                      className={`w-full rounded-xl border px-4 py-3 text-left text-sm transition ${choiceState(c.label)}`}
                       onClick={() => setAnswer(c.label)}
+                      disabled={!!result}
                     >
                       <span className="inline-flex items-center justify-center h-6 w-6 rounded-full border border-slate-300 text-xs font-semibold mr-2">
                         {c.label}
@@ -314,6 +384,28 @@ export default function Page() {
                     </button>
                   ))}
                 </div>
+
+                {result && currentReview ? (
+                  <div
+                    className={`mt-4 rounded-xl border px-4 py-3 text-sm ${
+                      currentReview.is_correct ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-900"
+                    }`}
+                  >
+                    <div className="font-semibold">{currentReview.is_correct ? "Correct answer" : "Right answer"}</div>
+                    <div className="mt-1">
+                      {currentReview.correct_answer}) {currentReview.correct_choice_content || "—"}
+                    </div>
+                    {resolvedCorrectChoiceImage ? (
+                      <div className="mt-2">
+                        <img
+                          src={resolvedCorrectChoiceImage}
+                          alt="Correct choice"
+                          className="max-h-40 rounded-md border border-slate-200 object-contain"
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
             </div>
           )}
@@ -342,8 +434,16 @@ export default function Page() {
                   Next
                 </button>
               ) : (
-                <button className="rounded-full bg-slate-900 text-white px-4 py-2 text-sm" onClick={submitQuiz}>
-                  Submit quiz
+                <button
+                  className={`rounded-full px-4 py-2 text-sm ${
+                    result || submitting
+                      ? "cursor-not-allowed border border-slate-200 bg-slate-100 text-slate-400"
+                      : "bg-slate-900 text-white"
+                  }`}
+                  onClick={submitQuiz}
+                  disabled={!!result || submitting}
+                >
+                  {result ? "Submitted" : submitting ? "Submitting..." : "Submit quiz"}
                 </button>
               )}
             </div>
