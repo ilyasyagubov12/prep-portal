@@ -525,7 +525,7 @@ export default function HomePage() {
         {error ? <div className="mt-3 text-sm text-red-600">{error}</div> : null}
 
         {/* Main grid */}
-        <div className="mt-4 grid min-w-0 gap-4 lg:grid-cols-[2fr_1fr]">
+        <div className="mt-4 grid min-w-0 gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
           {/* Left column */}
           <div className="grid min-w-0 gap-4">
             <div className="relative overflow-hidden rounded-3xl border border-blue-100 bg-gradient-to-br from-blue-50 via-white to-sky-50 p-5 sm:p-6 shadow-sm">
@@ -543,7 +543,7 @@ export default function HomePage() {
                   </div>
                 </div>
 
-                <div className="mt-6 grid gap-4 lg:grid-cols-[1.1fr_1.6fr]">
+                <div className="mt-6 grid gap-4 xl:grid-cols-[1.1fr_1.6fr]">
                   <div className="flex flex-col items-center justify-center rounded-2xl border border-blue-100 bg-white/80 p-5 text-center shadow-sm">
                     <div className="relative h-20 w-20">
                       <span
@@ -932,7 +932,7 @@ export default function HomePage() {
               ) : null}
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
               <div className="relative rounded-3xl border border-slate-200 bg-white p-5 sm:p-6 shadow-sm overflow-hidden">
                 <div className="flex items-center justify-between">
                   <div>

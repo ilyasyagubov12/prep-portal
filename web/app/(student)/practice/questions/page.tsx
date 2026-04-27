@@ -95,9 +95,10 @@ function TopicList({
               }`}
             >
               {t.subtopics.map((s) => {
-                const key = `${t.title}::${s.title}`;
+                const key = `${subject}::${t.title}::${s.title}`;
+                const topicKey = `${subject}::${t.title}`;
                 const idx = progress.indexMap.get(key) ?? 0;
-                const topicLocked = gateEnabled && progress.lockedTopics.has(t.title);
+                const topicLocked = gateEnabled && progress.lockedTopics.has(topicKey);
                 const completed = progress.completedSubtopics.has(key);
                 const unlocked = completed || (!topicLocked && (!gateEnabled || progress.effectiveLevel >= idx));
 
@@ -157,13 +158,13 @@ function TopicList({
               })}
             </div>
           )}
-          {!progress.lockedTopics.has(t.title) && t.subtopics && t.subtopics.length > 0 ? (
+          {!progress.lockedTopics.has(`${subject}::${t.title}`) && t.subtopics && t.subtopics.length > 0 ? (
             <div className="mt-3">
               <Link
                 href={`/practice/questions/quiz?subject=${subject}&topic=${encodeURIComponent(t.title)}`}
                 className="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:border-slate-300 hover:bg-slate-50"
               >
-                {progress.completedTopics.has(t.title) ? `Retake ${t.title} quiz` : `Take ${t.title} quiz`}
+                {progress.completedTopics.has(`${subject}::${t.title}`) ? `Retake ${t.title} quiz` : `Take ${t.title} quiz`}
               </Link>
             </div>
           ) : null}
@@ -227,10 +228,10 @@ export default function Page() {
           const sub = new Set<string>();
           const top = new Set<string>();
           (progJson.subtopics ?? []).forEach((s: any) => {
-            if (s?.passed) sub.add(`${s.topic}::${s.subtopic}`);
+            if (s?.passed) sub.add(`${s.subject}::${s.topic}::${s.subtopic}`);
           });
           (progJson.topics ?? []).forEach((t: any) => {
-            if (t?.passed) top.add(t.topic);
+            if (t?.passed) top.add(`${t.subject}::${t.topic}`);
           });
           setProgress({ subtopics: sub, topics: top });
         }
@@ -269,7 +270,7 @@ export default function Page() {
 
   const buildProgressState = (subject: "math" | "verbal", data: TopicGroup[]): ProgressState => {
     const order: string[] = [];
-    data.forEach((t) => t.subtopics?.forEach((s) => order.push(`${t.title}::${s.title}`)));
+    data.forEach((t) => t.subtopics?.forEach((s) => order.push(`${subject}::${t.title}::${s.title}`)));
     const indexMap = new Map<string, number>();
     order.forEach((k, idx) => indexMap.set(k, idx));
     const completedCount = [...progress.subtopics].filter((k) => indexMap.has(k)).length;
@@ -287,23 +288,25 @@ export default function Page() {
     data.forEach((t) => {
       const sub = t.subtopics ?? [];
       if (!sub.length) return;
-      const allDone = sub.every((s) => derivedCompletedSubtopics.has(`${t.title}::${s.title}`));
-      if (allDone) derivedCompletedTopics.add(t.title);
+      const allDone = sub.every((s) => derivedCompletedSubtopics.has(`${subject}::${t.title}::${s.title}`));
+      if (allDone) derivedCompletedTopics.add(`${subject}::${t.title}`);
     });
 
     const lockedTopics = new Set<string>();
     data.forEach((t, idx) => {
       if (idx === 0) return;
       const prev = data[idx - 1];
-      if (!derivedCompletedTopics.has(prev.title)) lockedTopics.add(t.title);
+      if (!derivedCompletedTopics.has(`${subject}::${prev.title}`)) lockedTopics.add(`${subject}::${t.title}`);
     });
 
     const topicQuizReady = new Set<string>();
     data.forEach((t) => {
       const sub = t.subtopics ?? [];
       if (!sub.length) return;
-      const allDone = sub.every((s) => derivedCompletedSubtopics.has(`${t.title}::${s.title}`));
-      if (allDone && !derivedCompletedTopics.has(t.title)) topicQuizReady.add(t.title);
+      const allDone = sub.every((s) => derivedCompletedSubtopics.has(`${subject}::${t.title}::${s.title}`));
+      if (allDone && !derivedCompletedTopics.has(`${subject}::${t.title}`)) {
+        topicQuizReady.add(`${subject}::${t.title}`);
+      }
     });
 
     return {

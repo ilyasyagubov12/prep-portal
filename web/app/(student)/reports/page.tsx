@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 type CourseOption = {
@@ -21,19 +22,12 @@ type StudentRow = {
   parent_phone?: string | null;
   attendance: {
     status: "present" | "absent" | "late" | "excused";
-    behavior: "good" | "warning" | "poor";
     notes: string;
   };
-  payment: {
-    status: "paid" | "partial" | "unpaid";
-    amount_due: string;
-    notes: string;
-  } | null;
 };
 
 type ReportingResponse = {
   ok: boolean;
-  can_manage_payments: boolean;
   report_date: string;
   courses: CourseOption[];
   selected_course_id: string | null;
@@ -43,13 +37,6 @@ type ReportingResponse = {
     absent: number;
     late: number;
     excused: number;
-    good: number;
-    warning: number;
-    poor: number;
-    unpaid_count: number;
-    partial_count: number;
-    paid_count: number;
-    total_due: string;
   };
   available_tags: string[];
 };
@@ -59,12 +46,6 @@ const ATTENDANCE_OPTIONS = [
   { value: "late", label: "Late" },
   { value: "excused", label: "Excused" },
   { value: "absent", label: "Absent" },
-] as const;
-
-const PAYMENT_OPTIONS = [
-  { value: "paid", label: "Paid" },
-  { value: "partial", label: "Partial" },
-  { value: "unpaid", label: "Unpaid" },
 ] as const;
 
 function todayIso() {
@@ -79,7 +60,6 @@ function displayName(student: StudentRow) {
 export default function ReportsPage() {
   const [loading, setLoading] = useState(true);
   const [savingAttendance, setSavingAttendance] = useState(false);
-  const [savingPayments, setSavingPayments] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -92,13 +72,8 @@ export default function ReportsPage() {
   const [availableTags, setAvailableTags] = useState<string[]>([]);
   const [students, setStudents] = useState<StudentRow[]>([]);
   const [summary, setSummary] = useState<ReportingResponse["summary"] | null>(null);
-  const [canManagePayments, setCanManagePayments] = useState(false);
 
-  async function loadOverview(opts?: {
-    courseId?: string;
-    date?: string;
-    query?: string;
-  }) {
+  async function loadOverview(opts?: { courseId?: string; date?: string; query?: string }) {
     const access = localStorage.getItem("access_token");
     if (!access) {
       setLoading(false);
@@ -135,7 +110,6 @@ export default function ReportsPage() {
       setStudents(data.students || []);
       setSummary(data.summary || null);
       setAvailableTags(data.available_tags || []);
-      setCanManagePayments(Boolean(data.can_manage_payments));
       setSelectedTag((prev) => (prev && data.available_tags.includes(prev) ? prev : ""));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load reports.");
@@ -167,22 +141,6 @@ export default function ReportsPage() {
               ...student,
               attendance: {
                 ...student.attendance,
-                [field]: value,
-              },
-            },
-      ),
-    );
-  }
-
-  function updatePayment(userId: string, field: "status" | "amount_due" | "notes", value: string) {
-    setStudents((prev) =>
-      prev.map((student) =>
-        student.user_id !== userId || !student.payment
-          ? student
-          : {
-              ...student,
-              payment: {
-                ...student.payment,
                 [field]: value,
               },
             },
@@ -227,53 +185,24 @@ export default function ReportsPage() {
     }
   }
 
-  async function savePayments() {
-    if (!selectedCourseId || !canManagePayments) return;
-    const access = localStorage.getItem("access_token");
-    if (!access) return;
-    setSavingPayments(true);
-    setError(null);
-    setSuccess(null);
-    try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/reports/payment/save/`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${access}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          course_id: selectedCourseId,
-          updates: students
-            .filter((student) => student.payment)
-            .map((student) => ({
-              user_id: student.user_id,
-              status: student.payment?.status,
-              amount_due: student.payment?.amount_due,
-              notes: student.payment?.notes,
-            })),
-        }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data?.error || "Failed to save payments.");
-      }
-      setSuccess("Payments saved.");
-      await loadOverview();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save payments.");
-    } finally {
-      setSavingPayments(false);
-    }
-  }
-
   return (
     <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-3 py-4 sm:px-6">
       <section className="rounded-[28px] border border-[#101828] bg-[radial-gradient(circle_at_top_left,_rgba(196,181,253,0.35),_transparent_34%),radial-gradient(circle_at_bottom_right,_rgba(56,189,248,0.28),_transparent_38%),linear-gradient(135deg,_rgba(255,255,255,0.96),_rgba(248,250,252,0.98))] p-6 shadow-[0_24px_80px_rgba(15,23,42,0.12)]">
         <div className="mb-2 text-xs uppercase tracking-[0.35em] text-[#6b7aa6]">Reports</div>
-        <h1 className="text-4xl font-black tracking-[-0.03em] text-[#0f172a]">Class reporting</h1>
-        <p className="mt-3 max-w-3xl text-sm text-[#475467]">
-          Teachers and admins can record daily class attendance and comments. Payments are separated and visible only to admins.
-        </p>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h1 className="text-4xl font-black tracking-[-0.03em] text-[#0f172a]">Reporting</h1>
+            <p className="mt-3 max-w-3xl text-sm text-[#475467]">
+              Daily class reporting for teachers and admins. Payments are separated into their own admin-only page.
+            </p>
+          </div>
+          <Link
+            href="/reports/payments"
+            className="rounded-2xl bg-[#047857] px-5 py-3 text-sm font-bold text-white shadow-[0_12px_24px_rgba(4,120,87,0.24)]"
+          >
+            Payments
+          </Link>
+        </div>
       </section>
 
       <section className="grid gap-4 rounded-[24px] border border-[#d7def0] bg-white/95 p-4 shadow-[0_12px_40px_rgba(15,23,42,0.08)] sm:grid-cols-2 xl:grid-cols-5">
@@ -383,9 +312,9 @@ export default function ReportsPage() {
       <section className="overflow-hidden rounded-[28px] border border-[#d7def0] bg-white/95 shadow-[0_16px_50px_rgba(15,23,42,0.08)]">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e4e7ec] px-5 py-4">
           <div>
-            <h2 className="text-lg font-black text-[#101828]">Reporting</h2>
+            <h2 className="text-lg font-black text-[#101828]">Class reporting</h2>
             <p className="mt-1 text-sm text-[#667085]">
-              Record attendance and write what each student did during the class.
+              Mark attendance and record what each student did during the class.
             </p>
           </div>
           <button
@@ -437,12 +366,8 @@ export default function ReportsPage() {
                       <div>{student.username}</div>
                       {student.student_id ? <div className="mt-1">{student.student_id}</div> : null}
                     </td>
-                    <td className="px-4 py-4 text-sm text-[#101828]">
-                      {student.parent_name || "-"}
-                    </td>
-                    <td className="px-4 py-4 text-sm text-[#101828]">
-                      {student.parent_phone || "-"}
-                    </td>
+                    <td className="px-4 py-4 text-sm text-[#101828]">{student.parent_name || "-"}</td>
+                    <td className="px-4 py-4 text-sm text-[#101828]">{student.parent_phone || "-"}</td>
                     <td className="px-4 py-4">
                       <select
                         value={student.attendance.status}
@@ -472,114 +397,6 @@ export default function ReportsPage() {
           </table>
         </div>
       </section>
-
-      {canManagePayments ? (
-        <>
-          <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <SummaryCard label="Paid" value={summary?.paid_count ?? 0} accent="bg-[#dcfce7] text-[#166534]" />
-            <SummaryCard label="Partial" value={summary?.partial_count ?? 0} accent="bg-[#fef3c7] text-[#92400e]" />
-            <SummaryCard label="Unpaid" value={summary?.unpaid_count ?? 0} accent="bg-[#fee2e2] text-[#b91c1c]" />
-            <SummaryCard label="Total due" value={`${summary?.total_due ?? "0.00"} AZN`} accent="bg-[#ede9fe] text-[#6d28d9]" />
-          </section>
-
-          <section className="overflow-hidden rounded-[28px] border border-[#d7def0] bg-white/95 shadow-[0_16px_50px_rgba(15,23,42,0.08)]">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e4e7ec] px-5 py-4">
-              <div>
-                <h2 className="text-lg font-black text-[#101828]">Payments</h2>
-                <p className="mt-1 text-sm text-[#667085]">
-                  Admin-only. Track who paid, who owes, and how much is still due.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => void savePayments()}
-                disabled={!selectedCourseId || savingPayments}
-                className="rounded-2xl bg-[#047857] px-5 py-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {savingPayments ? "Saving..." : "Save payments"}
-              </button>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="min-w-[980px] w-full border-collapse">
-                <thead>
-                  <tr className="bg-[#f8fafc] text-left text-xs uppercase tracking-[0.22em] text-[#6b7280]">
-                    <th className="px-4 py-3 font-semibold">Student</th>
-                    <th className="px-4 py-3 font-semibold">Parent</th>
-                    <th className="px-4 py-3 font-semibold">Status</th>
-                    <th className="px-4 py-3 font-semibold">Amount due</th>
-                    <th className="px-4 py-3 font-semibold">Notes</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {loading ? (
-                    <tr>
-                      <td className="px-4 py-8 text-sm text-[#667085]" colSpan={5}>
-                        Loading payments...
-                      </td>
-                    </tr>
-                  ) : visibleStudents.length === 0 ? (
-                    <tr>
-                      <td className="px-4 py-8 text-sm text-[#667085]" colSpan={5}>
-                        No students matched the current filters.
-                      </td>
-                    </tr>
-                  ) : (
-                    visibleStudents.map((student) => (
-                      <tr key={student.user_id} className="border-t border-[#eef2f6] align-top">
-                        <td className="px-4 py-4">
-                          <div className="font-bold text-[#101828]">{displayName(student)}</div>
-                          <div className="mt-1 text-xs text-[#667085]">{student.username}</div>
-                        </td>
-                        <td className="px-4 py-4 text-sm text-[#101828]">
-                          <div>{student.parent_name || "-"}</div>
-                          <div className="mt-1 text-[#667085]">{student.parent_phone || "-"}</div>
-                        </td>
-                        <td className="px-4 py-4">
-                          <select
-                            value={student.payment?.status || "unpaid"}
-                            onChange={(e) => updatePayment(student.user_id, "status", e.target.value)}
-                            className="w-full rounded-xl border border-[#d0d5dd] bg-white px-3 py-2 text-sm font-medium text-[#101828]"
-                          >
-                            {PAYMENT_OPTIONS.map((option) => (
-                              <option key={option.value} value={option.value}>
-                                {option.label}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td className="px-4 py-4">
-                          <div className="relative">
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              value={student.payment?.amount_due || "0.00"}
-                              onChange={(e) => updatePayment(student.user_id, "amount_due", e.target.value)}
-                              className="w-full rounded-xl border border-[#d0d5dd] bg-white px-3 py-2 pr-12 text-sm font-medium text-[#101828]"
-                            />
-                            <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-[#667085]">
-                              AZN
-                            </span>
-                          </div>
-                        </td>
-                        <td className="px-4 py-4">
-                          <textarea
-                            value={student.payment?.notes || ""}
-                            onChange={(e) => updatePayment(student.user_id, "notes", e.target.value)}
-                            rows={3}
-                            className="w-full resize-y rounded-xl border border-[#d0d5dd] bg-white px-3 py-2 text-sm text-[#101828]"
-                            placeholder="Payment notes"
-                          />
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        </>
-      ) : null}
     </main>
   );
 }

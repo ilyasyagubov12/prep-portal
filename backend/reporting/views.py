@@ -1,18 +1,16 @@
-from decimal import Decimal, InvalidOperation
 from datetime import date
 
-from django.contrib.auth import get_user_model
-from django.db.models import Q
+from django.db.models import Count, Q
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.views import _require_admin
-from courses.models import Course, CourseTeacher, Enrollment
+from courses.models import Course, Enrollment
 
-from .models import StudentAttendanceReport, StudentPaymentStatus
+from .models import StudentAttendanceReport, StudentPaymentPlan, StudentPaymentRecord
 
-User = get_user_model()
+COUNTED_ATTENDANCE_STATUSES = ("present", "late", "excused")
 
 
 def _is_staff(user) -> bool:
@@ -26,7 +24,7 @@ def _is_admin(user) -> bool:
 
 
 def _staff_courses(user):
-    if _require_admin(user):
+    if _is_admin(user):
         return Course.objects.all().order_by("title")
     return Course.objects.filter(teachers__teacher=user).distinct().order_by("title")
 
@@ -36,6 +34,32 @@ def _course_allowed(user, course_id: str) -> Course | None:
         return _staff_courses(user).get(id=course_id)
     except Course.DoesNotExist:
         return None
+
+
+def _student_haystack(user, profile, tag: str) -> str:
+    return " ".join(
+        [
+            user.username or "",
+            user.first_name or "",
+            user.last_name or "",
+            getattr(profile, "nickname", "") or "",
+            getattr(profile, "student_id", "") or "",
+            getattr(profile, "parent_name", "") or "",
+            getattr(profile, "parent_phone", "") or "",
+            tag,
+        ]
+    ).lower()
+
+
+def _attendance_count_map(course):
+    return {
+        str(item["student_id"]): item["count"]
+        for item in (
+            StudentAttendanceReport.objects.filter(course=course, attendance__in=COUNTED_ATTENDANCE_STATUSES)
+            .values("student_id")
+            .annotate(count=Count("id"))
+        )
+    }
 
 
 class ReportingOverviewView(APIView):
@@ -54,9 +78,7 @@ class ReportingOverviewView(APIView):
         except ValueError:
             return Response({"error": "Invalid report_date"}, status=400)
 
-        courses = list(
-            _staff_courses(request.user).values("id", "slug", "title", "description")
-        )
+        courses = list(_staff_courses(request.user).values("id", "slug", "title", "description"))
         selected_course = None
         if course_id:
             selected_course = _course_allowed(request.user, course_id)
@@ -71,13 +93,6 @@ class ReportingOverviewView(APIView):
             "absent": 0,
             "late": 0,
             "excused": 0,
-            "good": 0,
-            "warning": 0,
-            "poor": 0,
-            "unpaid_count": 0,
-            "partial_count": 0,
-            "paid_count": 0,
-            "total_due": "0.00",
         }
         available_tags: list[str] = []
 
@@ -93,12 +108,7 @@ class ReportingOverviewView(APIView):
                     course=selected_course, report_date=report_date
                 ).select_related("student")
             }
-            payment_map = {
-                str(item.student_id): item
-                for item in StudentPaymentStatus.objects.filter(course=selected_course).select_related("student")
-            }
             tag_set = set()
-            due_total = Decimal("0.00")
 
             for enrollment in enrollments:
                 user = enrollment.user
@@ -106,36 +116,13 @@ class ReportingOverviewView(APIView):
                 tag = (getattr(profile, "tag", None) or "").strip()
                 if tag:
                     tag_set.add(tag)
-                haystack = " ".join(
-                    [
-                        user.username or "",
-                        user.first_name or "",
-                        user.last_name or "",
-                        getattr(profile, "nickname", "") or "",
-                        getattr(profile, "student_id", "") or "",
-                        getattr(profile, "parent_name", "") or "",
-                        getattr(profile, "parent_phone", "") or "",
-                        tag,
-                    ]
-                ).lower()
-                if query and query not in haystack:
-                    continue
-                attendance = attendance_map.get(str(user.id))
-                payment = payment_map.get(str(user.id))
-                attendance_status = attendance.attendance if attendance else "present"
-                behavior_status = attendance.behavior if attendance else "good"
-                payment_status = payment.payment_status if payment else "unpaid"
-                amount_due = payment.amount_due if payment else Decimal("0.00")
 
+                if query and query not in _student_haystack(user, profile, tag):
+                    continue
+
+                attendance = attendance_map.get(str(user.id))
+                attendance_status = attendance.attendance if attendance else "present"
                 summary[attendance_status] += 1
-                summary[behavior_status] += 1
-                if payment_status == "paid":
-                    summary["paid_count"] += 1
-                elif payment_status == "partial":
-                    summary["partial_count"] += 1
-                else:
-                    summary["unpaid_count"] += 1
-                due_total += amount_due
 
                 students.append(
                     {
@@ -150,28 +137,16 @@ class ReportingOverviewView(APIView):
                         "parent_phone": getattr(profile, "parent_phone", None),
                         "attendance": {
                             "status": attendance_status,
-                            "behavior": behavior_status,
                             "notes": attendance.notes if attendance else "",
                         },
-                        "payment": (
-                            {
-                                "status": payment_status,
-                                "amount_due": f"{amount_due:.2f}",
-                                "notes": payment.notes if payment else "",
-                            }
-                            if _is_admin(request.user)
-                            else None
-                        ),
                     }
                 )
 
-            summary["total_due"] = f"{due_total:.2f}"
             available_tags = sorted(tag_set)
 
         return Response(
             {
                 "ok": True,
-                "can_manage_payments": _is_admin(request.user),
                 "report_date": report_date.isoformat(),
                 "courses": courses,
                 "selected_course_id": str(selected_course.id) if selected_course else None,
@@ -205,15 +180,12 @@ class ReportingAttendanceSaveView(APIView):
         except ValueError:
             return Response({"error": "Invalid report_date"}, status=400)
 
-        enrolled_ids = set(
-            Enrollment.objects.filter(course=course).values_list("user_id", flat=True)
-        )
+        enrolled_ids = set(str(v) for v in Enrollment.objects.filter(course=course).values_list("user_id", flat=True))
         for item in updates:
             student_id = str(item.get("user_id") or "").strip()
-            if not student_id or student_id not in {str(v) for v in enrolled_ids}:
+            if not student_id or student_id not in enrolled_ids:
                 continue
             status_value = (item.get("status") or "present").strip().lower()
-            behavior_value = (item.get("behavior") or "good").strip().lower()
             notes = (item.get("notes") or "").strip() or None
             record, _ = StudentAttendanceReport.objects.get_or_create(
                 course=course,
@@ -221,7 +193,6 @@ class ReportingAttendanceSaveView(APIView):
                 report_date=report_date,
             )
             record.attendance = status_value
-            record.behavior = behavior_value
             record.notes = notes
             record.reported_by = request.user
             record.save()
@@ -229,7 +200,104 @@ class ReportingAttendanceSaveView(APIView):
         return Response({"ok": True})
 
 
-class ReportingPaymentSaveView(APIView):
+class PaymentsOverviewView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        if not _is_admin(request.user):
+            return Response({"error": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+
+        course_id = (request.query_params.get("course_id") or "").strip()
+        query = (request.query_params.get("q") or "").strip().lower()
+
+        courses = list(_staff_courses(request.user).values("id", "slug", "title", "description"))
+        selected_course = None
+        if course_id:
+            selected_course = _course_allowed(request.user, course_id)
+            if not selected_course:
+                return Response({"error": "Course not found"}, status=404)
+        elif courses:
+            selected_course = _course_allowed(request.user, str(courses[0]["id"]))
+
+        students = []
+        payment_slot_count = 3
+        if selected_course:
+            enrollments = (
+                Enrollment.objects.filter(course=selected_course)
+                .select_related("user__profile")
+                .order_by("user__first_name", "user__last_name", "user__username")
+            )
+            attendance_counts = _attendance_count_map(selected_course)
+            plans = {
+                str(item.student_id): item
+                for item in StudentPaymentPlan.objects.filter(course=selected_course).prefetch_related("records")
+            }
+            for plan in plans.values():
+                payment_slot_count = max(payment_slot_count, plan.records.count())
+
+            for enrollment in enrollments:
+                user = enrollment.user
+                profile = getattr(user, "profile", None)
+                tag = (getattr(profile, "tag", None) or "").strip()
+                if query and query not in _student_haystack(user, profile, tag):
+                    continue
+
+                plan = plans.get(str(user.id))
+                cycle = plan.classes_per_payment if plan and plan.classes_per_payment else None
+                attended_classes = int(attendance_counts.get(str(user.id), 0))
+                records_by_number = {}
+                paid_count = 0
+                if plan:
+                    for record in plan.records.all():
+                        records_by_number[record.payment_number] = record
+                        if record.is_paid:
+                            paid_count += 1
+                classes_remaining = None
+                if cycle:
+                    next_due_threshold = cycle * (paid_count + 1)
+                    classes_remaining = next_due_threshold - attended_classes
+
+                payments = []
+                for payment_number in range(1, payment_slot_count + 1):
+                    record = records_by_number.get(payment_number)
+                    payments.append(
+                        {
+                            "payment_number": payment_number,
+                            "is_paid": bool(record.is_paid) if record else False,
+                            "paid_date": record.paid_date.isoformat() if record and record.paid_date else "",
+                        }
+                    )
+
+                students.append(
+                    {
+                        "user_id": str(user.id),
+                        "username": user.username,
+                        "first_name": user.first_name,
+                        "last_name": user.last_name,
+                        "nickname": getattr(profile, "nickname", None),
+                        "student_id": getattr(profile, "student_id", None),
+                        "tag": tag or None,
+                        "parent_name": getattr(profile, "parent_name", None),
+                        "parent_phone": getattr(profile, "parent_phone", None),
+                        "classes_per_payment": cycle,
+                        "attended_classes": attended_classes,
+                        "classes_remaining": classes_remaining,
+                        "payments": payments,
+                    }
+                )
+
+        return Response(
+            {
+                "ok": True,
+                "courses": courses,
+                "selected_course_id": str(selected_course.id) if selected_course else None,
+                "students": students,
+                "payment_slot_count": payment_slot_count,
+            }
+        )
+
+
+class PaymentsSaveView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
@@ -247,27 +315,50 @@ class ReportingPaymentSaveView(APIView):
         if not course:
             return Response({"error": "Course not found"}, status=404)
 
-        enrolled_ids = set(
-            str(v) for v in Enrollment.objects.filter(course=course).values_list("user_id", flat=True)
-        )
+        enrolled_ids = set(str(v) for v in Enrollment.objects.filter(course=course).values_list("user_id", flat=True))
         for item in updates:
             student_id = str(item.get("user_id") or "").strip()
             if not student_id or student_id not in enrolled_ids:
                 continue
-            payment_status = (item.get("status") or "unpaid").strip().lower()
-            notes = (item.get("notes") or "").strip() or None
-            raw_amount = str(item.get("amount_due") or "0").strip() or "0"
-            try:
-                amount_due = Decimal(raw_amount)
-            except InvalidOperation:
-                return Response({"error": f"Invalid amount for {student_id}"}, status=400)
-            if amount_due < 0:
-                amount_due = Decimal("0.00")
-            record, _ = StudentPaymentStatus.objects.get_or_create(course=course, student_id=student_id)
-            record.payment_status = payment_status
-            record.amount_due = amount_due
-            record.notes = notes
-            record.updated_by = request.user
-            record.save()
+            raw_cycle = item.get("classes_per_payment")
+            classes_per_payment = None
+            if raw_cycle not in (None, ""):
+                try:
+                    classes_per_payment = int(raw_cycle)
+                except (TypeError, ValueError):
+                    return Response({"error": f"Invalid payment cycle for {student_id}"}, status=400)
+                if classes_per_payment <= 0:
+                    return Response({"error": f"Payment cycle must be positive for {student_id}"}, status=400)
+
+            plan, _ = StudentPaymentPlan.objects.get_or_create(course=course, student_id=student_id)
+            plan.classes_per_payment = classes_per_payment
+            plan.updated_by = request.user
+            plan.save()
+
+            payments = item.get("payments") or []
+            if not isinstance(payments, list):
+                return Response({"error": f"payments must be a list for {student_id}"}, status=400)
+            for payment in payments:
+                try:
+                    payment_number = int(payment.get("payment_number") or 0)
+                except (TypeError, ValueError):
+                    return Response({"error": f"Invalid payment number for {student_id}"}, status=400)
+                if payment_number <= 0:
+                    continue
+                paid_date_raw = (payment.get("paid_date") or "").strip()
+                paid_date = None
+                if paid_date_raw:
+                    try:
+                        paid_date = date.fromisoformat(paid_date_raw)
+                    except ValueError:
+                        return Response({"error": f"Invalid paid_date for {student_id}"}, status=400)
+                record, _ = StudentPaymentRecord.objects.get_or_create(
+                    plan=plan,
+                    payment_number=payment_number,
+                )
+                record.is_paid = bool(payment.get("is_paid"))
+                record.paid_date = paid_date
+                record.updated_by = request.user
+                record.save()
 
         return Response({"ok": True})

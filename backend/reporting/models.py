@@ -70,3 +70,44 @@ class StudentPaymentStatus(models.Model):
     class Meta:
         unique_together = ("course", "student")
         ordering = ["student__username"]
+
+
+class StudentPaymentPlan(models.Model):
+    course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name="payment_plans")
+    student = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="payment_plans"
+    )
+    classes_per_payment = models.PositiveIntegerField(blank=True, null=True)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="updated_payment_plans",
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("course", "student")
+        ordering = ["student__username"]
+
+
+class StudentPaymentRecord(models.Model):
+    plan = models.ForeignKey(StudentPaymentPlan, on_delete=models.CASCADE, related_name="records")
+    payment_number = models.PositiveIntegerField()
+    is_paid = models.BooleanField(default=False)
+    paid_date = models.DateField(blank=True, null=True)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="updated_payment_records",
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("plan", "payment_number")
+        ordering = ["payment_number"]

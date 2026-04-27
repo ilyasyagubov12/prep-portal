@@ -3,7 +3,6 @@ from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.db import models
-from django.db.models import Count
 from django.contrib.auth import get_user_model
 from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
@@ -12,10 +11,15 @@ import os
 import csv
 import io
 import re
-from accounts.views import _require_admin
 from .models import Question, SubtopicProgress, TopicProgress
 from .serializers import QuestionSerializer
-from .topic_map import subtopic_order, topic_order
+from .topic_map import (
+    canonicalize_labels,
+    subtopic_aliases,
+    subtopic_order,
+    topic_aliases,
+    topic_order,
+)
 
 
 User = get_user_model()
@@ -28,15 +32,29 @@ def is_staff(user: User) -> bool:
 
 
 def build_question_queryset(user, *, subject=None, topic=None, subtopic=None, q="", ids=None):
+    normalized_subject = (subject or "").strip().lower() or None
+    canonical_topic = None
+    canonical_subtopic = None
+    if normalized_subject and topic:
+        normalized_subject, canonical_topic, canonical_subtopic = canonicalize_labels(
+            normalized_subject, topic, subtopic
+        )
+
     qs = Question.objects.all()
     if ids:
         qs = qs.filter(id__in=ids)
-    if subject:
-        qs = qs.filter(subject=subject)
+    if normalized_subject:
+        qs = qs.filter(subject=normalized_subject)
     if topic:
-        qs = qs.filter(topic=topic)
+        if normalized_subject and canonical_topic:
+            qs = qs.filter(topic__in=topic_aliases(normalized_subject, canonical_topic))
+        else:
+            qs = qs.filter(topic=topic)
     if subtopic:
-        qs = qs.filter(subtopic=subtopic)
+        if normalized_subject and canonical_topic and canonical_subtopic:
+            qs = qs.filter(subtopic__in=subtopic_aliases(normalized_subject, canonical_topic, canonical_subtopic))
+        else:
+            qs = qs.filter(subtopic=subtopic)
     if q:
         qs = qs.filter(
             models.Q(stem__icontains=q)
@@ -184,12 +202,21 @@ class QuestionCountsView(APIView):
         if not is_staff(request.user):
             qs = qs.filter(published=True)
 
-        data = (
-            qs.values("subject", "topic", "subtopic")
-            .annotate(count=Count("id"))
-            .order_by()
-        )
-        return Response({"ok": True, "counts": list(data)})
+        counts = defaultdict(int)
+        for subject, topic, subtopic in qs.values_list("subject", "topic", "subtopic"):
+            normalized_subject, canonical_topic, canonical_subtopic = canonicalize_labels(subject, topic, subtopic)
+            counts[(normalized_subject, canonical_topic, canonical_subtopic or None)] += 1
+
+        data = [
+            {
+                "subject": subject,
+                "topic": topic,
+                "subtopic": subtopic,
+                "count": count,
+            }
+            for (subject, topic, subtopic), count in sorted(counts.items())
+        ]
+        return Response({"ok": True, "counts": data})
 
 
 class QuestionImportView(APIView):
@@ -335,19 +362,98 @@ def _parse_level(raw) -> int:
         return 0
 
 
+def _aggregate_subtopic_progress(sub_qs):
+    aggregated = {}
+    for row in sub_qs:
+        subject, topic, subtopic = canonicalize_labels(row.subject, row.topic, row.subtopic)
+        if not topic or not subtopic:
+            continue
+        key = (subject, topic, subtopic)
+        current = aggregated.get(key)
+        if current is None:
+            aggregated[key] = {
+                "subject": subject,
+                "topic": topic,
+                "subtopic": subtopic,
+                "passed": bool(row.passed),
+                "best_score": row.best_score or 0,
+            }
+            continue
+        current["passed"] = current["passed"] or bool(row.passed)
+        current["best_score"] = max(current["best_score"], row.best_score or 0)
+    return aggregated
+
+
+def _aggregate_topic_progress(topic_qs):
+    aggregated = {}
+    for row in topic_qs:
+        subject, topic, _ = canonicalize_labels(row.subject, row.topic)
+        if not topic:
+            continue
+        key = (subject, topic)
+        current = aggregated.get(key)
+        if current is None:
+            aggregated[key] = {
+                "subject": subject,
+                "topic": topic,
+                "passed": bool(row.passed),
+                "best_score": row.best_score or 0,
+            }
+            continue
+        current["passed"] = current["passed"] or bool(row.passed)
+        current["best_score"] = max(current["best_score"], row.best_score or 0)
+    return aggregated
+
+
+def _passed_subtopic_keys(user, subject: str) -> set[tuple[str, str]]:
+    rows = SubtopicProgress.objects.filter(user=user, subject=subject, passed=True)
+    keys = set()
+    for row in rows:
+        _, topic, subtopic = canonicalize_labels(subject, row.topic, row.subtopic)
+        if topic and subtopic:
+            keys.add((topic, subtopic))
+    return keys
+
+
+def _passed_topic_names(user, subject: str) -> set[str]:
+    names = set()
+    rows = TopicProgress.objects.filter(user=user, subject=subject, passed=True)
+    for row in rows:
+        _, topic, _ = canonicalize_labels(subject, row.topic)
+        if topic:
+            names.add(topic)
+
+    passed_subtopics = _passed_subtopic_keys(user, subject)
+    for topic in topic_order(subject):
+        required = {(t, s) for (t, s) in subtopic_order(subject) if t == topic}
+        if required and required.issubset(passed_subtopics):
+            names.add(topic)
+    return names
+
+
 def _effective_level(user, subject: str) -> int:
     prof = getattr(user, "profile", None)
     if not prof:
         return 0
     base = _parse_level(prof.math_level if subject == "math" else prof.verbal_level)
     completed = SubtopicProgress.objects.filter(user=user, subject=subject, passed=True).count()
+    canonical_completed = len(_passed_subtopic_keys(user, subject))
     total = len(subtopic_order(subject))
-    return max(0, min(total, max(base, completed)))
+    return max(0, min(total, max(base, completed, canonical_completed)))
 
 
 def _completed_to_level(subject: str, completed: int) -> int:
     total = len(subtopic_order(subject))
     return max(0, min(total, completed))
+
+
+def _subtopic_level(subject: str, topic: str, subtopic: str) -> int:
+    order = subtopic_order(subject)
+    try:
+        idx = order.index((topic, subtopic))
+    except ValueError:
+        return 0
+    return idx + 1
 
 
 def _set_level(user, subject: str, level: int):
@@ -395,27 +501,15 @@ class QuestionProgressView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        subject = request.query_params.get("subject")
+        subject = (request.query_params.get("subject") or "").strip().lower() or None
         sub_qs = SubtopicProgress.objects.filter(user=request.user)
         topic_qs = TopicProgress.objects.filter(user=request.user)
         if subject:
             sub_qs = sub_qs.filter(subject=subject)
             topic_qs = topic_qs.filter(subject=subject)
 
-        subtopics = [
-            {
-                "subject": s.subject,
-                "topic": s.topic,
-                "subtopic": s.subtopic,
-                "passed": s.passed,
-                "best_score": s.best_score,
-            }
-            for s in sub_qs
-        ]
-        topics = [
-            {"subject": t.subject, "topic": t.topic, "passed": t.passed, "best_score": t.best_score}
-            for t in topic_qs
-        ]
+        subtopics = list(_aggregate_subtopic_progress(sub_qs).values())
+        topics = list(_aggregate_topic_progress(topic_qs).values())
         return Response({"ok": True, "subtopics": subtopics, "topics": topics})
 
 
@@ -428,11 +522,10 @@ class QuestionQuizView(APIView):
         subtopic = request.query_params.get("subtopic")
         if not subject or not topic:
             return Response({"error": "subject and topic required"}, status=400)
+        subject, topic, subtopic = canonicalize_labels(subject, topic, subtopic)
 
         if not is_staff(request.user):
-            completed_topics = set(
-                TopicProgress.objects.filter(user=request.user, subject=subject, passed=True).values_list("topic", flat=True)
-            )
+            completed_topics = _passed_topic_names(request.user, subject)
             level = _effective_level(request.user, subject)
             if subtopic:
                 if not _subtopic_unlocked(subject, topic, subtopic, level, completed_topics):
@@ -442,10 +535,7 @@ class QuestionQuizView(APIView):
                 if not _topic_unlocked(subject, topic, completed_topics, level):
                     return Response({"error": "Locked"}, status=403)
                 required = {(topic, s) for (t, s) in subtopic_order(subject) if t == topic}
-                completed = set(
-                    SubtopicProgress.objects.filter(user=request.user, subject=subject, passed=True, topic=topic)
-                    .values_list("topic", "subtopic")
-                )
+                completed = {(t, s) for (t, s) in _passed_subtopic_keys(request.user, subject) if t == topic}
                 if required and not required.issubset(completed):
                     # allow if level already covers all subtopics in this topic
                     order = subtopic_order(subject)
@@ -453,9 +543,9 @@ class QuestionQuizView(APIView):
                     if indices and level < max(indices) + 1:
                         return Response({"error": "Complete all subtopics first"}, status=403)
 
-        qs = Question.objects.filter(subject=subject, topic=topic)
+        qs = Question.objects.filter(subject=subject, topic__in=topic_aliases(subject, topic))
         if subtopic:
-            qs = qs.filter(subtopic=subtopic)
+            qs = qs.filter(subtopic__in=subtopic_aliases(subject, topic, subtopic))
         if not is_staff(request.user):
             qs = qs.filter(published=True)
 
@@ -498,14 +588,15 @@ class QuestionQuizSubmitView(APIView):
         answers = request.data.get("answers") or []
         if not subject or not topic or not isinstance(answers, list):
             return Response({"error": "subject, topic, and answers required"}, status=400)
+        subject, topic, subtopic = canonicalize_labels(subject, topic, subtopic)
 
         ids = [a.get("question_id") for a in answers if a.get("question_id")]
         if not ids:
             return Response({"error": "No answers provided"}, status=400)
 
-        qs = Question.objects.filter(id__in=ids, subject=subject, topic=topic)
+        qs = Question.objects.filter(id__in=ids, subject=subject, topic__in=topic_aliases(subject, topic))
         if subtopic:
-            qs = qs.filter(subtopic=subtopic)
+            qs = qs.filter(subtopic__in=subtopic_aliases(subject, topic, subtopic))
 
         by_id = {str(q.id): q for q in qs}
         total = 0
@@ -568,7 +659,17 @@ class QuestionQuizSubmitView(APIView):
                 current_level = _parse_level(
                     request.user.profile.math_level if subject == "math" else request.user.profile.verbal_level
                 )
-                _set_level(request.user, subject, max(current_level, _completed_to_level(subject, completed)))
+                canonical_completed = len(_passed_subtopic_keys(request.user, subject))
+                unlocked_level = _subtopic_level(subject, topic, subtopic)
+                _set_level(
+                    request.user,
+                    subject,
+                    max(
+                        current_level,
+                        unlocked_level,
+                        _completed_to_level(subject, max(completed, canonical_completed)),
+                    ),
+                )
             else:
                 prog, _ = TopicProgress.objects.get_or_create(user=request.user, subject=subject, topic=topic)
                 prog.best_score = max(prog.best_score or 0, score)
