@@ -11,6 +11,8 @@ import os
 import csv
 import io
 import re
+from courses.models import Course, CourseTeacher, Enrollment
+from streaks.models import QuestionAttempt
 from .models import Question, SubtopicProgress, TopicProgress
 from .serializers import QuestionSerializer
 from .topic_map import (
@@ -29,6 +31,27 @@ def is_staff(user: User) -> bool:
     prof = getattr(user, "profile", None)
     role = (getattr(prof, "role", None) or "").lower()
     return user.is_superuser or getattr(prof, "is_admin", False) or role in ("admin", "teacher")
+
+
+def student_label(user: User) -> str:
+    profile = getattr(user, "profile", None)
+    nickname = (getattr(profile, "nickname", None) or "").strip()
+    if nickname:
+        return nickname
+
+    full_name = " ".join(part for part in [user.first_name.strip(), user.last_name.strip()] if part).strip()
+    if full_name:
+        return full_name
+
+    username = (user.username or "").strip()
+    if username:
+        return username
+
+    email = (user.email or "").strip()
+    if email:
+        return email.split("@", 1)[0]
+
+    return "Student"
 
 
 def build_question_queryset(user, *, subject=None, topic=None, subtopic=None, q="", ids=None):
@@ -217,6 +240,125 @@ class QuestionCountsView(APIView):
             for (subject, topic, subtopic), count in sorted(counts.items())
         ]
         return Response({"ok": True, "counts": data})
+
+
+class QuestionSetProgressView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        raw_ids = request.data.get("question_ids") or []
+        if not isinstance(raw_ids, list) or not raw_ids:
+            return Response({"error": "question_ids required"}, status=400)
+
+        question_ids = []
+        seen_ids = set()
+        for value in raw_ids:
+            qid = str(value).strip()
+            if not qid or qid in seen_ids:
+                continue
+            seen_ids.add(qid)
+            question_ids.append(qid)
+
+        if not question_ids:
+            return Response({"error": "question_ids required"}, status=400)
+
+        accessible_ids = [
+            str(qid)
+            for qid in build_question_queryset(request.user, ids=question_ids).values_list("id", flat=True)
+        ]
+        total_questions = len(accessible_ids)
+        if total_questions == 0:
+            return Response(
+                {
+                    "ok": True,
+                    "total_questions": 0,
+                    "my_completed_questions": 0,
+                    "my_completion_percent": 0,
+                    "course": None,
+                }
+            )
+
+        my_completed = (
+            QuestionAttempt.objects.filter(user=request.user, question_id__in=accessible_ids)
+            .values("question_id")
+            .distinct()
+            .count()
+        )
+        payload = {
+            "ok": True,
+            "total_questions": total_questions,
+            "my_completed_questions": my_completed,
+            "my_completion_percent": round((my_completed / total_questions) * 100, 1),
+            "course": None,
+        }
+
+        course_id = str(request.data.get("course_id") or "").strip()
+        if not course_id:
+            return Response(payload)
+
+        try:
+            course = Course.objects.get(id=course_id)
+        except Course.DoesNotExist:
+            return Response({"error": "Course not found"}, status=404)
+
+        user = request.user
+        can_access = (
+            is_staff(user)
+            or CourseTeacher.objects.filter(course=course, teacher=user).exists()
+            or Enrollment.objects.filter(course=course, user=user).exists()
+        )
+        if not can_access:
+            return Response({"error": "Forbidden"}, status=403)
+
+        classmate_ids = list(
+            Enrollment.objects.filter(course=course)
+            .exclude(user=user)
+            .values_list("user_id", flat=True)
+        )
+        classmate_total = len(classmate_ids)
+        classmate_counts = {
+            str(row["user_id"]): row["completed"]
+            for row in (
+                QuestionAttempt.objects.filter(user_id__in=classmate_ids, question_id__in=accessible_ids)
+                .values("user_id")
+                .annotate(completed=models.Count("question_id", distinct=True))
+            )
+        }
+        classmates = []
+        for enrollment in (
+            Enrollment.objects.filter(course=course)
+            .exclude(user=user)
+            .select_related("user__profile")
+            .order_by("user__profile__nickname", "user__first_name", "user__last_name", "user__username")
+        ):
+            classmate_id = str(enrollment.user_id)
+            completed = classmate_counts.get(classmate_id, 0)
+            classmates.append(
+                {
+                    "user_id": classmate_id,
+                    "display_name": student_label(enrollment.user),
+                    "completed_questions": completed,
+                    "completion_percent": round((completed / total_questions) * 100, 1),
+                    "has_started": completed > 0,
+                }
+            )
+        classmate_completed_sum = sum(classmate_counts.values())
+        average_completed = round(classmate_completed_sum / classmate_total, 1) if classmate_total else 0
+        average_percent = (
+            round((classmate_completed_sum / (classmate_total * total_questions)) * 100, 1)
+            if classmate_total
+            else 0
+        )
+        payload["course"] = {
+            "id": str(course.id),
+            "title": course.title,
+            "classmates_total_count": classmate_total,
+            "classmates_started_count": len(classmate_counts),
+            "classmates_average_completed_questions": average_completed,
+            "classmates_average_percent": average_percent,
+            "classmates": classmates,
+        }
+        return Response(payload)
 
 
 class QuestionImportView(APIView):

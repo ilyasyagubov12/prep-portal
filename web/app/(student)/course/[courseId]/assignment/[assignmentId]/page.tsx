@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import type { Assignment, Submission, Grade, AssignmentFile } from "@/lib/types/assignment";
 
@@ -73,22 +73,9 @@ export default function AssignmentPage() {
   const [saveBusy, setSaveBusy] = useState(false);
   const [publishBusy, setPublishBusy] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
-  const fileObjectUrlCache = useRef<Record<string, string>>({});
-
   const canManage = isTeacherOrAdmin(profile);
 
-  useEffect(() => {
-    return () => {
-      Object.values(fileObjectUrlCache.current).forEach((url) => {
-        try {
-          URL.revokeObjectURL(url);
-        } catch {}
-      });
-      fileObjectUrlCache.current = {};
-    };
-  }, []);
-
-  async function getProtectedAssignmentFileUrl(
+  async function getProtectedAssignmentFileLink(
     params: { attachmentId?: string | null; submissionId?: string | null; download?: boolean },
   ) {
     if (!accessToken) throw new Error("Not logged in.");
@@ -96,34 +83,26 @@ export default function AssignmentPage() {
     if (params.attachmentId) query.set("attachment_id", params.attachmentId);
     if (params.submissionId) query.set("submission_id", params.submissionId);
     if (params.download) query.set("download", "1");
-    const cacheKey = query.toString();
-    if (fileObjectUrlCache.current[cacheKey]) return fileObjectUrlCache.current[cacheKey];
-
-    const res = await fetch(`${API_BASE}/api/assignments/file/?${query.toString()}`, {
+    const res = await fetch(`${API_BASE}/api/assignments/file-link/?${query.toString()}`, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
-    const blob = await res.blob();
+    const json = (await res.json().catch(() => ({}))) as { error?: string; url?: string };
     if (!res.ok) {
-      try {
-        const text = await blob.text();
-        const json = JSON.parse(text) as { error?: string };
-        throw new Error(json.error || "Failed to open file");
-      } catch (error) {
-        if (error instanceof Error) throw error;
-        throw new Error("Failed to open file");
-      }
+      throw new Error(json.error || "Failed to open file");
     }
-    const objectUrl = URL.createObjectURL(blob);
-    fileObjectUrlCache.current[cacheKey] = objectUrl;
-    return objectUrl;
+    if (!json.url) throw new Error("Failed to open file");
+    return json.url.startsWith("http://") || json.url.startsWith("https://")
+      ? json.url
+      : `${API_BASE}${json.url.startsWith("/") ? json.url : `/${json.url}`}`;
   }
 
   async function openProtectedAssignmentFile(params: {
     attachmentId?: string | null;
     submissionId?: string | null;
+    download?: boolean;
   }) {
-    const objectUrl = await getProtectedAssignmentFileUrl(params);
-    window.open(objectUrl, "_blank", "noopener,noreferrer");
+    const fileUrl = await getProtectedAssignmentFileLink(params);
+    window.open(fileUrl, "_blank", "noopener,noreferrer");
   }
 
   // auth + profile

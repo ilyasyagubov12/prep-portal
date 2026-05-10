@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useParams, useRouter } from "next/navigation";
 
 type Course = {
@@ -322,10 +322,6 @@ function expandEventsForWeek(weekStart: Date, raw: CourseEvent[]) {
   return out;
 }
 
-function safeFileName(name: string) {
-  return name.replaceAll(" ", "_").replaceAll("/", "_");
-}
-
 function gradeBadge(score: number | null | undefined, max: number | null | undefined) {
   if (score === null || typeof score === "undefined") return null;
   const nScore = typeof score === "string" ? Number(score) : score;
@@ -479,8 +475,6 @@ export default function CourseDetailPage() {
   const [coverUploadSpeed, setCoverUploadSpeed] = useState<string | null>(null);
   const [coverUploadEta, setCoverUploadEta] = useState<string | null>(null);
   const [coverUploadComplete, setCoverUploadComplete] = useState(false);
-  const fileObjectUrlCache = useRef<Record<string, string>>({});
-
   // Calendar
   const [events, setEvents] = useState<CourseEvent[]>([]);
   const [assignmentEvents, setAssignmentEvents] = useState<AssignmentDueEvent[]>([]);
@@ -496,17 +490,6 @@ export default function CourseDetailPage() {
   const [creatingEvent, setCreatingEvent] = useState(false);
 
   const canManage = isTeacherOrAdmin(profile);
-
-  useEffect(() => {
-    return () => {
-      Object.values(fileObjectUrlCache.current).forEach((url) => {
-        try {
-          URL.revokeObjectURL(url);
-        } catch {}
-      });
-      fileObjectUrlCache.current = {};
-    };
-  }, []);
 
   const sortedNodes = useMemo(() => {
     const copy = [...nodes];
@@ -966,31 +949,11 @@ export default function CourseDetailPage() {
     }
   }
 
-  async function getProtectedNodeUrl(node: CourseNode, download = false) {
-    if (!accessToken) throw new Error("Not logged in.");
-    const cacheKey = `${node.id}:${download ? "download" : "inline"}`;
-    if (fileObjectUrlCache.current[cacheKey]) return fileObjectUrlCache.current[cacheKey];
-
-    const base = process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") || "";
-    const res = await fetch(
-      `${base}/api/course-nodes/file/?node_id=${encodeURIComponent(node.id)}${download ? "&download=1" : ""}`,
-      { headers: { Authorization: `Bearer ${accessToken}` } }
-    );
-    if (!res.ok) {
-      const json = await res.json().catch(() => null);
-      throw new Error(json?.error || "Failed to open file");
-    }
-    const blob = await res.blob();
-    const objectUrl = URL.createObjectURL(blob);
-    fileObjectUrlCache.current[cacheKey] = objectUrl;
-    return objectUrl;
-  }
-
-  async function getProtectedNodeStreamUrl(node: CourseNode) {
+  async function getProtectedNodeLink(node: CourseNode, download = false) {
     if (!accessToken) throw new Error("Not logged in.");
     const base = process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") || "";
     const res = await fetch(
-      `${base}/api/course-nodes/file-link/?node_id=${encodeURIComponent(node.id)}`,
+      `${base}/api/course-nodes/file-link/?node_id=${encodeURIComponent(node.id)}${download ? "&download=1" : ""}`,
       { headers: { Authorization: `Bearer ${accessToken}` } }
     );
     const json = await res.json().catch(() => ({}));
@@ -1008,7 +971,7 @@ export default function CourseDetailPage() {
     if (!node.storage_path) return;
     try {
       const t = guessPreviewType(node.storage_path || node.name || "", node.mime_type);
-      const url = t === "video" ? await getProtectedNodeStreamUrl(node) : await getProtectedNodeUrl(node, false);
+      const url = await getProtectedNodeLink(node, false);
       setPreviewType(t);
       setPreviewUrl(url);
       setPreviewTitle(node.name);
@@ -1024,10 +987,10 @@ export default function CourseDetailPage() {
   async function onDownload(node: CourseNode) {
     if (!node.storage_path) return;
     try {
-      const url = await getProtectedNodeUrl(node, true);
+      const url = await getProtectedNodeLink(node, true);
       const a = document.createElement("a");
       a.href = url;
-      a.download = safeFileName(node.name || "file");
+      a.rel = "noopener noreferrer";
       document.body.appendChild(a);
       a.click();
       a.remove();

@@ -14,7 +14,6 @@ import os
 import cloudinary.uploader
 import re
 from urllib.parse import urlparse, unquote
-from cloudinary.utils import cloudinary_url
 from django.conf import settings
 from accounts.models import Profile
 from .models import Course, CourseTeacher, Enrollment, CourseNode
@@ -22,7 +21,7 @@ from .serializers import CourseSerializer, CourseNodeSerializer
 
 User = get_user_model()
 PROTECTED_MEDIA_TOKEN_SALT = "protected-media"
-PROTECTED_MEDIA_MAX_AGE_SECONDS = 300
+PROTECTED_MEDIA_MAX_AGE_SECONDS = 900
 
 
 def _require_admin(user: User) -> bool:
@@ -467,6 +466,7 @@ class CourseNodeFileLinkView(APIView):
 
     def get(self, request):
         node_id = request.query_params.get("node_id")
+        as_attachment = request.query_params.get("download") in {"1", "true", "yes"}
         if not node_id:
             return Response({"error": "node_id required"}, status=400)
 
@@ -493,7 +493,10 @@ class CourseNodeFileLinkView(APIView):
         return Response(
             {
                 "ok": True,
-                "url": f"/api/course-nodes/file/?node_id={node.id}&token={token}",
+                "url": (
+                    f"/api/course-nodes/file/?node_id={node.id}&token={token}"
+                    f"{'&download=1' if as_attachment else ''}"
+                ),
                 "expires_in": PROTECTED_MEDIA_MAX_AGE_SECONDS,
             }
         )
@@ -908,27 +911,18 @@ class CourseNodeUploadView(APIView):
         )
 
         if os.getenv("CLOUDINARY_URL") and (is_pdf or not is_image):
-            # Store non-images as raw/public in Cloudinary for easy access
+            # Store non-images as authenticated Cloudinary assets so direct URLs are not public.
             public_id = f"media/{rel_path.rsplit('.', 1)[0]}"
             result = cloudinary.uploader.upload(
                 file_obj,
                 public_id=public_id,
                 resource_type="raw",
-                type="upload",
-                access_mode="public",
+                type="authenticated",
                 overwrite=True,
             )
             saved_path = result.get("public_id") or public_id
-            file_url, _ = cloudinary_url(
-                saved_path,
-                resource_type="raw",
-                type="upload",
-                secure=True,
-                format="pdf" if is_pdf else None,
-            )
         else:
             saved_path = default_storage.save(rel_path, file_obj)
-            file_url = default_storage.url(saved_path)
 
         node = CourseNode.objects.create(
             course=course,
@@ -947,7 +941,7 @@ class CourseNodeUploadView(APIView):
             {
                 "ok": True,
                 "node": CourseNodeSerializer(node).data,
-                "file_url": file_url,
+                "file_url": f"/api/course-nodes/file/?node_id={node.id}",
             }
         )
 

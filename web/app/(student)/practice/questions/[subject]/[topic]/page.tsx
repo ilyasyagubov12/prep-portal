@@ -18,6 +18,35 @@ type Question = {
   correct_answer?: string | null;
 };
 
+type CourseOption = {
+  id: string;
+  slug: string;
+  title: string;
+};
+
+type ClassmateProgress = {
+  user_id: string;
+  display_name: string;
+  completed_questions: number;
+  completion_percent: number;
+  has_started: boolean;
+};
+
+type QuestionSetProgressSummary = {
+  total_questions: number;
+  my_completed_questions: number;
+  my_completion_percent: number;
+  course: null | {
+    id: string;
+    title: string;
+    classmates_total_count: number;
+    classmates_started_count: number;
+    classmates_average_completed_questions: number;
+    classmates_average_percent: number;
+    classmates: ClassmateProgress[];
+  };
+};
+
 const uiFont = Space_Grotesk({ subsets: ["latin"], weight: ["400", "500", "600", "700"] });
 const passageFont = Source_Serif_4({ subsets: ["latin"], weight: ["400", "600"], style: ["normal"] });
 
@@ -81,6 +110,7 @@ export default function TopicQuestionsPage() {
   const search = useSearchParams();
   const pathname = usePathname();
   const subtopic = search.get("subtopic") || "";
+  const preferredCourseId = search.get("course_id") || "";
   const returnTo = `${pathname}${search.toString() ? `?${search.toString()}` : ""}`;
 
   const subject = (params.subject || "").toLowerCase();
@@ -89,6 +119,7 @@ export default function TopicQuestionsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
+  const [accessToken, setAccessToken] = useState<string | null>(null);
   const [isStaff, setIsStaff] = useState(false);
   const [current, setCurrent] = useState(0);
   const [selected, setSelected] = useState<Record<string, string>>({});
@@ -103,6 +134,11 @@ export default function TopicQuestionsPage() {
   const [isPaused, setIsPaused] = useState(false);
   const [timerHidden, setTimerHidden] = useState(false);
   const [showNavigator, setShowNavigator] = useState(false);
+  const [classCourses, setClassCourses] = useState<CourseOption[]>([]);
+  const [selectedCourseId, setSelectedCourseId] = useState("");
+  const [setProgress, setSetProgress] = useState<QuestionSetProgressSummary | null>(null);
+  const [setProgressLoading, setSetProgressLoading] = useState(false);
+  const [setProgressError, setSetProgressError] = useState<string | null>(null);
   const passageRef = useRef<HTMLDivElement | null>(null);
   const stemRef = useRef<HTMLDivElement | null>(null);
   const choicesRef = useRef<HTMLDivElement | null>(null);
@@ -110,6 +146,7 @@ export default function TopicQuestionsPage() {
   useEffect(() => {
     (async () => {
       const access = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
+      setAccessToken(access);
       if (access) {
         const me = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/auth/me/`, {
           headers: { Authorization: `Bearer ${access}` },
@@ -168,6 +205,87 @@ export default function TopicQuestionsPage() {
   }, [subject, topic, subtopic]);
 
   useEffect(() => {
+    if (!accessToken) return;
+    let cancelled = false;
+    (async () => {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/courses/`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }).catch(() => null);
+      if (!res || !res.ok || cancelled) return;
+      const json = await res.json().catch(() => []);
+      if (!cancelled && Array.isArray(json)) {
+        const courses = json as Array<{ id?: string; slug?: string; title?: string }>;
+        setClassCourses(
+          courses
+            .map((course) => ({
+              id: String(course.id ?? ""),
+              slug: String(course.slug ?? ""),
+              title: String(course.title ?? "Untitled class"),
+            }))
+            .filter((course: CourseOption) => course.id)
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken]);
+
+  useEffect(() => {
+    if (classCourses.length === 0) {
+      if (selectedCourseId) setSelectedCourseId("");
+      return;
+    }
+    if (selectedCourseId && classCourses.some((course) => course.id === selectedCourseId)) return;
+    const nextCourseId =
+      classCourses.find((course) => course.id === preferredCourseId)?.id ?? classCourses[0].id;
+    setSelectedCourseId(nextCourseId);
+  }, [classCourses, preferredCourseId, selectedCourseId]);
+
+  useEffect(() => {
+    if (!accessToken || questions.length === 0) {
+      if (questions.length === 0) {
+        setSetProgress(null);
+        setSetProgressError(null);
+      }
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      setSetProgressLoading(true);
+      setSetProgressError(null);
+      try {
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/api/questions/set-progress/`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            question_ids: questions.map((question) => question.id),
+            course_id: selectedCourseId || null,
+          }),
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(json?.error || "Failed to load question set progress");
+        if (!cancelled) setSetProgress(json as QuestionSetProgressSummary);
+      } catch (e: unknown) {
+        if (!cancelled) {
+          setSetProgress(null);
+          setSetProgressError(
+            e instanceof Error ? e.message : "Failed to load question set progress"
+          );
+        }
+      } finally {
+        if (!cancelled) setSetProgressLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, questions, selectedCourseId]);
+
+  useEffect(() => {
     const q = questions[current];
     if (q && stemRef.current) typesetMath(stemRef.current);
   }, [questions, current]);
@@ -210,6 +328,19 @@ export default function TopicQuestionsPage() {
   const resolveChoiceImage = (url?: string | null) => resolveImageUrl(url);
   const passage = currentQ?.passage;
   const total = questions.length;
+  const answeredQuestionCount = useMemo(
+    () =>
+      questions.reduce((count, question) => {
+        const status = statusMap[question.id];
+        return status === "correct" || status === "incorrect" ? count + 1 : count;
+      }, 0),
+    [questions, statusMap]
+  );
+  const liveCompletedQuestions = Math.max(setProgress?.my_completed_questions ?? 0, answeredQuestionCount);
+  const liveTotalQuestions = setProgress?.total_questions ?? total;
+  const liveCompletionPercent =
+    liveTotalQuestions > 0 ? Math.round((liveCompletedQuestions / liveTotalQuestions) * 100) : 0;
+  const classmates = setProgress?.course?.classmates ?? [];
 
   function selectChoice(qid: string, label: string) {
     setSelected((p) => ({ ...p, [qid]: label }));
@@ -825,7 +956,7 @@ export default function TopicQuestionsPage() {
             className="absolute inset-0 bg-black/20"
             onClick={() => setShowNavigator(false)}
           />
-          <div className="relative w-[420px] max-w-[90vw] rounded-2xl bg-white shadow-xl border border-slate-200">
+          <div className="relative w-[760px] max-w-[95vw] rounded-2xl bg-white shadow-xl border border-slate-200">
             <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
               <div className="text-sm font-semibold text-slate-900">Question Set</div>
               <button
@@ -847,6 +978,130 @@ export default function TopicQuestionsPage() {
               <div className="flex items-center gap-2">
                 <span className="h-3 w-3 rounded bg-red-100 border border-red-200" />
                 Hard
+              </div>
+            </div>
+            <div className="px-5 pb-4">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                      Progress Snapshot
+                    </div>
+                    <div className="mt-1 text-sm text-slate-600">
+                      {liveTotalQuestions} questions in this set
+                    </div>
+                  </div>
+                  {classCourses.length > 0 ? (
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                        Class
+                      </span>
+                      <select
+                        className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none"
+                        value={selectedCourseId}
+                        onChange={(e) => setSelectedCourseId(e.target.value)}
+                      >
+                        {classCourses.map((course) => (
+                          <option key={course.id} value={course.id}>
+                            {course.title}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : null}
+                </div>
+                <div className="mt-3 grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
+                  <div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="rounded-xl border border-emerald-200 bg-white px-3 py-3">
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-700">
+                          Your Completion
+                        </div>
+                        <div className="mt-1 text-2xl font-bold text-slate-900">
+                          {setProgressLoading && !setProgress && answeredQuestionCount === 0
+                            ? "..."
+                            : `${liveCompletionPercent}%`}
+                        </div>
+                        <div className="mt-1 text-xs text-slate-500">
+                          {liveTotalQuestions > 0
+                            ? `${liveCompletedQuestions}/${liveTotalQuestions} answered`
+                            : "Answer questions to build your progress"}
+                        </div>
+                      </div>
+                      <div className="rounded-xl border border-indigo-200 bg-white px-3 py-3">
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-indigo-700">
+                          Classmates
+                        </div>
+                        <div className="mt-1 text-2xl font-bold text-slate-900">
+                          {setProgressLoading && !setProgress
+                            ? "..."
+                            : setProgress?.course
+                              ? `${Math.round(setProgress.course.classmates_average_percent)}%`
+                              : "—"}
+                        </div>
+                        <div className="mt-1 text-xs text-slate-500">
+                          {setProgress?.course
+                            ? `${setProgress.course.classmates_started_count}/${setProgress.course.classmates_total_count} classmates started`
+                            : classCourses.length > 0
+                              ? "Select a class to compare with classmates"
+                              : "No class comparison available"}
+                        </div>
+                      </div>
+                    </div>
+                    {setProgress?.course ? (
+                      <div className="mt-3 text-xs text-slate-500">
+                        {setProgress.course.title}: average{" "}
+                        {setProgress.course.classmates_average_completed_questions}/{liveTotalQuestions} questions answered
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-white px-3 py-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                        Classmate Progress
+                      </div>
+                      {setProgress?.course ? (
+                        <div className="text-[11px] text-slate-400">{setProgress.course.classmates_total_count} students</div>
+                      ) : null}
+                    </div>
+                    {setProgressLoading && !setProgress ? (
+                      <div className="mt-3 text-sm text-slate-500">Loading class progress...</div>
+                    ) : classmates.length > 0 ? (
+                      <div className="mt-3 max-h-[220px] space-y-3 overflow-y-auto pr-1">
+                        {classmates.map((classmate) => (
+                          <div key={classmate.user_id} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="truncate text-sm font-semibold text-slate-800">
+                                {classmate.display_name}
+                              </div>
+                              <div className="text-sm font-semibold text-slate-900">
+                                {Math.round(classmate.completion_percent)}%
+                              </div>
+                            </div>
+                            <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200">
+                              <div
+                                className="h-full rounded-full bg-indigo-500 transition-[width] duration-200"
+                                style={{ width: `${classmate.completion_percent}%` }}
+                              />
+                            </div>
+                            <div className="mt-2 text-[11px] text-slate-500">
+                              {classmate.completed_questions}/{liveTotalQuestions} answered
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="mt-3 text-sm text-slate-500">
+                        {setProgress?.course
+                          ? "No classmates found in this class yet."
+                          : "Choose a class to see each classmate's progress."}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                {setProgressError ? (
+                  <div className="mt-3 text-xs text-red-600">{setProgressError}</div>
+                ) : null}
               </div>
             </div>
             <div className="px-5 pb-5">

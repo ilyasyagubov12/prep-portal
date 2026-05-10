@@ -7,6 +7,7 @@ from .views import (
     QuestionImportView,
     QuestionBookExportView,
     QuestionProgressView,
+    QuestionSetProgressView,
     QuestionQuizView,
     QuestionQuizSubmitView,
 )
@@ -19,6 +20,7 @@ urlpatterns = [
     path("questions/upload/", QuestionImageUploadView.as_view(), name="question_image_upload"),
     path("questions/import/", QuestionImportView.as_view(), name="question_import"),
     path("questions/progress/", QuestionProgressView.as_view(), name="question_progress"),
+    path("questions/set-progress/", QuestionSetProgressView.as_view(), name="question_set_progress"),
     path("questions/quiz/", QuestionQuizView.as_view(), name="question_quiz"),
     path("questions/quiz/submit/", QuestionQuizSubmitView.as_view(), name="question_quiz_submit"),
 ]

@@ -1,6 +1,8 @@
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
+from courses.models import Course, Enrollment
+from streaks.models import QuestionAttempt
 from .models import Question, SubtopicProgress
 
 
@@ -160,3 +162,149 @@ class LegacyQuestionBankNormalizationTests(APITestCase):
         )
         self.assertEqual(load_next.status_code, 200)
         self.assertEqual(load_next.json()["questions"][0]["id"], str(next_question.id))
+
+
+class QuestionSetProgressTests(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            email="student@example.com",
+            username="student",
+            password="password123",
+        )
+        self.classmate_a = User.objects.create_user(
+            email="classmate-a@example.com",
+            username="classmatea",
+            password="password123",
+        )
+        self.classmate_a.profile.nickname = "Aylin"
+        self.classmate_a.profile.save(update_fields=["nickname"])
+        self.classmate_b = User.objects.create_user(
+            email="classmate-b@example.com",
+            username="classmateb",
+            password="password123",
+        )
+        self.classmate_b.profile.nickname = "Murad"
+        self.classmate_b.profile.save(update_fields=["nickname"])
+        self.other_student = User.objects.create_user(
+            email="outsider@example.com",
+            username="outsider",
+            password="password123",
+        )
+        self.course = Course.objects.create(slug="sat-math-a", title="SAT Math A")
+        Enrollment.objects.create(course=self.course, user=self.user)
+        Enrollment.objects.create(course=self.course, user=self.classmate_a)
+        Enrollment.objects.create(course=self.course, user=self.classmate_b)
+
+        self.questions = [
+            Question.objects.create(
+                subject="math",
+                topic="Algebra",
+                subtopic="Linear Equations",
+                stem=f"Question {idx}",
+                choices=[
+                    {"label": "A", "content": "1", "is_correct": False},
+                    {"label": "B", "content": "2", "is_correct": True},
+                ],
+                published=True,
+                created_by=self.user,
+            )
+            for idx in range(1, 5)
+        ]
+
+        QuestionAttempt.objects.create(
+            user=self.user,
+            question=self.questions[0],
+            subject="math",
+            attempted_date="2026-05-10",
+            is_correct=True,
+        )
+        QuestionAttempt.objects.create(
+            user=self.user,
+            question=self.questions[1],
+            subject="math",
+            attempted_date="2026-05-10",
+            is_correct=False,
+        )
+        QuestionAttempt.objects.create(
+            user=self.classmate_a,
+            question=self.questions[0],
+            subject="math",
+            attempted_date="2026-05-10",
+            is_correct=True,
+        )
+        QuestionAttempt.objects.create(
+            user=self.classmate_a,
+            question=self.questions[1],
+            subject="math",
+            attempted_date="2026-05-10",
+            is_correct=True,
+        )
+        QuestionAttempt.objects.create(
+            user=self.classmate_a,
+            question=self.questions[2],
+            subject="math",
+            attempted_date="2026-05-10",
+            is_correct=True,
+        )
+        QuestionAttempt.objects.create(
+            user=self.other_student,
+            question=self.questions[3],
+            subject="math",
+            attempted_date="2026-05-10",
+            is_correct=True,
+        )
+        self.client.force_authenticate(self.user)
+
+    def test_set_progress_returns_my_completion_and_classmate_breakdown(self):
+        response = self.client.post(
+            "/api/questions/set-progress/",
+            {
+                "question_ids": [str(question.id) for question in self.questions],
+                "course_id": str(self.course.id),
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["total_questions"], 4)
+        self.assertEqual(data["my_completed_questions"], 2)
+        self.assertEqual(data["my_completion_percent"], 50.0)
+        self.assertEqual(data["course"]["classmates_total_count"], 2)
+        self.assertEqual(data["course"]["classmates_started_count"], 1)
+        self.assertEqual(data["course"]["classmates_average_completed_questions"], 1.5)
+        self.assertEqual(data["course"]["classmates_average_percent"], 37.5)
+        self.assertEqual(
+            data["course"]["classmates"],
+            [
+                {
+                    "user_id": str(self.classmate_a.id),
+                    "display_name": "Aylin",
+                    "completed_questions": 3,
+                    "completion_percent": 75.0,
+                    "has_started": True,
+                },
+                {
+                    "user_id": str(self.classmate_b.id),
+                    "display_name": "Murad",
+                    "completed_questions": 0,
+                    "completion_percent": 0.0,
+                    "has_started": False,
+                },
+            ],
+        )
+
+    def test_set_progress_rejects_courses_user_is_not_enrolled_in(self):
+        other_course = Course.objects.create(slug="sat-verbal-a", title="SAT Verbal A")
+        Enrollment.objects.create(course=other_course, user=self.other_student)
+
+        response = self.client.post(
+            "/api/questions/set-progress/",
+            {
+                "question_ids": [str(question.id) for question in self.questions],
+                "course_id": str(other_course.id),
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 403)

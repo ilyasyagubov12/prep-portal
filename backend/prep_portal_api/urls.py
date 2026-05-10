@@ -18,9 +18,15 @@ from django.conf import settings
 import os
 from django.conf.urls.static import static
 from django.contrib import admin
+from django.http import Http404
+from django.urls import re_path
 from django.urls import path, include
 from accounts.views import AdminCreateUserView, AdminSearchUsersView, AdminUpdateUserView, AdminDeleteUserView
 from grades_stub import grades_me, grades_offline
+
+
+def block_protected_media(_request, path):  # pragma: no cover - trivial routing guard
+    raise Http404()
 
 urlpatterns = [
     path("admin/", admin.site.urls),
@@ -43,6 +49,11 @@ urlpatterns = [
     path("api/admin/users/search/", AdminSearchUsersView.as_view(), name="alias_admin_users_search"),
     path("api/admin/users/<uuid:user_id>/", AdminUpdateUserView.as_view(), name="alias_admin_users_update"),
     path("api/admin/users/<uuid:user_id>/delete/", AdminDeleteUserView.as_view(), name="alias_admin_users_delete"),
+    re_path(
+        r"^media/(?P<path>(course_files|assignment_attachments|assignment_submissions)/.*)$",
+        block_protected_media,
+        name="block_protected_media",
+    ),
 ]
 
 # Always serve local MEDIA files when a media root is configured.

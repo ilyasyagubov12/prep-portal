@@ -26,7 +26,13 @@ from .serializers import (
     OfflineUnitSerializer,
     OfflineGradeSerializer,
 )
-from courses.views import _require_admin, _delete_cloudinary_asset
+from courses.views import (
+    _require_admin,
+    _delete_cloudinary_asset,
+    _make_protected_media_token,
+    _read_protected_media_token,
+    PROTECTED_MEDIA_MAX_AGE_SECONDS,
+)
 
 User = get_user_model()
 
@@ -231,7 +237,7 @@ class AssignmentSubmissionsListView(APIView):
             row = SubmissionSerializer(s).data
             g = grades.get(s.id)
             row["grade"] = GradeSerializer(g).data if g else None
-            row["file_url"] = _cloud_url(s.file_path, s.mime_type)
+            row["file_url"] = f"/api/assignments/file/?submission_id={s.id}"
             row["student_obj"] = {
                 "user_id": str(s.student.id),
                 "username": getattr(s.student, "username", None),
@@ -264,12 +270,12 @@ class AssignmentAttachmentListView(APIView):
         rows = []
         for f in files:
             row = AssignmentFileSerializer(f).data
-            row["url"] = _cloud_url(f.storage_path, f.mime_type)
+            row["url"] = f"/api/assignments/file/?attachment_id={f.id}"
             rows.append(row)
         return Response({"ok": True, "files": rows})
 
 
-class AssignmentFileAccessView(APIView):
+class AssignmentFileLinkView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -288,6 +294,70 @@ class AssignmentFileAccessView(APIView):
                 return Response({"error": "File not found"}, status=404)
             if not _can_view_assignment(user, file_row.assignment):
                 return Response({"error": "Forbidden"}, status=403)
+            payload = {
+                "kind": "assignment-attachment",
+                "attachment_id": str(file_row.id),
+                "user_id": str(user.id),
+            }
+            token = _make_protected_media_token(payload)
+            url = f"/api/assignments/file/?attachment_id={file_row.id}&token={token}"
+        else:
+            try:
+                submission = Submission.objects.select_related("assignment__course", "student").get(id=submission_id)
+            except Submission.DoesNotExist:
+                return Response({"error": "File not found"}, status=404)
+            if not (_require_staff(user, submission.assignment.course) or submission.student_id == user.id):
+                return Response({"error": "Forbidden"}, status=403)
+            payload = {
+                "kind": "assignment-submission",
+                "submission_id": str(submission.id),
+                "user_id": str(user.id),
+            }
+            token = _make_protected_media_token(payload)
+            url = f"/api/assignments/file/?submission_id={submission.id}&token={token}"
+
+        if as_attachment:
+            url = f"{url}&download=1"
+
+        return Response({"ok": True, "url": url, "expires_in": PROTECTED_MEDIA_MAX_AGE_SECONDS})
+
+
+class AssignmentFileAccessView(APIView):
+    permission_classes = []
+
+    def get(self, request):
+        attachment_id = request.query_params.get("attachment_id")
+        submission_id = request.query_params.get("submission_id")
+        as_attachment = request.query_params.get("download") in {"1", "true", "yes"}
+        auth_user = request.user if getattr(request.user, "is_authenticated", False) else None
+        token = request.query_params.get("token")
+        token_user = None
+        token_payload: dict | None = None
+
+        if bool(attachment_id) == bool(submission_id):
+            return Response({"error": "attachment_id or submission_id required"}, status=400)
+
+        if token:
+            try:
+                token_payload = _read_protected_media_token(token)
+            except Exception:
+                return Response({"error": "Forbidden"}, status=403)
+            token_user = User.objects.filter(id=token_payload.get("user_id")).first()
+
+        user = auth_user or token_user
+        if not user:
+            return Response({"error": "Authentication required"}, status=401)
+
+        if attachment_id:
+            try:
+                file_row = AssignmentFile.objects.select_related("assignment__course").get(id=attachment_id)
+            except AssignmentFile.DoesNotExist:
+                return Response({"error": "File not found"}, status=404)
+            if token_payload:
+                if token_payload.get("kind") != "assignment-attachment" or token_payload.get("attachment_id") != str(file_row.id):
+                    return Response({"error": "Forbidden"}, status=403)
+            if not _can_view_assignment(user, file_row.assignment):
+                return Response({"error": "Forbidden"}, status=403)
             storage_path = file_row.storage_path
             filename = file_row.name or os.path.basename(str(storage_path)) or "file"
             content_type = file_row.mime_type or "application/octet-stream"
@@ -297,6 +367,9 @@ class AssignmentFileAccessView(APIView):
                 submission = Submission.objects.select_related("assignment__course", "student").get(id=submission_id)
             except Submission.DoesNotExist:
                 return Response({"error": "File not found"}, status=404)
+            if token_payload:
+                if token_payload.get("kind") != "assignment-submission" or token_payload.get("submission_id") != str(submission.id):
+                    return Response({"error": "Forbidden"}, status=403)
             if not (_require_staff(user, submission.assignment.course) or submission.student_id == user.id):
                 return Response({"error": "Forbidden"}, status=403)
             storage_path = submission.file_path
@@ -362,8 +435,7 @@ class AssignmentAttachmentUploadView(APIView):
                 file_obj,
                 public_id=public_id,
                 resource_type="raw",
-                type="upload",
-                access_mode="public",
+                type="authenticated",
                 overwrite=True,
             )
             saved = result.get("public_id") or public_id
@@ -377,9 +449,8 @@ class AssignmentAttachmentUploadView(APIView):
             size_bytes=getattr(file_obj, "size", None),
             created_by=request.user,
         )
-        file_url = _cloud_url(saved, getattr(file_obj, "content_type", None))
         data = AssignmentFileSerializer(af).data
-        data["url"] = file_url
+        data["url"] = f"/api/assignments/file/?attachment_id={af.id}"
         return Response({"ok": True, "file": data})
 
 
@@ -455,8 +526,7 @@ class SubmissionCreateView(APIView):
                 file_obj,
                 public_id=public_id,
                 resource_type="raw",
-                type="upload",
-                access_mode="public",
+                type="authenticated",
                 overwrite=True,
             )
             saved = result.get("public_id") or public_id
@@ -470,9 +540,8 @@ class SubmissionCreateView(APIView):
             file_size=getattr(file_obj, "size", None),
             mime_type=getattr(file_obj, "content_type", None),
         )
-        file_url = _cloud_url(saved, getattr(file_obj, "content_type", None))
         data = SubmissionSerializer(sub).data
-        data["file_url"] = file_url
+        data["file_url"] = f"/api/assignments/file/?submission_id={sub.id}"
         return Response({"ok": True, "submission": data}, status=201)
 
 
