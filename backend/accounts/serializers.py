@@ -1,6 +1,7 @@
-from rest_framework import serializers
+from django.contrib.auth import authenticate, get_user_model
+from rest_framework import exceptions, serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from django.contrib.auth import get_user_model
+from rest_framework_simplejwt.settings import api_settings
 from .models import User, Profile
 
 
@@ -28,14 +29,52 @@ class EmailOrUsernameTokenObtainPairSerializer(TokenObtainPairSerializer):
     def get_token(cls, user):
         return super().get_token(user)
 
-    def validate(self, attrs):
-        data = dict(attrs)
-        if not data.get("username") and data.get("email"):
-            User = get_user_model()
-            user = User.objects.filter(email=data["email"]).first()
+    def _resolve_user(self, raw_identifier):
+        identifier = (raw_identifier or "").strip().lower()
+        if not identifier:
+            return None
+
+        UserModel = get_user_model()
+        candidates = []
+
+        if "@" in identifier:
+            candidates.append({"email": identifier})
+        else:
+            candidates.append({"username": identifier})
+            candidates.append({"email": f"{identifier}@prep.local"})
+
+        for lookup in candidates:
+            user = UserModel.objects.filter(**lookup).first()
             if user:
-                data["username"] = user.username
-        return super().validate(data)
+                return user
+
+        return None
+
+    def validate(self, attrs):
+        password = attrs.get("password")
+        raw_identifier = attrs.get("username") or attrs.get("email")
+        user = self._resolve_user(raw_identifier)
+
+        if user:
+            self.user = authenticate(
+                request=self.context.get("request"),
+                email=user.email,
+                password=password,
+            )
+        else:
+            self.user = None
+
+        if not api_settings.USER_AUTHENTICATION_RULE(self.user):
+            raise exceptions.AuthenticationFailed(
+                self.error_messages["no_active_account"],
+                "no_active_account",
+            )
+
+        refresh = self.get_token(self.user)
+        return {
+            "refresh": str(refresh),
+            "access": str(refresh.access_token),
+        }
 
 
 class ProfileSerializer(serializers.ModelSerializer):
