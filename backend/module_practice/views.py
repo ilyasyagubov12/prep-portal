@@ -62,6 +62,20 @@ def _practice_results_visible_to_user(practice: ModulePractice, user: User) -> b
     return False
 
 
+def _next_practice_sort_order():
+    return (ModulePractice.objects.aggregate(max_order=models.Max("sort_order")).get("max_order") or -1) + 1
+
+
+def _resequence_practices(practices: list[ModulePractice]):
+    changed = []
+    for index, practice in enumerate(practices):
+        if practice.sort_order != index:
+            practice.sort_order = index
+            changed.append(practice)
+    if changed:
+        ModulePractice.objects.bulk_update(changed, ["sort_order"])
+
+
 def _serialize_question_for_student(q: ModulePracticeQuestion, choice_order: list | None = None):
     choices = []
     raw_choices = q.choices or []
@@ -294,7 +308,7 @@ class ModulePracticeListView(APIView):
         user = request.user
         staff = _is_staff(user)
         now = timezone.now()
-        practices = ModulePractice.objects.order_by("-created_at")
+        practices = ModulePractice.objects.order_by("sort_order", "-created_at")
 
         data = []
         for p in practices:
@@ -347,6 +361,7 @@ class ModulePracticeListView(APIView):
                     "id": str(p.id),
                     "title": p.title,
                     "description": p.description,
+                    "sort_order": p.sort_order,
                     "is_active": p.is_active,
                     "results_published": p.results_published,
                     "result_visibility_mode": p.result_visibility_mode,
@@ -401,6 +416,7 @@ class ModulePracticeCreateView(APIView):
             title=title,
             description=description,
             created_by=request.user,
+            sort_order=_next_practice_sort_order(),
         )
 
         defaults = [
@@ -443,7 +459,10 @@ class ModulePracticeUpdateView(APIView):
         title = request.data.get("title")
         description = request.data.get("description")
         if title is not None:
-            practice.title = str(title).strip()
+            next_title = str(title).strip()
+            if not next_title:
+                return Response({"error": "title required"}, status=400)
+            practice.title = next_title
         if description is not None:
             practice.description = description
         if "results_published" in request.data:
@@ -494,6 +513,42 @@ class ModulePracticeDeleteView(APIView):
 
         practice.delete()
         return Response({"ok": True})
+
+
+class ModulePracticeReorderView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request):
+        if not _is_staff(request.user):
+            return Response({"error": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+
+        pid = request.data.get("practice_id")
+        direction = str(request.data.get("direction") or "").strip().lower()
+        if not pid:
+            return Response({"error": "practice_id required"}, status=400)
+        if direction not in {"up", "down"}:
+            return Response({"error": "direction must be up or down"}, status=400)
+
+        try:
+            practice = ModulePractice.objects.get(id=pid)
+        except ModulePractice.DoesNotExist:
+            return Response({"error": "Not found"}, status=404)
+
+        practices = list(ModulePractice.objects.order_by("sort_order", "-created_at"))
+        current_index = next((idx for idx, item in enumerate(practices) if item.id == practice.id), None)
+        if current_index is None:
+            return Response({"error": "Not found"}, status=404)
+
+        target_index = current_index - 1 if direction == "up" else current_index + 1
+        if target_index < 0 or target_index >= len(practices):
+            _resequence_practices(practices)
+            return Response({"ok": True, "moved": False})
+
+        moving = practices.pop(current_index)
+        practices.insert(target_index, moving)
+        _resequence_practices(practices)
+        return Response({"ok": True, "moved": True})
 
 
 class ModulePracticeModuleSetView(APIView):

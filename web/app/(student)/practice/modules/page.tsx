@@ -75,6 +75,7 @@ type Practice = {
   id: string;
   title: string;
   description: string | null;
+  sort_order?: number;
   is_active: boolean;
   results_published: boolean;
   result_visibility_mode?: "hidden" | "all" | "selected" | null;
@@ -148,6 +149,7 @@ export default function Page() {
   const [creating, setCreating] = useState(false);
 
   const [manageId, setManageId] = useState<string | null>(null);
+  const [movingPracticeId, setMovingPracticeId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -303,6 +305,30 @@ export default function Page() {
     }
   }
 
+  async function reorderPractice(practiceId: string, direction: "up" | "down") {
+    if (!accessToken) return;
+    setMovingPracticeId(practiceId);
+    setError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/module-practice/reorder/`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ practice_id: practiceId, direction }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Failed to reorder practice");
+      await loadPractices(accessToken, { silent: true });
+      setManageId(practiceId);
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to reorder practice");
+    } finally {
+      setMovingPracticeId(null);
+    }
+  }
+
   function startPractice(practiceId: string, locked: boolean) {
     if (locked) return;
     router.push(`/practice/modules/${practiceId}?exam=sat`);
@@ -368,8 +394,10 @@ export default function Page() {
             startPractice={startPractice}
             togglePractice={togglePractice}
             deletePractice={deletePractice}
+            reorderPractice={reorderPractice}
+            movingPracticeId={movingPracticeId}
             accessToken={accessToken}
-            refresh={() => accessToken && loadPractices(accessToken, { silent: true })}
+            refresh={() => (accessToken ? loadPractices(accessToken, { silent: true }) : Promise.resolve())}
             attemptsByPractice={attemptsByPractice}
             attemptsLoading={attemptsLoading}
             attemptsError={attemptsError}
@@ -399,6 +427,8 @@ function ExamSection({
   startPractice,
   togglePractice,
   deletePractice,
+  reorderPractice,
+  movingPracticeId,
   accessToken,
   refresh,
   attemptsByPractice,
@@ -416,8 +446,10 @@ function ExamSection({
   startPractice: (practiceId: string, locked: boolean) => void;
   togglePractice: (practiceId: string, payload: Record<string, any>) => Promise<void>;
   deletePractice: (practiceId: string) => Promise<void>;
+  reorderPractice: (practiceId: string, direction: "up" | "down") => Promise<void>;
+  movingPracticeId: string | null;
   accessToken: string | null;
-  refresh: () => void;
+  refresh: () => Promise<void> | void;
   attemptsByPractice: Record<string, PracticeAttempt[]>;
   attemptsLoading: Record<string, boolean>;
   attemptsError: Record<string, string | null>;
@@ -428,8 +460,30 @@ function ExamSection({
   const [activePanels, setActivePanels] = useState<
     Record<string, "results" | "access" | "builder" | null>
   >({});
+  const [titleDrafts, setTitleDrafts] = useState<Record<string, string>>({});
+  const [descriptionDrafts, setDescriptionDrafts] = useState<Record<string, string>>({});
+  const [manageErrors, setManageErrors] = useState<Record<string, string | null>>({});
+  const [manageMessages, setManageMessages] = useState<Record<string, string | null>>({});
+  const [savingPracticeId, setSavingPracticeId] = useState<string | null>(null);
   const openManage = (practiceId: string) => setManageId(practiceId);
   const closeManage = () => setManageId(null);
+
+  useEffect(() => {
+    setTitleDrafts((prev) => {
+      const next = { ...prev };
+      practices.forEach((practice) => {
+        next[practice.id] = practice.title ?? "";
+      });
+      return next;
+    });
+    setDescriptionDrafts((prev) => {
+      const next = { ...prev };
+      practices.forEach((practice) => {
+        next[practice.id] = practice.description ?? "";
+      });
+      return next;
+    });
+  }, [practices]);
 
   useEffect(() => {
     if (!canManage || !manageId) return;
@@ -459,6 +513,29 @@ function ExamSection({
     }
   }
 
+  async function savePracticeDetails(practiceId: string) {
+    const title = (titleDrafts[practiceId] || "").trim();
+    if (!title) {
+      setManageErrors((prev) => ({ ...prev, [practiceId]: "Title is required." }));
+      setManageMessages((prev) => ({ ...prev, [practiceId]: null }));
+      return;
+    }
+    setSavingPracticeId(practiceId);
+    setManageErrors((prev) => ({ ...prev, [practiceId]: null }));
+    setManageMessages((prev) => ({ ...prev, [practiceId]: null }));
+    try {
+      await togglePractice(practiceId, {
+        title,
+        description: (descriptionDrafts[practiceId] || "").trim() || null,
+      });
+      setManageMessages((prev) => ({ ...prev, [practiceId]: "Mock exam details saved." }));
+    } catch (e: any) {
+      setManageErrors((prev) => ({ ...prev, [practiceId]: e?.message ?? "Failed to save details" }));
+    } finally {
+      setSavingPracticeId(null);
+    }
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-end justify-between">
@@ -476,10 +553,14 @@ function ExamSection({
         <div className="grid gap-5 lg:grid-cols-2">
           {practices.map((p) => {
             const activePanel = activePanels[p.id] ?? null;
+            const practiceIndex = practices.findIndex((item) => item.id === p.id);
             const attemptsCount =
               attemptsByPractice[p.id]?.length ?? (typeof p.attempts_count === "number" ? p.attempts_count : 0);
             const canViewResults = canManage || !!p.can_view_results;
             const resultMode = p.result_visibility_mode ?? (p.results_published ? "all" : "hidden");
+            const canMoveUp = practiceIndex > 0;
+            const canMoveDown = practiceIndex >= 0 && practiceIndex < practices.length - 1;
+            const moveBusy = movingPracticeId === p.id;
             return (
               <div
                 key={p.id}
@@ -617,8 +698,8 @@ function ExamSection({
                 ) : null}
               </div>
 
-              <div className="mt-4 flex flex-wrap gap-2">
-                <button
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <button
                   className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
                   onClick={() => startPractice(p.id, p.locked)}
                   disabled={p.locked}
@@ -628,6 +709,22 @@ function ExamSection({
                 </button>
                 {canManage ? (
                   <div className="flex flex-wrap gap-2">
+                    <button
+                      className="rounded-xl border px-3 py-2 text-sm disabled:opacity-50"
+                      onClick={() => reorderPractice(p.id, "up")}
+                      type="button"
+                      disabled={!canMoveUp || moveBusy}
+                    >
+                      {moveBusy ? "Moving..." : "Move up"}
+                    </button>
+                    <button
+                      className="rounded-xl border px-3 py-2 text-sm disabled:opacity-50"
+                      onClick={() => reorderPractice(p.id, "down")}
+                      type="button"
+                      disabled={!canMoveDown || moveBusy}
+                    >
+                      {moveBusy ? "Moving..." : "Move down"}
+                    </button>
                     <button
                       className={`rounded-xl border px-3 py-2 text-sm ${
                         activePanel === "results" ? "bg-slate-100" : ""
@@ -728,6 +825,65 @@ function ExamSection({
 
               {canManage && manageId === p.id && activePanel === "builder" ? (
                 <div className="mt-5 space-y-4 border-t pt-4">
+                  <div className="rounded-xl border bg-white p-4">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Mock exam details</div>
+                    {manageErrors[p.id] ? (
+                      <div className="mt-3 text-xs text-red-600">{manageErrors[p.id]}</div>
+                    ) : null}
+                    {manageMessages[p.id] ? (
+                      <div className="mt-3 text-xs text-emerald-600">{manageMessages[p.id]}</div>
+                    ) : null}
+                    <div className="mt-3 grid gap-3 md:grid-cols-2">
+                      <label className="grid gap-1 text-xs md:col-span-2">
+                        <span className="text-[10px] uppercase tracking-wide text-slate-400">Title</span>
+                        <input
+                          className="rounded-md border px-3 py-2 text-sm"
+                          value={titleDrafts[p.id] ?? ""}
+                          onChange={(e) =>
+                            setTitleDrafts((prev) => ({ ...prev, [p.id]: e.target.value }))
+                          }
+                          placeholder="Mock exam title"
+                        />
+                      </label>
+                      <label className="grid gap-1 text-xs md:col-span-2">
+                        <span className="text-[10px] uppercase tracking-wide text-slate-400">Description</span>
+                        <textarea
+                          className="min-h-[88px] rounded-md border px-3 py-2 text-sm"
+                          value={descriptionDrafts[p.id] ?? ""}
+                          onChange={(e) =>
+                            setDescriptionDrafts((prev) => ({ ...prev, [p.id]: e.target.value }))
+                          }
+                          placeholder="Optional description"
+                        />
+                      </label>
+                      <div className="md:col-span-2 flex flex-wrap gap-2">
+                        <button
+                          className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-60"
+                          type="button"
+                          onClick={() => savePracticeDetails(p.id)}
+                          disabled={savingPracticeId === p.id}
+                        >
+                          {savingPracticeId === p.id ? "Saving..." : "Save details"}
+                        </button>
+                        <button
+                          className="rounded-lg border px-3 py-2 text-xs font-semibold disabled:opacity-50"
+                          type="button"
+                          onClick={() => reorderPractice(p.id, "up")}
+                          disabled={!canMoveUp || moveBusy}
+                        >
+                          Move up
+                        </button>
+                        <button
+                          className="rounded-lg border px-3 py-2 text-xs font-semibold disabled:opacity-50"
+                          type="button"
+                          onClick={() => reorderPractice(p.id, "down")}
+                          disabled={!canMoveDown || moveBusy}
+                        >
+                          Move down
+                        </button>
+                      </div>
+                    </div>
+                  </div>
                   <div className="rounded-xl border bg-slate-50 p-3">
                     <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Settings</div>
                     <div className="mt-2 grid gap-2 text-xs text-slate-600">
